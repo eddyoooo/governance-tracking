@@ -1,0 +1,13 @@
+services:
+  backend-demo:
+    build:
+      context: .
+      target: dev
+    environment:
+      NODE_ENV: development
+      STORAGE_MODE: memory
+      DEMO_MODE: "true"
+      ENABLE_SCHEDULER: "false"
+      ENABLE_DEBUG_ENDPOINTS: "true"
+      LIDO_ALLOWED_PUBLISHERS: Allowed Publisher
+    command: npm run demo

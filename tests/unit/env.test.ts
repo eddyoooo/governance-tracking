@@ -1,0 +1,133 @@
+import { describe, expect, it } from "@jest/globals";
+import { isMemoryMode, loadEnv, toSafeConfig } from "../../src/config/env.js";
+
+describe("env parsing", () => {
+  it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
+    const env = loadEnv({
+      LIDO_ALLOWED_PUBLISHERS: " Allowed Publisher,DAO Ops ",
+      FIREBASE_PRIVATE_KEY: "line1\\nline2"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.port).toBe(3000);
+    expect(env.storageMode).toBe("firestore");
+    expect(env.fetchIntervalCron).toBe("0 */6 * * *");
+    expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
+    expect(env.firebasePrivateKey).toBe("line1\nline2");
+  });
+
+  it("parses JSON array allowlists", () => {
+    const env = loadEnv({
+      LIDO_ALLOWED_PUBLISHERS: JSON.stringify([
+        "Lido Labs Foundation - Operations Team",
+        "Lido | Finance Team",
+        "Lido Ecosystem Foundation - Operations Team"
+      ])
+    } as NodeJS.ProcessEnv);
+
+    expect(env.lidoAllowedPublishers).toEqual([
+      "Lido Labs Foundation - Operations Team",
+      "Lido | Finance Team",
+      "Lido Ecosystem Foundation - Operations Team"
+    ]);
+  });
+
+  it("parses multiline JSON array allowlists", () => {
+    const env = loadEnv({
+      LIDO_ALLOWED_PUBLISHERS: `[
+        "Allowed Publisher",
+        "DAO Ops"
+      ]`
+    } as NodeJS.ProcessEnv);
+
+    expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
+  });
+
+  it("rejects malformed JSON allowlists", () => {
+    expect(() =>
+      loadEnv({
+        LIDO_ALLOWED_PUBLISHERS: "[not-json"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
+  });
+
+  it("parses boolean values consistently", () => {
+    const env = loadEnv({
+      DEMO_MODE: "TRUE",
+      ENABLE_SCHEDULER: "false",
+      ENABLE_DEBUG_ENDPOINTS: " true ",
+      LIDO_ENABLED: "FALSE",
+      API_AUTH_ENABLED: "true"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.demoMode).toBe(true);
+    expect(env.enableScheduler).toBe(false);
+    expect(env.enableDebugEndpoints).toBe(true);
+    expect(env.lidoEnabled).toBe(false);
+    expect(env.apiAuthEnabled).toBe(true);
+  });
+
+  it("treats blank allowlist entries as absent", () => {
+    const env = loadEnv({
+      LIDO_ALLOWED_PUBLISHERS: JSON.stringify([" Allowed Publisher ", " ", "DAO Ops"])
+    } as NodeJS.ProcessEnv);
+
+    expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
+  });
+
+  it("uses memory mode when demo mode is enabled", () => {
+    const env = loadEnv({
+      STORAGE_MODE: "firestore",
+      DEMO_MODE: "true"
+    } as NodeJS.ProcessEnv);
+
+    expect(isMemoryMode(env)).toBe(true);
+  });
+
+  it("uses memory mode when storage mode is memory", () => {
+    const env = loadEnv({
+      STORAGE_MODE: "memory",
+      DEMO_MODE: "false"
+    } as NodeJS.ProcessEnv);
+
+    expect(isMemoryMode(env)).toBe(true);
+  });
+
+  it("rejects invalid storage mode", () => {
+    expect(() =>
+      loadEnv({
+        STORAGE_MODE: "sqlite"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+  });
+
+  it("rejects invalid runtime and port values", () => {
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "staging"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        PORT: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+  });
+
+  it("does not expose secrets in safe config", () => {
+    const env = loadEnv({
+      FIREBASE_PROJECT_ID: "project",
+      FIREBASE_CLIENT_EMAIL: "service@example.com",
+      FIREBASE_PRIVATE_KEY: "private-key",
+      API_AUTH_ENABLED: "true",
+      API_AUTH_TOKEN: "secret-token"
+    } as NodeJS.ProcessEnv);
+    const safeConfig = toSafeConfig(env);
+
+    expect(JSON.stringify(safeConfig)).not.toContain("private-key");
+    expect(JSON.stringify(safeConfig)).not.toContain("secret-token");
+    expect(safeConfig.fetchIntervalCron).toBe("0 */6 * * *");
+    expect(safeConfig.firebase.hasPrivateKey).toBe(true);
+    expect(safeConfig.apiAuth.hasToken).toBe(true);
+  });
+});

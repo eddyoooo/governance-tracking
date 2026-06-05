@@ -1,0 +1,14 @@
+{
+  "protocol": "lido",
+  "sourceType": "forum",
+  "sourceId": "1001",
+  "title": "Allowed Lido Proposal",
+  "publisherName": "Allowed Publisher",
+  "sourceUrl": "https://research.lido.fi/t/allowed-lido-proposal/1001",
+  "publishedAt": "2026-05-01T10:00:00.000Z",
+  "fetchedAt": "2026-05-03T10:00:00.000Z",
+  "raw": {
+    "id": 1001,
+    "title": "Allowed Lido Proposal"
+  }
+}

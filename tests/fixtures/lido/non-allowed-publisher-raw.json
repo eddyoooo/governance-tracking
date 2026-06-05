@@ -1,0 +1,14 @@
+{
+  "protocol": "lido",
+  "sourceType": "forum",
+  "sourceId": "1002",
+  "title": "Non Allowlisted Lido Proposal",
+  "publisherName": "Random Person",
+  "sourceUrl": "https://research.lido.fi/t/non-allowlisted-lido-proposal/1002",
+  "publishedAt": "2026-05-02T10:00:00.000Z",
+  "fetchedAt": "2026-05-03T10:00:00.000Z",
+  "raw": {
+    "id": 1002,
+    "title": "Non Allowlisted Lido Proposal"
+  }
+}

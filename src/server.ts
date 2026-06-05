@@ -1,0 +1,114 @@
+import cors from "cors";
+import express, { type Express } from "express";
+import type { Logger } from "pino";
+import { pinoHttp } from "pino-http";
+import { env as defaultEnv, type Env } from "./config/env.js";
+import { FetchProtocolGovernanceJob } from "./jobs/fetchProtocolGovernance.job.js";
+import { createProtocolRegistry, type ProtocolRegistry } from "./protocols/registry.js";
+import {
+  createRepositories,
+  type Repositories
+} from "./storage/index.js";
+import { createLogger } from "./utils/logger.js";
+import { createAdminRouter } from "./api/routes/admin.routes.js";
+import { createDebugRouter } from "./api/routes/debug.routes.js";
+import { createHealthRouter } from "./api/routes/health.routes.js";
+import { createProposalsRouter } from "./api/routes/proposals.routes.js";
+import { createProtocolsRouter } from "./api/routes/protocols.routes.js";
+import { requireApiAuth } from "./api/middleware/auth.middleware.js";
+import type { FetchRunRepository } from "./storage/fetchRun.repository.js";
+import type { ProposalRepository } from "./storage/proposal.repository.js";
+
+export interface AppContext {
+  env: Env;
+  logger: Logger;
+  proposalRepository: ProposalRepository;
+  fetchRunRepository: FetchRunRepository;
+  protocolRegistry: ProtocolRegistry;
+  fetchJob: FetchProtocolGovernanceJob;
+}
+
+export interface CreateAppOptions {
+  env?: Env;
+  logger?: Logger;
+  repositories?: Repositories;
+  protocolRegistry?: ProtocolRegistry;
+  fetchJob?: FetchProtocolGovernanceJob;
+}
+
+export interface CreatedApp {
+  app: Express;
+  context: AppContext;
+}
+
+export function createApp(options: CreateAppOptions = {}): CreatedApp {
+  const runtimeEnv = options.env ?? defaultEnv;
+  const logger = options.logger ?? createLogger(runtimeEnv);
+  const repositories = options.repositories ?? createRepositories(runtimeEnv, logger);
+  const protocolRegistry =
+    options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
+  const fetchJob =
+    options.fetchJob ??
+    new FetchProtocolGovernanceJob(
+      protocolRegistry,
+      repositories.proposalRepository,
+      repositories.fetchRunRepository,
+      logger
+    );
+  const context: AppContext = {
+    env: runtimeEnv,
+    logger,
+    proposalRepository: repositories.proposalRepository,
+    fetchRunRepository: repositories.fetchRunRepository,
+    protocolRegistry,
+    fetchJob
+  };
+  const app = express();
+
+  if (runtimeEnv.nodeEnv !== "production") {
+    app.set("json spaces", 2);
+  }
+
+  app.use(
+    cors({
+      origin: runtimeEnv.corsOrigin
+    })
+  );
+  app.use(express.json());
+  app.use(pinoHttp({ logger }));
+  app.use(requireApiAuth(runtimeEnv));
+
+  app.get("/", (_request, response) => {
+    response.json({
+      name: "governance-tracking",
+      routes: [
+        "GET /health",
+        "GET /api/proposals",
+        "GET /api/proposals/:id",
+        "GET /api/protocols",
+        "POST /api/admin/fetch/lido"
+      ]
+    });
+  });
+
+  app.use("/health", createHealthRouter(context));
+  app.use("/api/proposals", createProposalsRouter(context));
+  app.use("/api/protocols", createProtocolsRouter(context));
+  app.use("/api/admin", createAdminRouter(context));
+  app.use("/api/debug", createDebugRouter(context));
+
+  app.use(
+    (
+      error: unknown,
+      _request: express.Request,
+      response: express.Response,
+      _next: express.NextFunction
+    ) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ error }, "Request failed");
+      response.status(500).json({ error: message });
+    }
+  );
+
+  return { app, context };
+}

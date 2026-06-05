@@ -1,0 +1,10 @@
+{
+  "topic_list": {
+    "topics": [
+      {
+        "id": "bad-topic-id",
+        "title": 123
+      }
+    ]
+  }
+}
