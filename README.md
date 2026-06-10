@@ -196,12 +196,10 @@ Firebase values required for Firestore mode:
 FIREBASE_PROJECT_ID=replace-with-firebase-project-id
 FIREBASE_CLIENT_EMAIL=replace-with-service-account-client-email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-service-account-private-key\n-----END PRIVATE KEY-----\n"
-FIRESTORE_DATABASE_ID=
 ```
 
 Notes:
 
-- Leave `FIRESTORE_DATABASE_ID` blank for the default Firestore database.
 - `FIREBASE_PRIVATE_KEY` may use escaped newlines as `\n`.
 - Firebase Storage is not used.
 - `CORS_ORIGIN` defaults to `http://localhost:4200` for the future Angular dashboard.
@@ -300,6 +298,50 @@ Every scheduled run performs the same flow as a manual fetch:
 5. Record fetch-run metadata.
 
 The fetch job prevents overlapping runs for the same protocol.
+
+## Operational Troubleshooting
+
+`storedCount` is `0` after a fetch:
+
+The fetch succeeded, but no fetched `publisherName` matched `LIDO_ALLOWED_PUBLISHERS`. Inspect live publishers with:
+
+```bash
+curl -s http://localhost:3000/api/debug/lido/recent
+```
+
+Then update `LIDO_ALLOWED_PUBLISHERS`, restart the server, and fetch again.
+
+`/api/proposals/11415` returns `Proposal not found`:
+
+`11415` is a Lido/Discourse `sourceId`, not the internal stored proposal `id`. First list stored proposals:
+
+```bash
+curl -s http://localhost:3000/api/proposals
+```
+
+Then use the returned internal id, which looks like `lido_forum_11415_<hash>`.
+
+Debug endpoints return `404`:
+
+Set `ENABLE_DEBUG_ENDPOINTS=true` and restart the server.
+
+Every endpoint returns `401`:
+
+`API_AUTH_ENABLED=true`. Send either:
+
+```bash
+Authorization: Bearer <API_AUTH_TOKEN>
+```
+
+or:
+
+```bash
+x-api-token: <API_AUTH_TOKEN>
+```
+
+Firestore mode fails on startup:
+
+Check that `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` are set. Firebase Storage is not required.
 
 ## Testing
 

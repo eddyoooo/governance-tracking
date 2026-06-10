@@ -51,9 +51,5 @@ export function getFirebaseApp(env: Env): App {
 export function getFirestoreDb(env: Env): Firestore {
   const app = getFirebaseApp(env);
 
-  if (env.firestoreDatabaseId) {
-    return getFirestore(app, env.firestoreDatabaseId);
-  }
-
   return getFirestore(app);
 }

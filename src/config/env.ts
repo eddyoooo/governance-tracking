@@ -52,7 +52,6 @@ const rawEnvSchema = z
     FIREBASE_PROJECT_ID: z.string().default(""),
     FIREBASE_CLIENT_EMAIL: z.string().default(""),
     FIREBASE_PRIVATE_KEY: z.string().default(""),
-    FIRESTORE_DATABASE_ID: z.string().default(""),
     ENABLE_SCHEDULER: booleanFromEnv.default(true),
     FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
     ENABLE_DEBUG_ENDPOINTS: booleanFromEnv.default(false),
@@ -73,7 +72,6 @@ const rawEnvSchema = z
     firebaseProjectId: value.FIREBASE_PROJECT_ID,
     firebaseClientEmail: value.FIREBASE_CLIENT_EMAIL,
     firebasePrivateKey: value.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-    firestoreDatabaseId: value.FIRESTORE_DATABASE_ID,
     enableScheduler: value.ENABLE_SCHEDULER,
     fetchIntervalCron: value.FETCH_INTERVAL_CRON,
     enableDebugEndpoints: value.ENABLE_DEBUG_ENDPOINTS,
@@ -110,8 +108,7 @@ export function toSafeConfig(env: Env) {
     firebase: {
       hasProjectId: Boolean(env.firebaseProjectId),
       hasClientEmail: Boolean(env.firebaseClientEmail),
-      hasPrivateKey: Boolean(env.firebasePrivateKey),
-      hasFirestoreDatabaseId: Boolean(env.firestoreDatabaseId)
+      hasPrivateKey: Boolean(env.firebasePrivateKey)
     },
     lido: {
       enabled: env.lidoEnabled,
