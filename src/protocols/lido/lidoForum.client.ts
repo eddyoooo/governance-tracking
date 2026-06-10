@@ -22,7 +22,7 @@ const discourseTopicSchema = z
     id: z.number(),
     title: z.string(),
     slug: z.string(),
-    created_at: z.string(),
+    created_at: z.string().datetime({ offset: true }),
     last_posted_at: z.string().nullable().optional(),
     posts_count: z.number().optional(),
     reply_count: z.number().optional(),

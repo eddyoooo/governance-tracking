@@ -54,6 +54,12 @@ describe("publisher allowlist", () => {
     );
   });
 
+  it("does not typo-match very short names", () => {
+    expect(matchesPublisherAllowlist("B", ["A"])).toBe(false);
+    expect(matchesPublisherAllowlist("ABCD", ["ABCE"])).toBe(false);
+    expect(matchesPublisherAllowlist("ABCD", ["ABCD"])).toBe(true);
+  });
+
   it("filters raw governance items into allowed and skipped groups", async () => {
     const allowed = await loadRawFixture("allowed-publisher-raw.json");
     const skipped = await loadRawFixture("non-allowed-publisher-raw.json");

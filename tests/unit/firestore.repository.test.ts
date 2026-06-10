@@ -37,12 +37,16 @@ class FakeDocumentReference {
 class FakeQuery {
   constructor(
     protected readonly documents: Map<string, StoredDocument>,
-    private readonly protocolFilter?: string,
+    private readonly filters: Array<{ field: string; value: string }> = [],
     private readonly limitCount?: number
   ) {}
 
-  where(_field: string, _operator: string, value: string): FakeQuery {
-    return new FakeQuery(this.documents, value, this.limitCount);
+  where(field: string, _operator: string, value: string): FakeQuery {
+    return new FakeQuery(
+      this.documents,
+      [...this.filters, { field, value }],
+      this.limitCount
+    );
   }
 
   orderBy(_field: string, _direction: string): FakeQuery {
@@ -50,14 +54,13 @@ class FakeQuery {
   }
 
   limit(limitCount: number): FakeQuery {
-    return new FakeQuery(this.documents, this.protocolFilter, limitCount);
+    return new FakeQuery(this.documents, this.filters, limitCount);
   }
 
   async get() {
     const docs = [...this.documents.values()]
-      .filter(
-        (document) =>
-          !this.protocolFilter || document.protocol === this.protocolFilter
+      .filter((document) =>
+        this.filters.every((filter) => document[filter.field] === filter.value)
       )
       .sort((left, right) =>
         String(right.publishedAt ?? "").localeCompare(String(left.publishedAt ?? ""))
@@ -154,6 +157,15 @@ describe("FirestoreProposalRepository", () => {
         sourceId: "1002"
       }
     ]);
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "1001")
+    ).resolves.toMatchObject({
+      protocol: "lido",
+      sourceId: "1001"
+    });
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "missing")
+    ).resolves.toBeNull();
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
 });

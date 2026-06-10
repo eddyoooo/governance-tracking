@@ -90,6 +90,14 @@ curl -s http://localhost:3000/api/proposals/<proposal-id>
 
 Expected return: one proposal, or `Proposal not found`.
 
+Read by source identity when you only have the Lido topic id:
+
+```bash
+curl -s http://localhost:3000/api/proposals/source/lido/forum/<source-id>
+```
+
+Expected return: one stored proposal, or `Proposal not found`.
+
 ## Useful Commands
 
 Run fixture demo:

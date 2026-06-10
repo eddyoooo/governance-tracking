@@ -50,6 +50,20 @@ describe("env parsing", () => {
     ).toThrow("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
   });
 
+  it("rejects JSON allowlists that are not arrays of strings", () => {
+    expect(() =>
+      loadEnv({
+        LIDO_ALLOWED_PUBLISHERS: JSON.stringify({ publisher: "Allowed Publisher" })
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher", 123])
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+  });
+
   it("parses boolean values consistently", () => {
     const env = loadEnv({
       DEMO_MODE: "TRUE",
@@ -64,6 +78,14 @@ describe("env parsing", () => {
     expect(env.enableDebugEndpoints).toBe(true);
     expect(env.lidoEnabled).toBe(false);
     expect(env.apiAuthEnabled).toBe(true);
+  });
+
+  it("rejects invalid boolean strings instead of silently treating them as false", () => {
+    expect(() =>
+      loadEnv({
+        ENABLE_SCHEDULER: "yes"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
   });
 
   it("treats blank allowlist entries as absent", () => {

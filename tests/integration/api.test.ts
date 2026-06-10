@@ -133,12 +133,47 @@ describe("API", () => {
       id: lidoNewer.id,
       title: lidoNewer.title
     });
+
+    const sourceDetail = await request(app)
+      .get(`/api/proposals/source/lido/forum/${lidoNewer.sourceId}`)
+      .expect(200);
+    expect(sourceDetail.body.proposal).toMatchObject({
+      id: lidoNewer.id,
+      sourceId: lidoNewer.sourceId
+    });
+  });
+
+  it("rejects invalid proposal list query parameters", async () => {
+    const { app } = createApp({ env: testEnv() });
+
+    await request(app)
+      .get("/api/proposals?limit=abc")
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error).toBe(
+          "Query parameter limit must be an integer between 1 and 100."
+        );
+      });
+
+    await request(app).get("/api/proposals?limit=0").expect(400);
+    await request(app).get("/api/proposals?limit=101").expect(400);
+    await request(app).get("/api/proposals?protocol=lido&protocol=aave").expect(400);
   });
 
   it("returns 404 for missing proposals", async () => {
     const { app } = createApp({ env: testEnv() });
 
     const response = await request(app).get("/api/proposals/missing").expect(404);
+
+    expect(response.body.error).toBe("Proposal not found.");
+  });
+
+  it("returns 404 when source identity lookup does not find a stored proposal", async () => {
+    const { app } = createApp({ env: testEnv() });
+
+    const response = await request(app)
+      .get("/api/proposals/source/lido/forum/missing")
+      .expect(404);
 
     expect(response.body.error).toBe("Proposal not found.");
   });
@@ -326,6 +361,11 @@ describe("API", () => {
     await request(app)
       .get("/health")
       .set("Authorization", "Bearer wrong-token")
+      .expect(403);
+
+    await request(app)
+      .get("/health")
+      .set("Authorization", "Bearer test-tokeN")
       .expect(403);
 
     const response = await request(app)

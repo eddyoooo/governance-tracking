@@ -39,6 +39,12 @@ describe("hash utilities", () => {
     );
   });
 
+  it("hashes undefined values deterministically", () => {
+    expect(hashObject(undefined)).toBe(hashObject(undefined));
+    expect(hashObject({ value: undefined })).toBe(hashObject({ value: undefined }));
+    expect(hashObject(undefined)).not.toBe(hashObject(null));
+  });
+
   it("generates deterministic fetch run ids from protocol and start time", () => {
     const id = createFetchRunId("lido", "2026-06-05T00:00:00.000Z");
 

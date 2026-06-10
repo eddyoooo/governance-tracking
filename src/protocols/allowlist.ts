@@ -62,6 +62,10 @@ export function matchesPublisherAllowlist(
       return true;
     }
 
+    if (Math.min(normalizedAllowed.length, normalizedPublisher.length) < 6) {
+      return false;
+    }
+
     const threshold = Math.max(1, Math.floor(normalizedAllowed.length * 0.12));
 
     return levenshteinDistance(normalizedAllowed, normalizedPublisher) <= threshold;

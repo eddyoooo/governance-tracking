@@ -168,6 +168,30 @@ describe("LidoForumClient", () => {
     );
   });
 
+  it("rejects topics with invalid published dates", async () => {
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch({
+        users: [],
+        topic_list: {
+          topics: [
+            {
+              id: 1,
+              title: "Invalid date topic",
+              slug: "invalid-date-topic",
+              created_at: "not-a-date"
+            }
+          ]
+        }
+      })
+    });
+
+    await expect(client.fetchRecentTopics()).rejects.toThrow(
+      "Invalid Lido recent topics response."
+    );
+  });
+
   it("logs validation issues for malformed responses", async () => {
     const payload = await loadFixture("malformed-response.json");
     const logger = {

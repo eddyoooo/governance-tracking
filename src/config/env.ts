@@ -9,10 +9,22 @@ const booleanFromEnv = z.preprocess((value) => {
   }
 
   if (typeof value === "string") {
-    return value.trim().toLowerCase() === "true";
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
+    }
+
+    if (!normalized) {
+      return undefined;
+    }
   }
 
-  return false;
+  return value;
 }, z.boolean());
 
 const stringListFromEnv = z.preprocess((value) => {
@@ -36,6 +48,10 @@ const stringListFromEnv = z.preprocess((value) => {
     } catch {
       throw new Error("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
     }
+  }
+
+  if (trimmed.startsWith("{")) {
+    throw new Error("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
   }
 
   return trimmed.split(",");

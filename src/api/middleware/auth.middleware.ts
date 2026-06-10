@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 import type { Env } from "../../config/env.js";
 
@@ -11,6 +12,13 @@ function tokenFromHeader(value: string | undefined): string {
   }
 
   return value.trim();
+}
+
+function tokensMatch(providedToken: string, expectedToken: string): boolean {
+  const provided = Buffer.from(providedToken);
+  const expected = Buffer.from(expectedToken);
+
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 export function requireApiAuth(env: Env): RequestHandler {
@@ -33,7 +41,7 @@ export function requireApiAuth(env: Env): RequestHandler {
       return;
     }
 
-    if (providedToken !== env.apiAuthToken) {
+    if (!tokensMatch(providedToken, env.apiAuthToken)) {
       response.status(403).json({ error: "Invalid API auth token." });
       return;
     }

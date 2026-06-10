@@ -73,4 +73,20 @@ export class FirestoreProposalRepository implements ProposalRepository {
 
     return snapshot.data() as StoredProposal;
   }
+
+  async findBySourceIdentity(
+    protocol: string,
+    sourceType: string,
+    sourceId: string
+  ): Promise<StoredProposal | null> {
+    const snapshot = await this.collection
+      .where("protocol", "==", protocol)
+      .where("sourceType", "==", sourceType)
+      .where("sourceId", "==", sourceId)
+      .limit(1)
+      .get();
+    const [doc] = snapshot.docs;
+
+    return doc ? (doc.data() as StoredProposal) : null;
+  }
 }

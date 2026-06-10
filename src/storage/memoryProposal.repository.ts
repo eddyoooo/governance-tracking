@@ -48,4 +48,19 @@ export class MemoryProposalRepository implements ProposalRepository {
   async findById(id: string): Promise<StoredProposal | null> {
     return this.proposals.get(id) ?? null;
   }
+
+  async findBySourceIdentity(
+    protocol: string,
+    sourceType: string,
+    sourceId: string
+  ): Promise<StoredProposal | null> {
+    return (
+      [...this.proposals.values()].find(
+        (proposal) =>
+          proposal.protocol === protocol &&
+          proposal.sourceType === sourceType &&
+          proposal.sourceId === sourceId
+      ) ?? null
+    );
+  }
 }

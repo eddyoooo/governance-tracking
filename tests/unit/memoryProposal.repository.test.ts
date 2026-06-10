@@ -128,4 +128,28 @@ describe("MemoryProposalRepository", () => {
 
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
+
+  it("finds proposals by source identity", async () => {
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        protocol: "lido",
+        sourceType: "forum",
+        sourceId: "1001"
+      })
+    );
+
+    await repository.upsert(proposal);
+
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "1001")
+    ).resolves.toMatchObject({
+      id: proposal.id,
+      protocol: "lido",
+      sourceId: "1001"
+    });
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "missing")
+    ).resolves.toBeNull();
+  });
 });

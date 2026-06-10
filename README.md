@@ -257,6 +257,7 @@ Live-fetch endpoint behavior:
 | `GET` | `/api/protocols` | Registered protocol adapters and source metadata. |
 | `GET` | `/api/proposals` | Stored proposal list. Supports `protocol` and `limit`. |
 | `GET` | `/api/proposals/:id` | One stored proposal by internal proposal id. |
+| `GET` | `/api/proposals/source/:protocol/:sourceType/:sourceId` | One stored proposal by source identity. |
 | `POST` | `/api/admin/fetch/lido` | Fetch-run summary after fetching and storing Lido proposals. |
 | `GET` | `/api/debug/config-safe` | Non-secret runtime config. Debug only. |
 | `GET` | `/api/debug/lido/recent` | Live Lido items before allowlist filtering. Debug only. |
@@ -320,6 +321,16 @@ curl -s http://localhost:3000/api/proposals
 ```
 
 Then use the returned internal id, which looks like `lido_forum_11415_<hash>`.
+
+Alternatively, use source-identity lookup:
+
+```bash
+curl -s http://localhost:3000/api/proposals/source/lido/forum/11415
+```
+
+`/api/proposals?limit=abc` returns `400`:
+
+`limit` must be an integer between `1` and `100`.
 
 Debug endpoints return `404`:
 

@@ -15,4 +15,9 @@ export interface ProposalRepository {
   upsertMany(proposals: NormalizedGovernanceItem[]): Promise<UpsertResult[]>;
   findAll(query?: ProposalQuery): Promise<StoredProposal[]>;
   findById(id: string): Promise<StoredProposal | null>;
+  findBySourceIdentity(
+    protocol: string,
+    sourceType: string,
+    sourceId: string
+  ): Promise<StoredProposal | null>;
 }
