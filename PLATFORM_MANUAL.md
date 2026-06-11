@@ -1,19 +1,23 @@
 # Platform Manual
 
-Quick terminal guide for the current governance tracking MVP.
+Terminal playbook for the current governance tracking MVP.
 
-Assume the API is at `http://localhost:3000`.
+Base URL:
 
-## Start In Development
+```bash
+API=http://localhost:3000
+```
 
-Use credential-free demo/memory mode:
+## 1. Start The App
+
+Development/demo mode:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Recommended local `.env` values:
+Use these local `.env` values for a credential-free run:
 
 ```bash
 NODE_ENV=development
@@ -26,97 +30,257 @@ API_AUTH_ENABLED=false
 LIDO_ALLOWED_PUBLISHERS='["Allowed Publisher"]'
 ```
 
-In memory/demo mode, data lives only inside the running Node process. Restarting the app clears it.
+Expected result: API starts on port `3000`, uses in-memory storage, uses fixture-backed Lido data, and does not require Firebase or Telegram.
 
-## One-Shot Demo
+## 2. Run The One-Shot Demo
 
 ```bash
 npm run demo
 ```
 
-Expected return: formatted JSON showing a fixture-backed first fetch that inserts one allowlisted proposal, a second fetch that updates the same proposal, skipped non-allowlisted items, and final stored proposals.
+Expected result: JSON showing two fetches. The first fetch stores one allowlisted proposal. The second fetch sees the same proposal again and updates it instead of creating a duplicate. `storedProposalCount` should remain `1`.
 
-## API Demo Flow
-
-Check service state:
+## 3. Check Service Health
 
 ```bash
-curl -s http://localhost:3000/health
-curl -s http://localhost:3000/api/protocols
+curl -s "$API/health"
 ```
 
-Expected return: health info and registered protocol metadata.
+Expected result:
 
-Preview Lido adapter items:
+```json
+{
+  "ok": true,
+  "storageMode": "memory",
+  "schedulerEnabled": false
+}
+```
+
+## 4. See Registered Protocols
 
 ```bash
-curl -s http://localhost:3000/api/debug/lido/recent
+curl -s "$API/api/protocols"
 ```
 
-Expected return: recent Lido items. In demo/memory mode this is fixture data; in normal Firestore mode it calls Lido.
+Expected result: registered protocols, currently Lido, including source metadata and allowlist count.
 
-Fetch, filter, store, and record a run:
+## 5. Preview Lido Items Before Storage
 
 ```bash
-curl -s -X POST http://localhost:3000/api/admin/fetch/lido
+curl -s "$API/api/debug/lido/recent"
 ```
 
-Expected return: counts such as `fetchedCount`, `allowlistedCount`, `storedNewCount`, `updatedExistingCount`, `skippedCount`, and notification counts.
+Expected result: recent Lido adapter items with `sourceId`, `title`, `publisherName`, `sourceUrl`, and raw payload data.
 
-List stored proposals:
+Important: this does not store proposals. It is for inspecting what the adapter sees before allowlist filtering.
+
+## 6. Fetch, Filter, Store
 
 ```bash
-curl -s "http://localhost:3000/api/proposals?protocol=lido&limit=5"
+curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected return: stored proposals from memory or Firestore. This endpoint does not call Lido.
+Expected result:
 
-Read one proposal:
+```json
+{
+  "protocol": "lido",
+  "fetchedCount": 2,
+  "allowlistedCount": 1,
+  "storedNewCount": 1,
+  "updatedExistingCount": 0,
+  "skippedCount": 1,
+  "notificationPendingCount": 0,
+  "notificationSentCount": 0,
+  "notificationFailedCount": 0,
+  "errors": []
+}
+```
+
+Run it again:
 
 ```bash
-curl -s http://localhost:3000/api/proposals/<internal-proposal-id>
-curl -s http://localhost:3000/api/proposals/source/lido/forum/<lido-topic-id>
+curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected return: one stored proposal, or `Proposal not found`.
+Expected result: `storedNewCount` becomes `0`, `updatedExistingCount` becomes `1`, and no duplicate proposal is created.
 
-List fetch runs:
+## 7. List Stored Proposals
 
 ```bash
-curl -s http://localhost:3000/api/admin/fetch-runs
+curl -s "$API/api/proposals?protocol=lido&limit=5"
 ```
 
-Expected return: stored fetch-run records from memory or Firestore.
+Expected result: stored proposals after allowlist filtering. This endpoint reads memory or Firestore only; it does not call Lido.
 
-Notify pending proposals:
+Useful filters:
 
 ```bash
-curl -s -X POST http://localhost:3000/api/admin/notify-pending
+curl -s "$API/api/proposals?publisherName=Allowed%20Publisher"
+curl -s "$API/api/proposals?notificationStatus=skipped"
+curl -s "$API/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
 ```
 
-Expected return: `pendingCount`, `sentCount`, `failedCount`, `skippedCount`, and `errors`.
+Expected result: filtered proposal lists.
 
-Reset demo state:
+## 8. Read One Proposal
+
+By internal proposal id:
 
 ```bash
-curl -s -X POST http://localhost:3000/api/debug/reset-demo-state
+curl -s "$API/api/proposals/<internal-proposal-id>"
 ```
 
-Expected return: `{ "reset": true }`. Only works when debug endpoints are enabled and storage is memory/demo.
-
-## Query Examples
+By source identity:
 
 ```bash
-curl -s "http://localhost:3000/api/proposals?notificationStatus=sent"
-curl -s "http://localhost:3000/api/proposals?publisherName=Allowed%20Publisher"
-curl -s "http://localhost:3000/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
+curl -s "$API/api/proposals/source/lido/forum/<lido-topic-id>"
 ```
 
-Expected return: filtered stored proposal lists. These queries read storage only.
+Expected result: one stored proposal, or:
 
-## Production-Like Run
+```json
+{
+  "error": "Proposal not found."
+}
+```
 
-Set Firestore and auth values:
+Use source identity when you only know the Lido/Discourse topic id.
+
+## 9. List Fetch Runs
+
+```bash
+curl -s "$API/api/admin/fetch-runs"
+```
+
+Expected result: stored fetch-run records showing what each run fetched, stored, updated, skipped, and notified.
+
+Useful options:
+
+```bash
+curl -s "$API/api/admin/fetch-runs?limit=5&offset=0&sort=startedAt_desc"
+```
+
+## 10. Notify Pending Proposals
+
+```bash
+curl -s -X POST "$API/api/admin/notify-pending"
+```
+
+Expected result:
+
+```json
+{
+  "pendingCount": 0,
+  "sentCount": 0,
+  "failedCount": 0,
+  "skippedCount": 0,
+  "errors": []
+}
+```
+
+If Telegram is disabled, pending proposals are marked `skipped`. If Telegram is enabled, pending proposals are sent and marked `sent` or `failed`.
+
+## 11. Inspect Safe Config
+
+```bash
+curl -s "$API/api/debug/config-safe"
+```
+
+Expected result: non-secret runtime config. It shows booleans such as whether Firebase keys or API tokens are present, but never returns raw secrets.
+
+## 12. Reset Demo State
+
+```bash
+curl -s -X POST "$API/api/debug/reset-demo-state"
+```
+
+Expected result:
+
+```json
+{
+  "reset": true,
+  "storageMode": "memory"
+}
+```
+
+Only works when `ENABLE_DEBUG_ENDPOINTS=true` and storage is memory/demo.
+
+## 13. Test Auth Protection
+
+Set:
+
+```bash
+API_AUTH_ENABLED=true
+API_AUTH_TOKEN=replace-with-long-random-secret
+```
+
+Without token:
+
+```bash
+curl -i "$API/health"
+```
+
+Expected result: `401`.
+
+With token:
+
+```bash
+curl -s "$API/health" \
+  -H "Authorization: Bearer $API_AUTH_TOKEN"
+```
+
+Expected result: normal health response.
+
+Alternative header:
+
+```bash
+curl -s "$API/health" \
+  -H "x-api-token: $API_AUTH_TOKEN"
+```
+
+## 14. Test Telegram Setup
+
+Set:
+
+```bash
+ENABLE_TELEGRAM_NOTIFICATIONS=true
+TELEGRAM_BOT_TOKEN=replace-with-token
+TELEGRAM_CHAT_ID=replace-with-chat-id
+NOTIFY_ON_NEW_PROPOSAL=true
+```
+
+Then run:
+
+```bash
+curl -s -X POST "$API/api/admin/fetch/lido"
+```
+
+Expected result: new allowlisted proposals are notified once. Existing proposals are updated but not notified again.
+
+## 15. Run Tests
+
+```bash
+npm test
+```
+
+Expected result: all Jest/Supertest tests pass.
+
+```bash
+npm run check
+```
+
+Expected result: TypeScript build passes, then all tests pass.
+
+```bash
+npm run test:watch
+```
+
+Expected result: Jest watch mode starts for active development.
+
+## 16. Run With Firestore
+
+Set:
 
 ```bash
 NODE_ENV=production
@@ -126,7 +290,6 @@ ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 */6 * * *
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
-API_AUTH_TOKEN=replace-with-long-random-secret
 FIREBASE_PROJECT_ID=replace-with-project-id
 FIREBASE_CLIENT_EMAIL=replace-with-client-email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace\n-----END PRIVATE KEY-----\n"
@@ -139,41 +302,62 @@ npm run build
 npm run start
 ```
 
-Authenticated request:
+Expected result: proposals and fetch runs are stored in Firestore.
 
-```bash
-curl -s http://localhost:3000/health \
-  -H "Authorization: Bearer $API_AUTH_TOKEN"
-```
+## 17. Run With Docker
 
-## Telegram
-
-```bash
-ENABLE_TELEGRAM_NOTIFICATIONS=true
-TELEGRAM_BOT_TOKEN=replace-with-token
-TELEGRAM_CHAT_ID=replace-with-chat-id
-NOTIFY_ON_NEW_PROPOSAL=true
-```
-
-Expected behavior: newly discovered allowlisted proposals are notified once. Existing proposals are updated but not notified again.
-
-## Tests
-
-```bash
-npm test
-npm run check
-npm run test:watch
-```
-
-`npm test` runs all Jest tests. `npm run check` runs TypeScript build plus all tests.
-
-## Docker
+Development compose:
 
 ```bash
 docker compose up --build
+```
+
+Credential-free API demo:
+
+```bash
 docker compose -f docker-compose.demo.yml up --build
+```
+
+Production image:
+
+```bash
 docker build -t governance-tracking-backend .
 docker run --env-file .env -p 3000:3000 governance-tracking-backend
 ```
 
-The demo compose file runs memory/demo mode and does not need Firebase or Telegram credentials.
+Expected result: backend listens on local port `3000`. Demo compose uses memory mode and does not require Firebase or Telegram.
+
+## Endpoint Source Map
+
+These read stored app state only:
+
+```text
+GET /health
+GET /api/protocols
+GET /api/proposals
+GET /api/proposals/:id
+GET /api/proposals/source/:protocol/:sourceType/:sourceId
+GET /api/admin/fetch-runs
+```
+
+These fetch through the Lido adapter:
+
+```text
+GET /api/debug/lido/recent
+POST /api/debug/lido/fetch-once
+POST /api/admin/fetch/lido
+```
+
+In demo/memory mode, the Lido adapter uses fixtures. In normal Firestore mode, it calls Lido/Discourse.
+
+## Common Results
+
+`fetchedCount > 0` and `allowlistedCount = 0`: fetch worked, but allowlist matched nothing.
+
+`storedNewCount = 1`: a new allowlisted proposal was discovered.
+
+`updatedExistingCount = 1`: an already-known proposal appeared again and was updated.
+
+`skippedCount > 0`: fetched items were ignored because their publisher was not allowlisted.
+
+`notificationFailedCount > 0`: proposal storage worked, but Telegram failed.
