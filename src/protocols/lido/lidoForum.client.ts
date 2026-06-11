@@ -39,7 +39,9 @@ export const lidoRecentTopicsResponseSchema = z
     users: z.array(discourseUserSchema).optional().default([]),
     topic_list: z
       .object({
-        topics: z.array(discourseTopicSchema).default([])
+        topics: z.array(discourseTopicSchema).default([]),
+        more_topics_url: z.string().nullable().optional(),
+        per_page: z.number().optional()
       })
       .passthrough()
   })
@@ -55,6 +57,13 @@ export interface LidoForumTopic {
   sourceUrl: string;
   publishedAt: string;
   raw: unknown;
+}
+
+export interface LidoForumTopicPage {
+  page: number;
+  topics: LidoForumTopic[];
+  hasMore: boolean;
+  moreTopicsUrl?: string;
 }
 
 export interface LidoForumClientOptions {
@@ -78,6 +87,14 @@ export class LidoForumClient {
   }
 
   async fetchRecentTopics(options: { page?: number } = {}): Promise<LidoForumTopic[]> {
+    const topicPage = await this.fetchRecentTopicPage(options);
+
+    return topicPage.topics;
+  }
+
+  async fetchRecentTopicPage(
+    options: { page?: number } = {}
+  ): Promise<LidoForumTopicPage> {
     const page = options.page ?? 0;
     const payload = await this.fetchJson(`/c/proposals/9/l/latest.json?page=${page}`);
     const parsed = lidoRecentTopicsResponseSchema.safeParse(payload);
@@ -90,7 +107,12 @@ export class LidoForumClient {
       throw new Error("Invalid Lido recent topics response.");
     }
 
-    return this.mapRecentTopics(parsed.data);
+    return {
+      page,
+      topics: this.mapRecentTopics(parsed.data),
+      hasMore: Boolean(parsed.data.topic_list.more_topics_url),
+      moreTopicsUrl: parsed.data.topic_list.more_topics_url ?? undefined
+    };
   }
 
   private async fetchJson(pathname: string): Promise<unknown> {
@@ -138,4 +160,5 @@ export class LidoForumClient {
       };
     });
   }
+
 }

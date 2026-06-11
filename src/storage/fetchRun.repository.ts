@@ -17,8 +17,8 @@ export interface FetchRun {
   allowlistedCount: number;
   storedNewCount: number;
   updatedExistingCount: number;
+  unchangedExistingCount: number;
   skippedCount: number;
-  notificationPendingCount: number;
   notificationSentCount: number;
   notificationFailedCount: number;
   errors: string[];

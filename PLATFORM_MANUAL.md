@@ -28,6 +28,7 @@ ENABLE_SCHEDULER=false
 ENABLE_DEBUG_ENDPOINTS=true
 API_AUTH_ENABLED=false
 LIDO_ALLOWED_PUBLISHERS='["Allowed Publisher"]'
+LIDO_FETCH_MAX_PAGES=5
 ```
 
 Expected result: API starts on port `3000`, uses in-memory storage, uses fixture-backed Lido data, and does not require Firebase or Telegram.
@@ -38,7 +39,7 @@ Expected result: API starts on port `3000`, uses in-memory storage, uses fixture
 npm run demo
 ```
 
-Expected result: JSON showing two fetches. The first fetch stores one allowlisted proposal. The second fetch sees the same proposal again and updates it instead of creating a duplicate. `storedProposalCount` should remain `1`.
+Expected result: JSON showing two fetches. The first fetch stores one allowlisted proposal. The second fetch sees the same proposal again, counts it as unchanged, and does not duplicate or rewrite it. `storedProposalCount` should remain `1`.
 
 ## 3. Check Service Health
 
@@ -74,6 +75,14 @@ Expected result: recent Lido adapter items with `sourceId`, `title`, `publisherN
 
 Important: this does not store proposals. It is for inspecting what the adapter sees before allowlist filtering.
 
+To inspect the fixture payload used in demo/memory mode:
+
+```bash
+curl -s "$API/api/debug/demo-fixtures"
+```
+
+Expected result: raw demo fixture JSON for the Lido recent-topics response.
+
 ## 6. Fetch, Filter, Store
 
 ```bash
@@ -89,13 +98,23 @@ Expected result:
   "allowlistedCount": 1,
   "storedNewCount": 1,
   "updatedExistingCount": 0,
+  "unchangedExistingCount": 0,
   "skippedCount": 1,
-  "notificationPendingCount": 0,
   "notificationSentCount": 0,
   "notificationFailedCount": 0,
   "errors": []
 }
 ```
+
+The Lido category endpoint returns 30 proposal topics per page. With `LIDO_FETCH_MAX_PAGES=5`, one run can inspect up to 150 recent proposal-category topics before stopping.
+
+Debug equivalent when `ENABLE_DEBUG_ENDPOINTS=true`:
+
+```bash
+curl -s -X POST "$API/api/debug/lido/fetch-once"
+```
+
+Expected result: same fetch result shape as the admin fetch endpoint.
 
 Run it again:
 
@@ -103,7 +122,7 @@ Run it again:
 curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected result: `storedNewCount` becomes `0`, `updatedExistingCount` becomes `1`, and no duplicate proposal is created.
+Expected result: `storedNewCount` becomes `0`, `unchangedExistingCount` becomes `1`, and no duplicate proposal is created. `updatedExistingCount` only increases if source content changed.
 
 ## 7. List Stored Proposals
 
@@ -118,7 +137,7 @@ Useful filters:
 ```bash
 curl -s "$API/api/proposals?publisherName=Allowed%20Publisher"
 curl -s "$API/api/proposals?notificationStatus=skipped"
-curl -s "$API/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
+curl -s "$API/api/proposals?sort=firstSeenAt_desc&limit=10&offset=0"
 ```
 
 Expected result: filtered proposal lists.
@@ -153,7 +172,7 @@ Use source identity when you only know the Lido/Discourse topic id.
 curl -s "$API/api/admin/fetch-runs"
 ```
 
-Expected result: stored fetch-run records showing what each run fetched, stored, updated, skipped, and notified.
+Expected result: stored fetch-run records showing what each run fetched, stored, meaningfully updated, saw unchanged, skipped, and notified.
 
 Useful options:
 
@@ -256,7 +275,7 @@ Then run:
 curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected result: new allowlisted proposals are notified once. Existing proposals are updated but not notified again.
+Expected result: new allowlisted proposals are notified once. Existing proposals are not notified again; unchanged repeat sightings are counted without rewriting the proposal.
 
 ## 15. Run Tests
 
@@ -287,7 +306,8 @@ NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 */6 * * *
+FETCH_INTERVAL_CRON=*/15 * * * *
+LIDO_FETCH_MAX_PAGES=5
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 FIREBASE_PROJECT_ID=replace-with-project-id
@@ -329,7 +349,7 @@ Expected result: backend listens on local port `3000`. Demo compose uses memory 
 
 ## Endpoint Source Map
 
-These read stored app state only:
+These do not call Lido/Discourse:
 
 ```text
 GET /health
@@ -338,6 +358,7 @@ GET /api/proposals
 GET /api/proposals/:id
 GET /api/proposals/source/:protocol/:sourceType/:sourceId
 GET /api/admin/fetch-runs
+GET /api/debug/demo-fixtures
 ```
 
 These fetch through the Lido adapter:
@@ -356,7 +377,9 @@ In demo/memory mode, the Lido adapter uses fixtures. In normal Firestore mode, i
 
 `storedNewCount = 1`: a new allowlisted proposal was discovered.
 
-`updatedExistingCount = 1`: an already-known proposal appeared again and was updated.
+`updatedExistingCount = 1`: an already-known proposal appeared again and had meaningful source changes, so the stored record was updated.
+
+`unchangedExistingCount = 1`: an already-known proposal appeared again with no meaningful source changes, so the stored record was not rewritten.
 
 `skippedCount > 0`: fetched items were ignored because their publisher was not allowlisted.
 

@@ -14,7 +14,6 @@ export function normalizeLidoForumItem(
     sourceUrl: item.sourceUrl,
     publishedAt: item.publishedAt,
     fetchedAt: item.fetchedAt,
-    rawHash: hashObject(item.raw),
-    status: "new"
+    rawHash: hashObject(item.raw)
   };
 }

@@ -8,6 +8,18 @@ For exact commands and expected terminal/API results, use [PLATFORM_MANUAL.md](/
 
 The platform fetches recent Lido governance topics from `https://research.lido.fi`, validates the Discourse JSON response, extracts each topic's `publisherName`, and compares that publisher against `LIDO_ALLOWED_PUBLISHERS`. Only allowlisted topics are stored as governance proposals.
 
+For Lido, the backend intentionally calls the category-specific Discourse endpoint:
+
+```text
+GET /c/proposals/9/l/latest.json?page=<page>
+```
+
+`proposals` is the category slug and `9` is the Lido forum category id for proposal topics. This is used instead of the forum-wide `GET /latest.json` endpoint because the product goal is to track governance proposals, not every latest forum discussion.
+
+The endpoint currently returns 30 proposal-category topics per page. The backend paginates up to `LIDO_FETCH_MAX_PAGES` pages and stops early once an allowlisted page is entirely already known.
+
+The Lido proposal category also exposes an RSS feed at `/c/proposals/9.rss`; the current implementation still uses the JSON polling path because it gives us structured pagination and topic metadata.
+
 Stored proposals are deduplicated by:
 
 ```text
@@ -20,22 +32,25 @@ For Lido, that means:
 lido + forum + <discourse-topic-id>
 ```
 
-If the same proposal appears again in a later fetch, the backend updates the existing record instead of creating a duplicate. It preserves when the proposal was first seen and updates when it was last seen.
+If the same proposal appears again in a later fetch, the backend does not create a duplicate. If source content changed, it updates the existing record. If the source content is identical except for fetch timestamps, it skips rewriting the proposal and records that repeat sighting in the fetch-run `unchangedExistingCount`.
 
 ## Current Capabilities
 
 - Fetch Lido forum governance topics.
+- Paginate Lido proposal-category pages for better notification coverage.
+- Stop pagination once it reaches already-known allowlisted proposal pages.
 - Validate external Lido responses with Zod.
 - Filter proposals by trusted publisher allowlist.
 - Store normalized proposal records in Firestore or memory mode.
 - Deduplicate proposals across repeated fetches.
-- Track `firstSeenAt`, `lastSeenAt`, `createdAt`, and `updatedAt`.
+- Skip unnecessary proposal writes when a repeat poll only changes fetch timestamps.
+- Track `firstSeenAt`, `createdAt`, and `updatedAt` on stored proposal records.
 - Track proposal notification state: `pending`, `sent`, `skipped`, or `failed`.
-- Record fetch-run metadata with fetched, allowlisted, stored, updated, skipped, and notification counts.
+- Record fetch-run metadata with fetched, allowlisted, stored, updated, unchanged, skipped, and notification counts.
 - Optionally send Telegram notifications for new allowlisted proposals.
 - Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
 - Run a credential-free fixture demo in memory mode.
-- Run scheduled polling every 6 hours in normal mode.
+- Run scheduled polling every 15 minutes in normal mode.
 - Run with Docker and docker-compose.
 - Run deterministic Jest/Supertest tests without live network dependency.
 
@@ -83,10 +98,8 @@ Proposal records include source data and platform tracking metadata:
   "sourceUrl": "https://research.lido.fi/t/example/11415",
   "publishedAt": "2026-06-05T09:00:00.000Z",
   "firstSeenAt": "2026-06-05T10:00:00.000Z",
-  "lastSeenAt": "2026-06-05T10:00:00.000Z",
   "fetchedAt": "2026-06-05T10:00:00.000Z",
   "rawHash": "64-character-sha256-hash",
-  "status": "new",
   "notificationStatus": "skipped",
   "createdAt": "2026-06-05T10:00:00.000Z",
   "updatedAt": "2026-06-05T10:00:00.000Z"
@@ -102,14 +115,16 @@ Fetch-run records explain what happened during each fetch:
   "fetchedCount": 30,
   "allowlistedCount": 4,
   "storedNewCount": 2,
-  "updatedExistingCount": 2,
+  "updatedExistingCount": 1,
+  "unchangedExistingCount": 1,
   "skippedCount": 26,
-  "notificationPendingCount": 2,
   "notificationSentCount": 2,
   "notificationFailedCount": 0,
   "errors": []
 }
 ```
+
+`updatedExistingCount` means an already-stored proposal changed in a meaningful source field such as title, publisher, URL, published time, or raw payload hash. `unchangedExistingCount` means the proposal was seen again but the stored record was identical, so the backend skipped the write.
 
 Firestore collections:
 
@@ -139,7 +154,7 @@ NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 */6 * * *
+FETCH_INTERVAL_CRON=*/15 * * * *
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
@@ -161,6 +176,7 @@ LIDO_ALLOWED_PUBLISHERS='[
   "Lido | Finance Team",
   "Lido Ecosystem Foundation - Operations Team"
 ]'
+LIDO_FETCH_MAX_PAGES=5
 ```
 
 Telegram is optional:

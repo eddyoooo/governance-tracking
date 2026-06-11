@@ -15,8 +15,8 @@ export interface FetchProtocolResult {
   allowlistedCount: number;
   storedNewCount: number;
   updatedExistingCount: number;
+  unchangedExistingCount: number;
   skippedCount: number;
-  notificationPendingCount: number;
   notificationSentCount: number;
   notificationFailedCount: number;
   startedAt: string;
@@ -83,8 +83,8 @@ export class FetchProtocolGovernanceJob {
       allowlistedCount: 0,
       storedNewCount: 0,
       updatedExistingCount: 0,
+      unchangedExistingCount: 0,
       skippedCount: 0,
-      notificationPendingCount: 0,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []
@@ -97,14 +97,50 @@ export class FetchProtocolGovernanceJob {
     let skippedCount = 0;
     let storedNewCount = 0;
     let updatedExistingCount = 0;
-    let notificationPendingCount = 0;
+    let unchangedExistingCount = 0;
     let notificationSentCount = 0;
     let notificationFailedCount = 0;
     const errors: string[] = [];
 
     try {
       this.logger.info({ protocol, runId }, "Starting governance fetch");
-      const rawItems = await adapter.fetchRecent();
+      const rawItems = await adapter.fetchRecent({
+        shouldStopAfterPage: async ({ page, items, hasMore }) => {
+          const allowedOnPage = filterByPublisherAllowlist(
+            items,
+            adapter.publisherAllowlist
+          ).allowed;
+
+          if (allowedOnPage.length === 0) {
+            return false;
+          }
+
+          const knownAllowedItems = await Promise.all(
+            allowedOnPage.map((item) =>
+              this.proposalRepository.findBySourceIdentity(
+                item.protocol,
+                item.sourceType,
+                item.sourceId
+              )
+            )
+          );
+          const shouldStop = knownAllowedItems.every(Boolean);
+
+          if (shouldStop && hasMore) {
+            this.logger.info(
+              {
+                protocol,
+                runId,
+                page,
+                allowlistedItemsOnPage: allowedOnPage.length
+              },
+              "Stopping pagination after reaching already-known allowlisted proposals"
+            );
+          }
+
+          return shouldStop;
+        }
+      });
       fetchedCount = rawItems.length;
       const filtered = filterByPublisherAllowlist(rawItems, adapter.publisherAllowlist);
       allowlistedCount = filtered.allowed.length;
@@ -124,7 +160,6 @@ export class FetchProtocolGovernanceJob {
           storedNewCount += 1;
 
           if (upsertResult.proposal.notificationStatus === "pending") {
-            notificationPendingCount += 1;
             const notificationResult = await notifyProposal(
               upsertResult.proposal,
               this.proposalRepository,
@@ -144,7 +179,11 @@ export class FetchProtocolGovernanceJob {
             }
           }
         } else {
-          updatedExistingCount += 1;
+          if (upsertResult.updated) {
+            updatedExistingCount += 1;
+          } else {
+            unchangedExistingCount += 1;
+          }
         }
       }
 
@@ -157,8 +196,8 @@ export class FetchProtocolGovernanceJob {
         allowlistedCount,
         storedNewCount,
         updatedExistingCount,
+        unchangedExistingCount,
         skippedCount,
-        notificationPendingCount,
         notificationSentCount,
         notificationFailedCount,
         errors
@@ -173,8 +212,8 @@ export class FetchProtocolGovernanceJob {
           allowlistedCount: finishedRun.allowlistedCount,
           storedNewCount: finishedRun.storedNewCount,
           updatedExistingCount: finishedRun.updatedExistingCount,
+          unchangedExistingCount: finishedRun.unchangedExistingCount,
           skippedCount: finishedRun.skippedCount,
-          notificationPendingCount: finishedRun.notificationPendingCount,
           notificationSentCount: finishedRun.notificationSentCount,
           notificationFailedCount: finishedRun.notificationFailedCount
         },
@@ -188,8 +227,8 @@ export class FetchProtocolGovernanceJob {
         allowlistedCount: finishedRun.allowlistedCount,
         storedNewCount: finishedRun.storedNewCount,
         updatedExistingCount: finishedRun.updatedExistingCount,
+        unchangedExistingCount: finishedRun.unchangedExistingCount,
         skippedCount: finishedRun.skippedCount,
-        notificationPendingCount: finishedRun.notificationPendingCount,
         notificationSentCount: finishedRun.notificationSentCount,
         notificationFailedCount: finishedRun.notificationFailedCount,
         startedAt: finishedRun.startedAt,
@@ -206,8 +245,8 @@ export class FetchProtocolGovernanceJob {
         allowlistedCount,
         storedNewCount,
         updatedExistingCount,
+        unchangedExistingCount,
         skippedCount,
-        notificationPendingCount,
         notificationSentCount,
         notificationFailedCount,
         errors: [...errors, errorMessage]

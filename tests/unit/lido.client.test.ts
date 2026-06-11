@@ -80,6 +80,31 @@ describe("LidoForumClient", () => {
     });
   });
 
+  it("reports whether a recent topics page has more pages", async () => {
+    const payload = await loadFixture("recent-topics.json");
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch({
+        ...(payload as Record<string, unknown>),
+        topic_list: {
+          ...((payload as { topic_list: Record<string, unknown> }).topic_list),
+          more_topics_url: "/c/proposals/9/l/latest?page=1",
+          per_page: 30
+        }
+      })
+    });
+
+    const page = await client.fetchRecentTopicPage();
+
+    expect(page).toMatchObject({
+      page: 0,
+      hasMore: true,
+      moreTopicsUrl: "/c/proposals/9/l/latest?page=1"
+    });
+    expect(page.topics).toHaveLength(2);
+  });
+
   it("prefers the original poster when multiple posters are present", async () => {
     const payload = {
       users: [

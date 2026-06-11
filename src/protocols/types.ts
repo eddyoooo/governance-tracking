@@ -1,5 +1,4 @@
 export type GovernanceSourceType = "forum" | "snapshot" | "onchain";
-export type ProposalStatus = "new" | "seen" | "archived";
 export type NotificationStatus = "pending" | "sent" | "skipped" | "failed";
 
 export interface GovernanceSource {
@@ -32,16 +31,26 @@ export interface NormalizedGovernanceItem {
   publishedAt: string;
   fetchedAt: string;
   rawHash: string;
-  status: ProposalStatus;
 }
 
 export interface StoredProposal extends NormalizedGovernanceItem {
   firstSeenAt: string;
-  lastSeenAt: string;
   notificationStatus: NotificationStatus;
   notificationError?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FetchRecentPageContext {
+  page: number;
+  items: RawGovernanceItem[];
+  hasMore: boolean;
+}
+
+export interface FetchRecentOptions {
+  shouldStopAfterPage?: (
+    context: FetchRecentPageContext
+  ) => boolean | Promise<boolean>;
 }
 
 export interface ProtocolAdapter {
@@ -49,6 +58,6 @@ export interface ProtocolAdapter {
   source: GovernanceSource;
   enabled: boolean;
   publisherAllowlist: string[];
-  fetchRecent(): Promise<RawGovernanceItem[]>;
+  fetchRecent(options?: FetchRecentOptions): Promise<RawGovernanceItem[]>;
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem;
 }

@@ -9,9 +9,7 @@ export type ProposalSort =
   | "publishedAt_desc"
   | "publishedAt_asc"
   | "firstSeenAt_desc"
-  | "firstSeenAt_asc"
-  | "lastSeenAt_desc"
-  | "lastSeenAt_asc";
+  | "firstSeenAt_asc";
 
 export interface ProposalQuery {
   protocol?: string;
@@ -30,6 +28,7 @@ export interface UpsertProposalOptions {
 export interface UpsertResult {
   proposal: StoredProposal;
   created: boolean;
+  updated: boolean;
 }
 
 export interface ProposalRepository {

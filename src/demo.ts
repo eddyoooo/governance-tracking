@@ -23,7 +23,7 @@ async function main(): Promise<void> {
       {
         demoMode: true,
         description:
-          "Fixture-backed demo: the first fetch inserts one allowlisted proposal, the second fetch updates it instead of duplicating it.",
+          "Fixture-backed demo: the first fetch inserts one allowlisted proposal, the second fetch recognizes it as unchanged and does not duplicate or rewrite it.",
         allowedPublishers: env.lidoAllowedPublishers,
         firstRun,
         secondRun,

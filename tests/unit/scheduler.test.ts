@@ -19,7 +19,7 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
   return {
     env: testEnv({
       ENABLE_SCHEDULER: "true",
-      FETCH_INTERVAL_CRON: "0 */6 * * *",
+      FETCH_INTERVAL_CRON: "*/15 * * * *",
       ...overrides
     }),
     logger: createSilentLogger(),
@@ -61,17 +61,17 @@ describe("scheduler", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
-  it("schedules the Lido fetch job with the configured six-hour cron", () => {
+  it("schedules the Lido fetch job with the configured cron", () => {
     const task = { stop: jest.fn() };
     const context = createContext();
     validateMock.mockReturnValue(true);
     scheduleMock.mockReturnValue(task);
 
     expect(startScheduler(context as never)).toBe(task);
-    expect(validateMock).toHaveBeenCalledWith("0 */6 * * *");
-    expect(scheduleMock).toHaveBeenCalledWith("0 */6 * * *", expect.any(Function));
+    expect(validateMock).toHaveBeenCalledWith("*/15 * * * *");
+    expect(scheduleMock).toHaveBeenCalledWith("*/15 * * * *", expect.any(Function));
     expect(context.logger.info).toHaveBeenCalledWith(
-      { cron: "0 */6 * * *" },
+      { cron: "*/15 * * * *" },
       "Starting governance fetch scheduler"
     );
   });

@@ -13,13 +13,27 @@ const sortFields: Record<ProposalSort, keyof StoredProposal> = {
   publishedAt_desc: "publishedAt",
   publishedAt_asc: "publishedAt",
   firstSeenAt_desc: "firstSeenAt",
-  firstSeenAt_asc: "firstSeenAt",
-  lastSeenAt_desc: "lastSeenAt",
-  lastSeenAt_asc: "lastSeenAt"
+  firstSeenAt_asc: "firstSeenAt"
 };
 
 function sortDirection(sort: ProposalSort): "asc" | "desc" {
   return sort.endsWith("_asc") ? "asc" : "desc";
+}
+
+function hasMeaningfulProposalChange(
+  existing: StoredProposal,
+  proposal: NormalizedGovernanceItem
+): boolean {
+  return (
+    existing.protocol !== proposal.protocol ||
+    existing.sourceType !== proposal.sourceType ||
+    existing.sourceId !== proposal.sourceId ||
+    existing.title !== proposal.title ||
+    existing.publisherName !== proposal.publisherName ||
+    existing.sourceUrl !== proposal.sourceUrl ||
+    existing.publishedAt !== proposal.publishedAt ||
+    existing.rawHash !== proposal.rawHash
+  );
 }
 
 export class MemoryProposalRepository implements ProposalRepository {
@@ -38,14 +52,21 @@ export class MemoryProposalRepository implements ProposalRepository {
       proposal.sourceType,
       proposal.sourceId
     );
+
+    if (existing && !hasMeaningfulProposalChange(existing, proposal)) {
+      return {
+        proposal: existing,
+        created: false,
+        updated: false
+      };
+    }
+
     const now = new Date().toISOString();
     const storedProposal: StoredProposal = {
       ...existing,
       ...proposal,
       id: existing?.id ?? proposal.id,
-      status: existing?.status ?? proposal.status,
       firstSeenAt: existing?.firstSeenAt ?? now,
-      lastSeenAt: now,
       notificationStatus:
         existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
       notificationError: existing?.notificationError,
@@ -57,7 +78,8 @@ export class MemoryProposalRepository implements ProposalRepository {
 
     return {
       proposal: storedProposal,
-      created: !existing
+      created: !existing,
+      updated: true
     };
   }
 

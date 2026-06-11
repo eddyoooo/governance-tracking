@@ -248,9 +248,12 @@ describe("API", () => {
     const serialized = JSON.stringify(response.body);
 
     expect(response.body).toMatchObject({
-      fetchIntervalCron: "0 */6 * * *",
+      fetchIntervalCron: "*/15 * * * *",
       firebase: {
         hasPrivateKey: true
+      },
+      lido: {
+        fetchMaxPages: 5
       },
       apiAuth: {
         hasToken: true
@@ -312,8 +315,8 @@ describe("API", () => {
           allowlistedCount: 1,
           storedNewCount: 1,
           updatedExistingCount: 0,
+          unchangedExistingCount: 0,
           skippedCount: 0,
-          notificationPendingCount: 0,
           notificationSentCount: 0,
           notificationFailedCount: 0,
           errors: []
@@ -322,8 +325,8 @@ describe("API", () => {
         allowlistedCount: 1,
         storedNewCount: 1,
         updatedExistingCount: 0,
+        unchangedExistingCount: 0,
         skippedCount: 0,
-        notificationPendingCount: 0,
         notificationSentCount: 0,
         notificationFailedCount: 0,
         errors: []
@@ -402,8 +405,8 @@ describe("API", () => {
           allowlistedCount: 1,
           storedNewCount: 1,
           updatedExistingCount: 0,
+          unchangedExistingCount: 0,
           skippedCount: 1,
-          notificationPendingCount: 0,
           notificationSentCount: 0,
           notificationFailedCount: 0,
           errors: []
@@ -412,8 +415,8 @@ describe("API", () => {
         allowlistedCount: 1,
         storedNewCount: 1,
         updatedExistingCount: 0,
+        unchangedExistingCount: 0,
         skippedCount: 1,
-        notificationPendingCount: 0,
         notificationSentCount: 0,
         notificationFailedCount: 0,
         errors: []
@@ -470,8 +473,8 @@ describe("API", () => {
       allowlistedCount: 1,
       storedNewCount: 1,
       updatedExistingCount: 0,
+      unchangedExistingCount: 0,
       skippedCount: 1,
-      notificationPendingCount: 0,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []
@@ -683,6 +686,7 @@ describe("API", () => {
           allowlistedCount: 1,
           storedNewCount: 1,
           updatedExistingCount: 0,
+          unchangedExistingCount: 0,
           skippedCount: 1
         });
       });

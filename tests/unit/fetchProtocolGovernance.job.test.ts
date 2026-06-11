@@ -9,11 +9,15 @@ import type {
   NotificationService
 } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
-import type { RawGovernanceItem } from "../../src/protocols/types.js";
+import type {
+  FetchRecentOptions,
+  RawGovernanceItem
+} from "../../src/protocols/types.js";
 import {
   type FetchRun,
   type FetchRunRepository
 } from "../../src/storage/fetchRun.repository.js";
+import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createFakeProtocolAdapter,
@@ -119,7 +123,6 @@ describe("FetchProtocolGovernanceJob", () => {
       storedNewCount: 1,
       updatedExistingCount: 0,
       skippedCount: 1,
-      notificationPendingCount: 0,
       notificationSentCount: 0,
       notificationFailedCount: 0
     });
@@ -211,11 +214,52 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(proposals[0]).toMatchObject({
       title: "Updated title",
       firstSeenAt: "2026-06-05T00:00:00.000Z",
-      lastSeenAt: "2026-06-05T06:00:00.000Z",
       createdAt: "2026-06-05T00:00:00.000Z"
     });
 
     jest.useRealTimers();
+  });
+
+  it("does not rewrite unchanged existing proposals on repeated polls", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+
+    const item = createRawGovernanceItem({
+      sourceId: "1001",
+      fetchedAt: "2026-06-05T00:00:00.000Z"
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        fetchRecent: jest.fn(async () => [
+          {
+            ...item,
+            fetchedAt: new Date().toISOString()
+          }
+        ])
+      })
+    );
+
+    const first = await job.run("lido");
+    const firstStored = (await proposalRepository.findAll())[0];
+
+    jest.setSystemTime(new Date("2026-06-05T00:15:00.000Z"));
+    const second = await job.run("lido");
+    const secondStored = (await proposalRepository.findAll())[0];
+
+    expect(first).toMatchObject({
+      storedNewCount: 1,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 0
+    });
+    expect(second).toMatchObject({
+      storedNewCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 1
+    });
+    expect(secondStored).toMatchObject({
+      fetchedAt: firstStored.fetchedAt,
+      updatedAt: firstStored.updatedAt
+    });
   });
 
   it("sends Telegram-style notifications only for newly inserted proposals", async () => {
@@ -233,14 +277,13 @@ describe("FetchProtocolGovernanceJob", () => {
 
     expect(first).toMatchObject({
       storedNewCount: 1,
-      notificationPendingCount: 1,
       notificationSentCount: 1,
       notificationFailedCount: 0
     });
     expect(second).toMatchObject({
       storedNewCount: 0,
-      updatedExistingCount: 1,
-      notificationPendingCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 1,
       notificationSentCount: 0
     });
     expect(notificationService.messages).toHaveLength(1);
@@ -252,6 +295,93 @@ describe("FetchProtocolGovernanceJob", () => {
     });
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "sent"
+    });
+  });
+
+  it("passes an early-stop callback that stops after an already-known allowlisted page", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const known = createRawGovernanceItem({
+      sourceId: "1001",
+      publisherName: "Allowed Publisher"
+    });
+
+    await proposalRepository.upsert(normalizeLidoForumItem(known), {
+      notificationStatusForNew: "skipped"
+    });
+
+    const pageOne = createRawGovernanceItem({
+      sourceId: "1002",
+      publisherName: "Allowed Publisher"
+    });
+    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
+      const shouldStop = await options?.shouldStopAfterPage?.({
+        page: 0,
+        items: [known],
+        hasMore: true
+      });
+
+      return shouldStop ? [known] : [known, pageOne];
+    });
+    const { job } = createJob(
+      createFakeProtocolAdapter({
+        fetchRecent,
+        publisherAllowlist: ["Allowed Publisher"]
+      }),
+      proposalRepository
+    );
+
+    const result = await job.run("lido");
+
+    expect(fetchRecent).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      fetchedCount: 1,
+      allowlistedCount: 1,
+      storedNewCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 1
+    });
+    await expect(
+      proposalRepository.findBySourceIdentity("lido", "forum", "1002")
+    ).resolves.toBeNull();
+  });
+
+  it("does not stop pagination on a page with only non-allowlisted items", async () => {
+    const skipped = createRawGovernanceItem({
+      sourceId: "1001",
+      publisherName: "Random Person"
+    });
+    const allowed = createRawGovernanceItem({
+      sourceId: "1002",
+      publisherName: "Allowed Publisher"
+    });
+    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
+      const shouldStop = await options?.shouldStopAfterPage?.({
+        page: 0,
+        items: [skipped],
+        hasMore: true
+      });
+
+      return shouldStop ? [skipped] : [skipped, allowed];
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        fetchRecent,
+        publisherAllowlist: ["Allowed Publisher"]
+      })
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      fetchedCount: 2,
+      allowlistedCount: 1,
+      skippedCount: 1,
+      storedNewCount: 1
+    });
+    await expect(
+      proposalRepository.findBySourceIdentity("lido", "forum", "1002")
+    ).resolves.toMatchObject({
+      sourceId: "1002"
     });
   });
 
@@ -269,7 +399,6 @@ describe("FetchProtocolGovernanceJob", () => {
 
     expect(result).toMatchObject({
       storedNewCount: 1,
-      notificationPendingCount: 1,
       notificationSentCount: 0,
       notificationFailedCount: 1,
       errors: ["Telegram exploded"]
@@ -364,8 +493,7 @@ describe("FetchProtocolGovernanceJob", () => {
         sourceUrl: item.sourceUrl,
         publishedAt: item.publishedAt,
         fetchedAt: item.fetchedAt,
-        rawHash: "a".repeat(64),
-        status: "new"
+        rawHash: "a".repeat(64)
       }));
     const { job, fetchRunRepository } = createJob(
       createFakeProtocolAdapter({

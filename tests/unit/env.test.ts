@@ -11,8 +11,9 @@ describe("env parsing", () => {
     expect(env.port).toBe(3000);
     expect(env.storageMode).toBe("firestore");
     expect(env.enableScheduler).toBe(true);
-    expect(env.fetchIntervalCron).toBe("0 */6 * * *");
+    expect(env.fetchIntervalCron).toBe("*/15 * * * *");
     expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
+    expect(env.lidoFetchMaxPages).toBe(5);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.notifyOnNewProposal).toBe(true);
@@ -141,6 +142,26 @@ describe("env parsing", () => {
     ).toThrow();
   });
 
+  it("parses and validates Lido pagination controls", () => {
+    const env = loadEnv({
+      LIDO_FETCH_MAX_PAGES: "7"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.lidoFetchMaxPages).toBe(7);
+
+    expect(() =>
+      loadEnv({
+        LIDO_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        LIDO_FETCH_MAX_PAGES: "21"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+  });
+
   it("rejects invalid runtime and port values", () => {
     expect(() =>
       loadEnv({
@@ -172,9 +193,10 @@ describe("env parsing", () => {
     expect(JSON.stringify(safeConfig)).not.toContain("secret-token");
     expect(JSON.stringify(safeConfig)).not.toContain("telegram-token");
     expect(JSON.stringify(safeConfig)).not.toContain("chat-id");
-    expect(safeConfig.fetchIntervalCron).toBe("0 */6 * * *");
+    expect(safeConfig.fetchIntervalCron).toBe("*/15 * * * *");
     expect(safeConfig.firebase.hasPrivateKey).toBe(true);
     expect(safeConfig.apiAuth.hasToken).toBe(true);
+    expect(safeConfig.lido.fetchMaxPages).toBe(5);
     expect(safeConfig.notifications.hasTelegramBotToken).toBe(true);
     expect(safeConfig.notifications.hasTelegramChatId).toBe(true);
   });

@@ -37,6 +37,7 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       forumBaseUrl: env.lidoForumBaseUrl,
       forumApiBaseUrl: env.lidoForumApiBaseUrl,
       allowedPublishers: env.lidoAllowedPublishers,
+      maxPages: env.lidoFetchMaxPages,
       logger,
       client: lidoClient
     })

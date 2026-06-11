@@ -15,5 +15,6 @@ services:
       ENABLE_TELEGRAM_NOTIFICATIONS: "false"
       NOTIFY_ON_NEW_PROPOSAL: "true"
       LIDO_ALLOWED_PUBLISHERS: '["Allowed Publisher"]'
+      LIDO_FETCH_MAX_PAGES: 5
       LOG_LEVEL: info
     command: npm run demo:api

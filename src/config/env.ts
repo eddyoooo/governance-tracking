@@ -69,12 +69,13 @@ const rawEnvSchema = z
     FIREBASE_CLIENT_EMAIL: z.string().default(""),
     FIREBASE_PRIVATE_KEY: z.string().default(""),
     ENABLE_SCHEDULER: booleanFromEnv.optional(),
-    FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
+    FETCH_INTERVAL_CRON: z.string().default("*/15 * * * *"),
     ENABLE_DEBUG_ENDPOINTS: booleanFromEnv.default(false),
     LIDO_FORUM_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_FORUM_API_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_ENABLED: booleanFromEnv.default(true),
     LIDO_ALLOWED_PUBLISHERS: stringListFromEnv.default([]),
+    LIDO_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(5),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_CHAT_ID: z.string().default(""),
@@ -101,6 +102,7 @@ const rawEnvSchema = z
     lidoForumApiBaseUrl: value.LIDO_FORUM_API_BASE_URL,
     lidoEnabled: value.LIDO_ENABLED,
     lidoAllowedPublishers: value.LIDO_ALLOWED_PUBLISHERS,
+    lidoFetchMaxPages: value.LIDO_FETCH_MAX_PAGES,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramChatId: value.TELEGRAM_CHAT_ID,
@@ -140,7 +142,8 @@ export function toSafeConfig(env: Env) {
       enabled: env.lidoEnabled,
       forumBaseUrl: env.lidoForumBaseUrl,
       forumApiBaseUrl: env.lidoForumApiBaseUrl,
-      allowedPublisherCount: env.lidoAllowedPublishers.length
+      allowedPublisherCount: env.lidoAllowedPublishers.length,
+      fetchMaxPages: env.lidoFetchMaxPages
     },
     notifications: {
       telegramEnabled: env.enableTelegramNotifications,

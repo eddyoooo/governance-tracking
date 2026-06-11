@@ -19,13 +19,52 @@ const sortFields: Record<ProposalSort, keyof StoredProposal> = {
   publishedAt_desc: "publishedAt",
   publishedAt_asc: "publishedAt",
   firstSeenAt_desc: "firstSeenAt",
-  firstSeenAt_asc: "firstSeenAt",
-  lastSeenAt_desc: "lastSeenAt",
-  lastSeenAt_asc: "lastSeenAt"
+  firstSeenAt_asc: "firstSeenAt"
 };
 
 function sortDirection(sort: ProposalSort): "asc" | "desc" {
   return sort.endsWith("_asc") ? "asc" : "desc";
+}
+
+function hasMeaningfulProposalChange(
+  existing: StoredProposal,
+  proposal: NormalizedGovernanceItem
+): boolean {
+  return (
+    existing.protocol !== proposal.protocol ||
+    existing.sourceType !== proposal.sourceType ||
+    existing.sourceId !== proposal.sourceId ||
+    existing.title !== proposal.title ||
+    existing.publisherName !== proposal.publisherName ||
+    existing.sourceUrl !== proposal.sourceUrl ||
+    existing.publishedAt !== proposal.publishedAt ||
+    existing.rawHash !== proposal.rawHash
+  );
+}
+
+function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
+  const cleaned: StoredProposal = {
+    id: proposal.id,
+    protocol: proposal.protocol,
+    sourceType: proposal.sourceType,
+    sourceId: proposal.sourceId,
+    title: proposal.title,
+    publisherName: proposal.publisherName,
+    sourceUrl: proposal.sourceUrl,
+    publishedAt: proposal.publishedAt,
+    fetchedAt: proposal.fetchedAt,
+    rawHash: proposal.rawHash,
+    firstSeenAt: proposal.firstSeenAt,
+    notificationStatus: proposal.notificationStatus,
+    createdAt: proposal.createdAt,
+    updatedAt: proposal.updatedAt
+  };
+
+  if (proposal.notificationError) {
+    cleaned.notificationError = proposal.notificationError;
+  }
+
+  return cleaned;
 }
 
 export class FirestoreProposalRepository implements ProposalRepository {
@@ -44,15 +83,22 @@ export class FirestoreProposalRepository implements ProposalRepository {
       proposal.sourceType,
       proposal.sourceId
     );
+
+    if (existing && !hasMeaningfulProposalChange(existing, proposal)) {
+      return {
+        proposal: existing,
+        created: false,
+        updated: false
+      };
+    }
+
     const ref = this.collection.doc(existing?.id ?? proposal.id);
     const now = new Date().toISOString();
     const storedProposal: StoredProposal = {
       ...existing,
       ...proposal,
       id: existing?.id ?? proposal.id,
-      status: existing?.status ?? proposal.status,
       firstSeenAt: existing?.firstSeenAt ?? now,
-      lastSeenAt: now,
       notificationStatus:
         existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
       notificationError: existing?.notificationError,
@@ -60,11 +106,12 @@ export class FirestoreProposalRepository implements ProposalRepository {
       updatedAt: now
     };
 
-    await ref.set(storedProposal, { merge: true });
+    await ref.set(cleanStoredProposal(storedProposal));
 
     return {
       proposal: storedProposal,
-      created: !existing
+      created: !existing,
+      updated: true
     };
   }
 
@@ -113,7 +160,7 @@ export class FirestoreProposalRepository implements ProposalRepository {
 
     const snapshot = await firestoreQuery.get();
 
-    return snapshot.docs.map((doc) => doc.data() as StoredProposal);
+    return snapshot.docs.map((doc) => cleanStoredProposal(doc.data() as StoredProposal));
   }
 
   async findById(id: string): Promise<StoredProposal | null> {
@@ -123,7 +170,7 @@ export class FirestoreProposalRepository implements ProposalRepository {
       return null;
     }
 
-    return snapshot.data() as StoredProposal;
+    return cleanStoredProposal(snapshot.data() as StoredProposal);
   }
 
   async findBySourceIdentity(
@@ -139,7 +186,7 @@ export class FirestoreProposalRepository implements ProposalRepository {
       .get();
     const [doc] = snapshot.docs;
 
-    return doc ? (doc.data() as StoredProposal) : null;
+    return doc ? cleanStoredProposal(doc.data() as StoredProposal) : null;
   }
 
   async findByNotificationStatus(
@@ -176,8 +223,8 @@ export class FirestoreProposalRepository implements ProposalRepository {
       delete updated.notificationError;
     }
 
-    await ref.set(updated);
+    await ref.set(cleanStoredProposal(updated));
 
-    return updated;
+    return cleanStoredProposal(updated);
   }
 }

@@ -115,8 +115,15 @@ class FakeCollectionReference extends FakeQuery {
   }
 }
 
-function createFakeFirestore(): Firestore {
-  const collections = new Map<string, Map<string, StoredDocument>>();
+function createFakeFirestore(
+  seed: Record<string, Record<string, StoredDocument>> = {}
+): Firestore {
+  const collections = new Map(
+    Object.entries(seed).map(([collectionName, documents]) => [
+      collectionName,
+      new Map(Object.entries(documents))
+    ])
+  );
 
   return {
     collection: (name: string) => {
@@ -157,6 +164,38 @@ describe("FirestoreProposalRepository", () => {
     });
     await expect(repository.findById(proposal.id)).resolves.toMatchObject({
       title: "Updated proposal"
+    });
+  });
+
+  it("skips Firestore writes when an existing proposal has no meaningful source changes", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        fetchedAt: "2026-06-05T00:00:00.000Z"
+      })
+    );
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    const first = await repository.upsert(proposal);
+
+    jest.setSystemTime(new Date("2026-06-05T06:00:00.000Z"));
+    const second = await repository.upsert({
+      ...proposal,
+      fetchedAt: "2026-06-05T06:00:00.000Z"
+    });
+
+    expect(first).toMatchObject({
+      created: true,
+      updated: true
+    });
+    expect(second).toMatchObject({
+      created: false,
+      updated: false
+    });
+    expect(second.proposal).toMatchObject({
+      fetchedAt: "2026-06-05T00:00:00.000Z",
+      updatedAt: "2026-06-05T00:00:00.000Z"
     });
   });
 
@@ -202,6 +241,34 @@ describe("FirestoreProposalRepository", () => {
       notificationStatus: "sent"
     });
     expect(stored?.notificationError).toBeUndefined();
+  });
+
+  it("strips obsolete proposal fields from older Firestore documents", async () => {
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({
+        proposals: {
+          [proposal.id]: {
+            ...proposal,
+            firstSeenAt: "2026-06-05T00:00:00.000Z",
+            lastSeenAt: "2026-06-05T00:00:00.000Z",
+            status: "new",
+            notificationStatus: "skipped",
+            createdAt: "2026-06-05T00:00:00.000Z",
+            updatedAt: "2026-06-05T00:00:00.000Z"
+          }
+        }
+      })
+    );
+
+    const stored = await repository.findById(proposal.id);
+
+    expect(stored).toMatchObject({
+      id: proposal.id,
+      notificationStatus: "skipped"
+    });
+    expect(stored).not.toHaveProperty("lastSeenAt");
+    expect(stored).not.toHaveProperty("status");
   });
 
   it("finds proposal documents by protocol, newest first, with limits", async () => {
@@ -261,8 +328,8 @@ describe("FirestoreFetchRunRepository", () => {
       allowlistedCount: 0,
       storedNewCount: 0,
       updatedExistingCount: 0,
+      unchangedExistingCount: 0,
       skippedCount: 0,
-      notificationPendingCount: 0,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []

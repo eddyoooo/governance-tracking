@@ -51,11 +51,43 @@ describe("MemoryProposalRepository", () => {
     expect(first.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
     expect(first.proposal.updatedAt).toBe("2026-06-05T00:00:00.000Z");
     expect(first.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
-    expect(first.proposal.lastSeenAt).toBe("2026-06-05T00:00:00.000Z");
     expect(second.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
     expect(second.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
-    expect(second.proposal.lastSeenAt).toBe("2026-06-05T06:00:00.000Z");
     expect(second.proposal.updatedAt).toBe("2026-06-05T06:00:00.000Z");
+  });
+
+  it("skips writes when an existing proposal has no meaningful source changes", async () => {
+    const repository = new MemoryProposalRepository();
+    const initial = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        fetchedAt: "2026-06-05T00:00:00.000Z"
+      })
+    );
+    const sameSourceLaterFetch = {
+      ...initial,
+      fetchedAt: "2026-06-05T06:00:00.000Z"
+    };
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    const first = await repository.upsert(initial);
+
+    jest.setSystemTime(new Date("2026-06-05T06:00:00.000Z"));
+    const second = await repository.upsert(sameSourceLaterFetch);
+
+    expect(first).toMatchObject({
+      created: true,
+      updated: true
+    });
+    expect(second).toMatchObject({
+      created: false,
+      updated: false
+    });
+    expect(second.proposal).toMatchObject({
+      fetchedAt: "2026-06-05T00:00:00.000Z",
+      firstSeenAt: "2026-06-05T00:00:00.000Z",
+      updatedAt: "2026-06-05T00:00:00.000Z"
+    });
   });
 
   it("deduplicates by source identity even when the incoming id changes", async () => {
@@ -145,7 +177,6 @@ describe("MemoryProposalRepository", () => {
       publishedAt: "2026-05-02T10:00:00.000Z",
       fetchedAt: "2026-05-02T11:00:00.000Z",
       firstSeenAt: "2026-06-05T00:00:00.000Z",
-      lastSeenAt: "2026-06-05T06:00:00.000Z",
       createdAt: "2026-06-05T00:00:00.000Z",
       notificationStatus: "failed",
       notificationError: "boom"

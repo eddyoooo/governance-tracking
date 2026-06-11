@@ -19,8 +19,7 @@ describe("Lido normalizer", () => {
       sourceType: "forum",
       sourceId: "1001",
       title: "Allowed Lido Proposal",
-      publisherName: "Allowed Publisher",
-      status: "new"
+      publisherName: "Allowed Publisher"
     });
     expect(normalized.id).toMatch(/^lido_forum_1001_/);
     expect(normalized.rawHash).toHaveLength(64);
