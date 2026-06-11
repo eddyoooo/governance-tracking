@@ -1,5 +1,13 @@
-import { describe, expect, it, jest } from "@jest/globals";
-import { FetchProtocolGovernanceJob } from "../../src/jobs/fetchProtocolGovernance.job.js";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
+import {
+  FetchAlreadyRunningError,
+  FetchProtocolGovernanceJob,
+  UnknownProtocolAdapterError
+} from "../../src/jobs/fetchProtocolGovernance.job.js";
+import type {
+  NotificationMessage,
+  NotificationService
+} from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import {
@@ -25,12 +33,43 @@ class RecordingFetchRunRepository implements FetchRunRepository {
   async findById(id: string): Promise<FetchRun | null> {
     return this.runs.get(id) ?? null;
   }
+
+  async findAll(): Promise<FetchRun[]> {
+    return [...this.runs.values()];
+  }
+}
+
+class RecordingNotificationService implements NotificationService {
+  readonly name = "recording";
+  readonly enabled: boolean;
+  readonly messages: NotificationMessage[] = [];
+  private readonly fail: boolean;
+
+  constructor(
+    options: {
+      enabled?: boolean;
+      fail?: boolean;
+    } = {}
+  ) {
+    this.enabled = options.enabled ?? true;
+    this.fail = options.fail ?? false;
+  }
+
+  async send(message: NotificationMessage): Promise<void> {
+    this.messages.push(message);
+
+    if (this.fail) {
+      throw new Error("Telegram exploded");
+    }
+  }
 }
 
 function createJob(
   adapter = createFakeProtocolAdapter(),
   proposalRepository = new MemoryProposalRepository(),
-  fetchRunRepository = new RecordingFetchRunRepository()
+  fetchRunRepository = new RecordingFetchRunRepository(),
+  notificationService?: NotificationService,
+  notifyOnNewProposal = false
 ) {
   const registry = new ProtocolRegistry();
   registry.register(adapter);
@@ -40,7 +79,11 @@ function createJob(
       registry,
       proposalRepository,
       fetchRunRepository,
-      createSilentLogger()
+      createSilentLogger(),
+      {
+        notificationService,
+        notifyOnNewProposal
+      }
     ),
     proposalRepository,
     fetchRunRepository
@@ -48,6 +91,10 @@ function createJob(
 }
 
 describe("FetchProtocolGovernanceJob", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("fetches, filters, normalizes, stores, and records a successful run", async () => {
     const allowed = createRawGovernanceItem({
       sourceId: "1001",
@@ -68,8 +115,13 @@ describe("FetchProtocolGovernanceJob", () => {
 
     expect(result).toMatchObject({
       fetchedCount: 2,
-      storedCount: 1,
-      skippedCount: 1
+      allowlistedCount: 1,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
+      skippedCount: 1,
+      notificationPendingCount: 0,
+      notificationSentCount: 0,
+      notificationFailedCount: 0
     });
     expect(result.run.status).toBe("success");
     expect(fetchRunRepository.upserts.map((run) => run.status)).toEqual([
@@ -79,13 +131,16 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(fetchRunRepository.upserts[1]).toMatchObject({
       protocol: "lido",
       fetchedCount: 2,
-      storedCount: 1,
+      allowlistedCount: 1,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
       skippedCount: 1
     });
     expect(await proposalRepository.findAll()).toHaveLength(1);
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       sourceId: "1001",
-      publisherName: "Allowed Publisher"
+      publisherName: "Allowed Publisher",
+      notificationStatus: "skipped"
     });
   });
 
@@ -106,10 +161,123 @@ describe("FetchProtocolGovernanceJob", () => {
 
     expect(result).toMatchObject({
       fetchedCount: 1,
-      storedCount: 0,
+      allowlistedCount: 0,
+      storedNewCount: 0,
+      updatedExistingCount: 0,
       skippedCount: 1
     });
     expect(await proposalRepository.findAll()).toEqual([]);
+  });
+
+  it("updates existing proposals instead of inserting duplicates", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+
+    const fetchRecent = jest
+      .fn<() => Promise<RawGovernanceItem[]>>()
+      .mockResolvedValueOnce([
+        createRawGovernanceItem({
+          sourceId: "1001",
+          title: "Original title",
+          fetchedAt: "2026-06-05T00:00:00.000Z"
+        })
+      ])
+      .mockResolvedValueOnce([
+        createRawGovernanceItem({
+          sourceId: "1001",
+          title: "Updated title",
+          fetchedAt: "2026-06-05T06:00:00.000Z"
+        })
+      ]);
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({ fetchRecent })
+    );
+
+    const first = await job.run("lido");
+
+    jest.setSystemTime(new Date("2026-06-05T06:00:00.000Z"));
+    const second = await job.run("lido");
+    const proposals = await proposalRepository.findAll();
+
+    expect(first).toMatchObject({
+      storedNewCount: 1,
+      updatedExistingCount: 0
+    });
+    expect(second).toMatchObject({
+      storedNewCount: 0,
+      updatedExistingCount: 1
+    });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      title: "Updated title",
+      firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T06:00:00.000Z",
+      createdAt: "2026-06-05T00:00:00.000Z"
+    });
+
+    jest.useRealTimers();
+  });
+
+  it("sends Telegram-style notifications only for newly inserted proposals", async () => {
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService,
+      true
+    );
+
+    const first = await job.run("lido");
+    const second = await job.run("lido");
+
+    expect(first).toMatchObject({
+      storedNewCount: 1,
+      notificationPendingCount: 1,
+      notificationSentCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(second).toMatchObject({
+      storedNewCount: 0,
+      updatedExistingCount: 1,
+      notificationPendingCount: 0,
+      notificationSentCount: 0
+    });
+    expect(notificationService.messages).toHaveLength(1);
+    expect(notificationService.messages[0]).toMatchObject({
+      protocol: "lido",
+      sourceType: "forum",
+      publisherName: "Allowed Publisher",
+      title: "Allowed Lido Proposal"
+    });
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "sent"
+    });
+  });
+
+  it("marks notification failures without failing the fetch run", async () => {
+    const notificationService = new RecordingNotificationService({ fail: true });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService,
+      true
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      storedNewCount: 1,
+      notificationPendingCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 1,
+      errors: ["Telegram exploded"]
+    });
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "failed",
+      notificationError: "Telegram exploded"
+    });
   });
 
   it("throws for unknown protocols without recording a fetch run", async () => {
@@ -117,6 +285,9 @@ describe("FetchProtocolGovernanceJob", () => {
 
     await expect(job.run("missing")).rejects.toThrow(
       "Unknown protocol adapter: missing"
+    );
+    await expect(job.run("missing")).rejects.toBeInstanceOf(
+      UnknownProtocolAdapterError
     );
     expect(fetchRunRepository.upserts).toEqual([]);
   });
@@ -142,11 +313,12 @@ describe("FetchProtocolGovernanceJob", () => {
     await expect(job.run("lido")).rejects.toThrow(
       "Fetch already running for protocol: lido"
     );
+    await expect(job.run("lido")).rejects.toBeInstanceOf(FetchAlreadyRunningError);
 
     resolveFetch([createRawGovernanceItem()]);
     await expect(firstRun).resolves.toMatchObject({
       fetchedCount: 1,
-      storedCount: 1,
+      storedNewCount: 1,
       skippedCount: 0
     });
   });
@@ -169,7 +341,7 @@ describe("FetchProtocolGovernanceJob", () => {
     ]);
     expect(fetchRunRepository.upserts[1]).toMatchObject({
       status: "failed",
-      errorMessage: "Lido is unavailable"
+      errors: ["Lido is unavailable"]
     });
   });
 
@@ -203,9 +375,19 @@ describe("FetchProtocolGovernanceJob", () => {
     );
 
     await expect(job.run("lido")).rejects.toThrow("Normalizer broke");
+    expect(fetchRunRepository.upserts[1]).toMatchObject({
+      status: "failed",
+      fetchedCount: 1,
+      allowlistedCount: 1,
+      storedNewCount: 0,
+      updatedExistingCount: 0,
+      skippedCount: 0,
+      errors: ["Normalizer broke"]
+    });
+
     await expect(job.run("lido")).resolves.toMatchObject({
       fetchedCount: 1,
-      storedCount: 1,
+      storedNewCount: 1,
       skippedCount: 0
     });
 

@@ -2,23 +2,58 @@ import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/type
 import type {
   ProposalQuery,
   ProposalRepository,
+  ProposalSort,
+  UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
+
+const DEFAULT_PROPOSAL_LIMIT = 100;
+
+const sortFields: Record<ProposalSort, keyof StoredProposal> = {
+  publishedAt_desc: "publishedAt",
+  publishedAt_asc: "publishedAt",
+  firstSeenAt_desc: "firstSeenAt",
+  firstSeenAt_asc: "firstSeenAt",
+  lastSeenAt_desc: "lastSeenAt",
+  lastSeenAt_asc: "lastSeenAt"
+};
+
+function sortDirection(sort: ProposalSort): "asc" | "desc" {
+  return sort.endsWith("_asc") ? "asc" : "desc";
+}
 
 export class MemoryProposalRepository implements ProposalRepository {
   private readonly proposals = new Map<string, StoredProposal>();
 
-  async upsert(proposal: NormalizedGovernanceItem): Promise<UpsertResult> {
-    const existing = this.proposals.get(proposal.id);
+  clear(): void {
+    this.proposals.clear();
+  }
+
+  async upsert(
+    proposal: NormalizedGovernanceItem,
+    options: UpsertProposalOptions = {}
+  ): Promise<UpsertResult> {
+    const existing = await this.findBySourceIdentity(
+      proposal.protocol,
+      proposal.sourceType,
+      proposal.sourceId
+    );
     const now = new Date().toISOString();
     const storedProposal: StoredProposal = {
       ...existing,
       ...proposal,
+      id: existing?.id ?? proposal.id,
+      status: existing?.status ?? proposal.status,
+      firstSeenAt: existing?.firstSeenAt ?? now,
+      lastSeenAt: now,
+      notificationStatus:
+        existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
+      notificationError: existing?.notificationError,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     };
 
-    this.proposals.set(proposal.id, storedProposal);
+    this.proposals.set(storedProposal.id, storedProposal);
 
     return {
       proposal: storedProposal,
@@ -26,23 +61,44 @@ export class MemoryProposalRepository implements ProposalRepository {
     };
   }
 
-  async upsertMany(proposals: NormalizedGovernanceItem[]): Promise<UpsertResult[]> {
+  async upsertMany(
+    proposals: NormalizedGovernanceItem[],
+    options: UpsertProposalOptions = {}
+  ): Promise<UpsertResult[]> {
     const results: UpsertResult[] = [];
 
     for (const proposal of proposals) {
-      results.push(await this.upsert(proposal));
+      results.push(await this.upsert(proposal, options));
     }
 
     return results;
   }
 
   async findAll(query: ProposalQuery = {}): Promise<StoredProposal[]> {
-    const limit = query.limit ?? 100;
+    const limit = query.limit ?? DEFAULT_PROPOSAL_LIMIT;
+    const offset = query.offset ?? 0;
+    const sort = query.sort ?? "publishedAt_desc";
+    const sortField = sortFields[sort];
+    const direction = sortDirection(sort);
 
     return [...this.proposals.values()]
       .filter((proposal) => !query.protocol || proposal.protocol === query.protocol)
-      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-      .slice(0, limit);
+      .filter(
+        (proposal) =>
+          !query.publisherName || proposal.publisherName === query.publisherName
+      )
+      .filter((proposal) => !query.sourceType || proposal.sourceType === query.sourceType)
+      .filter(
+        (proposal) =>
+          !query.notificationStatus ||
+          proposal.notificationStatus === query.notificationStatus
+      )
+      .sort((left, right) => {
+        const compared = String(left[sortField]).localeCompare(String(right[sortField]));
+
+        return direction === "asc" ? compared : -compared;
+      })
+      .slice(offset, offset + limit);
   }
 
   async findById(id: string): Promise<StoredProposal | null> {
@@ -62,5 +118,42 @@ export class MemoryProposalRepository implements ProposalRepository {
           proposal.sourceId === sourceId
       ) ?? null
     );
+  }
+
+  async findByNotificationStatus(
+    status: StoredProposal["notificationStatus"],
+    query: ProposalQuery = {}
+  ): Promise<StoredProposal[]> {
+    return this.findAll({
+      ...query,
+      notificationStatus: status
+    });
+  }
+
+  async updateNotificationStatus(
+    id: string,
+    status: StoredProposal["notificationStatus"],
+    error?: string
+  ): Promise<StoredProposal | null> {
+    const existing = await this.findById(id);
+
+    if (!existing) {
+      return null;
+    }
+
+    const updated: StoredProposal = {
+      ...existing,
+      notificationStatus: status,
+      notificationError: error,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!error) {
+      delete updated.notificationError;
+    }
+
+    this.proposals.set(updated.id, updated);
+
+    return updated;
   }
 }

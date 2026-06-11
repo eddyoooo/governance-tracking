@@ -1,78 +1,66 @@
 # Governance Tracking
 
-Backend MVP for tracking governance activity across protocols. The current implementation tracks Lido governance forum activity from `https://research.lido.fi`, filters items by trusted publishers, normalizes allowlisted topics into proposal records, and exposes the stored records through an Express API.
+Node.js + TypeScript backend MVP for tracking governance activity across protocols. Step 2 tracks Lido forum activity, filters it by trusted publishers, deduplicates proposals, stores normalized records, records fetch runs, and can optionally notify Telegram when a new allowlisted proposal appears.
 
-For step-by-step terminal usage, see [PLATFORM_MANUAL.md](./PLATFORM_MANUAL.md).
+For a compact terminal-only reference, see [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md).
 
-## Current MVP Scope
+## Current Scope
 
-This step is intentionally focused on governance ingestion and storage. The backend can:
+The backend currently can:
 
-- Fetch recent Lido proposal topics from the public Discourse JSON API.
-- Validate external Lido responses with Zod before using them.
-- Extract a `publisherName` from each Lido forum topic.
-- Filter fetched topics by `LIDO_ALLOWED_PUBLISHERS`.
-- Normalize allowlisted topics into a protocol-agnostic proposal shape.
-- Deduplicate proposals with deterministic IDs based on `protocol + sourceType + sourceId`.
-- Persist structured proposal and fetch-run state in Firestore.
-- Run without Firebase in memory mode for local demo and tests.
-- Record fetch run metadata, including fetched, stored, skipped, success, and failure counts.
-- Trigger fetches manually through the API.
-- Run scheduled fetches with `node-cron`; the default schedule is once every 6 hours.
-- Optionally protect every endpoint with a bearer token or `x-api-token` header.
-- Run through Docker and docker-compose.
-- Run a granular Jest/Supertest test suite.
+- Fetch recent Lido governance topics from the Discourse JSON API.
+- Validate Lido API responses with Zod.
+- Resolve each topic's `publisherName`.
+- Filter by `LIDO_ALLOWED_PUBLISHERS`.
+- Normalize allowlisted items into internal proposal records.
+- Deduplicate by `protocol + sourceType + sourceId`.
+- Track `firstSeenAt`, `lastSeenAt`, `createdAt`, and `updatedAt`.
+- Store proposals and fetch runs in Firestore, or in memory for demo/tests.
+- Track notification status on proposals.
+- Optionally send Telegram notifications for newly discovered allowlisted proposals.
+- Expose storage-backed APIs for proposals, protocols, and fetch runs.
+- Expose debug endpoints that can be disabled.
+- Run scheduled fetches every 6 hours by default in normal mode.
+- Run fixture-backed demos without Firebase or Telegram credentials.
+- Run with Docker and docker-compose.
+- Run a deterministic Jest/Supertest test suite with no live network dependency.
 
-Out of scope for this step:
+Intentionally out of scope:
 
-- AI agents, summaries, classification, urgency scoring, recommended actions, or portfolio impact.
-- Snapshot ingestion.
-- On-chain governance ingestion.
-- Aave, Pendle, Uniswap, or other protocol adapters.
+- AI agents, summaries, classification, category tagging, urgency scoring, recommendations, portfolio impact, or position-impact logic.
+- Snapshot, on-chain governance, Aave, Pendle, Uniswap, or other adapters.
 - Angular dashboard implementation.
-- Firebase Storage.
+- Firebase Storage. This project uses Firestore for structured application state.
 
-Angular with TypeScript and Angular Material are planned for the future dashboard, but there is no dashboard in this step.
-
-## System Architecture
-
-The backend is organized around protocol adapters, a generic fetch job, repositories, and API routes.
+## Architecture
 
 ```text
-Lido Discourse JSON
+Lido Discourse JSON or demo fixture
   -> LidoForumClient
   -> LidoAdapter
   -> publisher allowlist filter
-  -> Lido normalizer
-  -> ProposalRepository
+  -> normalizer
+  -> fetch job business logic
+  -> ProposalRepository / FetchRunRepository
   -> Firestore or memory storage
   -> Express API
 ```
 
 Important source areas:
 
-- `src/index.ts`: process entrypoint, server startup, scheduler startup, graceful shutdown.
-- `src/server.ts`: Express app factory, middleware, routes, error handling.
-- `src/config/env.ts`: environment parsing, defaults, and safe config output.
-- `src/config/firebase.ts`: Firebase Admin and Firestore setup.
-- `src/protocols/types.ts`: shared protocol adapter and proposal interfaces.
-- `src/protocols/registry.ts`: protocol adapter registry.
-- `src/protocols/allowlist.ts`: generic publisher allowlist matching.
-- `src/protocols/lido/lidoForum.client.ts`: Lido Discourse JSON client.
-- `src/protocols/lido/lido.adapter.ts`: Lido protocol adapter.
-- `src/protocols/lido/lido.normalizer.ts`: Lido raw-item to normalized-proposal mapping.
-- `src/jobs/fetchProtocolGovernance.job.ts`: fetch, filter, normalize, store, and fetch-run recording.
-- `src/storage/*`: memory and Firestore repositories.
-- `src/scheduler/scheduler.ts`: cron scheduling.
-- `src/api/routes/*`: health, proposal, protocol, admin, and debug routes.
-- `src/demo.ts`: fixture-backed demo run.
-- `tests/*`: unit, fixture, and integration tests.
+- `src/server.ts`: Express app factory, middleware, routes, dependency wiring.
+- `src/config/env.ts`: env parsing, defaults, safe config output.
+- `src/protocols/*`: protocol interfaces, registry, allowlist logic, Lido adapter/client/normalizer.
+- `src/jobs/fetchProtocolGovernance.job.ts`: fetch, filter, normalize, upsert, notify, fetch-run recording.
+- `src/notifications/*`: Noop and Telegram notification services.
+- `src/storage/*`: Firestore and memory repositories.
+- `src/api/routes/*`: health, proposals, protocols, admin, and debug routes.
+- `src/demo.ts`: one-shot fixture-backed demo.
+- `tests/*`: unit, fixture, and integration coverage.
 
 ## Data Model
 
-The MVP stores normalized proposals, not full raw Discourse responses.
-
-Normalized proposal shape:
+Stored proposal shape:
 
 ```json
 {
@@ -84,21 +72,18 @@ Normalized proposal shape:
   "publisherName": "Example Publisher",
   "sourceUrl": "https://research.lido.fi/t/example/11415",
   "publishedAt": "2026-06-05T09:00:00.000Z",
+  "firstSeenAt": "2026-06-05T10:00:00.000Z",
+  "lastSeenAt": "2026-06-05T10:00:00.000Z",
   "fetchedAt": "2026-06-05T10:00:00.000Z",
   "rawHash": "64-character-sha256-hash",
   "status": "new",
+  "notificationStatus": "skipped",
   "createdAt": "2026-06-05T10:00:00.000Z",
   "updatedAt": "2026-06-05T10:00:00.000Z"
 }
 ```
 
-Key fields:
-
-- `id`: internal deterministic proposal id. Use this for `/api/proposals/:id`.
-- `sourceId`: original upstream Lido/Discourse topic id. This is not the same as `id`.
-- `publisherName`: field used for allowlist filtering.
-- `rawHash`: deterministic hash of the source payload used by the normalizer.
-- `status`: currently defaults to `new`; no workflow logic is implemented yet.
+`id` is the internal deterministic id used by `GET /api/proposals/:id`. `sourceId` is the upstream Lido/Discourse topic id, so topic `11415` is read with `GET /api/proposals/source/lido/forum/11415` unless you already know the internal id.
 
 Fetch run shape:
 
@@ -110,8 +95,14 @@ Fetch run shape:
   "finishedAt": "2026-06-05T10:00:01.000Z",
   "status": "success",
   "fetchedCount": 30,
-  "storedCount": 4,
-  "skippedCount": 26
+  "allowlistedCount": 4,
+  "storedNewCount": 2,
+  "updatedExistingCount": 2,
+  "skippedCount": 26,
+  "notificationPendingCount": 2,
+  "notificationSentCount": 2,
+  "notificationFailedCount": 0,
+  "errors": []
 }
 ```
 
@@ -120,48 +111,13 @@ Firestore collections:
 - `proposals/{proposalId}`
 - `fetchRuns/{runId}`
 
-## Publisher Allowlist
+The app uses the default Firestore database.
 
-Only allowlisted publishers are persisted. The filter uses `publisherName`.
+## Environment
 
-For Lido, `publisherName` is resolved from the Discourse topic in this order:
+Create a local `.env` file directly.
 
-1. Find the topic poster whose `description` includes `Original Poster`.
-2. Use that poster's `user_id` to find the matching user in the response `users` array.
-3. Prefer `user.name`.
-4. Fall back to `user.username`.
-5. Fall back to `topic.last_poster_username`.
-6. Fall back to `unknown`.
-
-The allowlist comparison is:
-
-- trimmed
-- case-insensitive
-- punctuation-normalized
-- tolerant of small typos
-
-Set the allowlist as a JSON array. Comma-separated values still work for backwards compatibility, but JSON is easier to read as the list grows.
-
-```bash
-LIDO_ALLOWED_PUBLISHERS='[
-  "Publisher One",
-  "Publisher Two"
-]'
-```
-
-If no publisher matches, fetches can succeed while storing zero proposals. In that case, `storedCount` will be `0` and `skippedCount` will equal `fetchedCount`.
-
-## Environment Configuration
-
-Create or edit local config in `.env`.
-
-```bash
-nano .env
-```
-
-`.env` is ignored by git. Never commit Firebase credentials or API tokens.
-
-Local demo/development defaults:
+Development/demo values:
 
 ```bash
 NODE_ENV=development
@@ -171,12 +127,14 @@ DEMO_MODE=true
 ENABLE_SCHEDULER=false
 ENABLE_DEBUG_ENDPOINTS=true
 API_AUTH_ENABLED=false
+LOG_LEVEL=info
 ```
 
 Production-like values:
 
 ```bash
 NODE_ENV=production
+PORT=3000
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
@@ -184,13 +142,17 @@ FETCH_INTERVAL_CRON=0 */6 * * *
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
-LIDO_ALLOWED_PUBLISHERS='[
-  "Publisher One",
-  "Publisher Two"
-]'
+LOG_LEVEL=info
 ```
 
-Firebase values required for Firestore mode:
+Allowed values:
+
+- `NODE_ENV`: `development`, `test`, `production`
+- `STORAGE_MODE`: `firestore`, `memory`
+- Boolean values: `true` or `false`
+- `FETCH_INTERVAL_CRON`: cron expression, default `0 */6 * * *`
+
+Firebase values for Firestore mode:
 
 ```bash
 FIREBASE_PROJECT_ID=replace-with-firebase-project-id
@@ -200,161 +162,146 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-service-account-
 
 Notes:
 
-- `FIREBASE_PRIVATE_KEY` may use escaped newlines as `\n`.
-- Firebase Storage is not used.
-- `CORS_ORIGIN` defaults to `http://localhost:4200` for the future Angular dashboard.
+- `FIREBASE_PRIVATE_KEY` can use escaped newlines as `\n`.
+- Firebase Storage is not required or used.
+- `.env` is ignored by git. Do not commit credentials or API tokens.
 
-## Running The Backend
+Lido values:
 
-Install dependencies:
+```bash
+LIDO_FORUM_BASE_URL=https://research.lido.fi
+LIDO_FORUM_API_BASE_URL=https://research.lido.fi
+LIDO_ENABLED=true
+LIDO_ALLOWED_PUBLISHERS='[
+  "Lido Labs Foundation - Operations Team",
+  "Lido | Finance Team",
+  "Lido Ecosystem Foundation - Operations Team"
+]'
+```
+
+`LIDO_ALLOWED_PUBLISHERS` should be a JSON array. Legacy comma-separated values still work. Matching is trimmed, case-insensitive, punctuation-normalized, and conservatively typo-tolerant.
+
+Telegram values:
+
+```bash
+ENABLE_TELEGRAM_NOTIFICATIONS=false
+TELEGRAM_BOT_TOKEN=replace-with-telegram-bot-token
+TELEGRAM_CHAT_ID=replace-with-telegram-chat-id
+NOTIFY_ON_NEW_PROPOSAL=true
+```
+
+If Telegram is disabled, new proposals get `notificationStatus=skipped`. If Telegram is enabled and `NOTIFY_ON_NEW_PROPOSAL=true`, new allowlisted proposals are marked `pending`, sent, then updated to `sent` or `failed`.
+
+API auth values:
+
+```bash
+API_AUTH_ENABLED=true
+API_AUTH_TOKEN=replace-with-long-random-secret
+```
+
+When enabled, every endpoint requires either `Authorization: Bearer <token>` or `x-api-token: <token>`.
+
+## Run Locally
+
+Install and start:
 
 ```bash
 npm install
-```
-
-Start development server:
-
-```bash
 npm run dev
 ```
 
-Build TypeScript:
+Build and run compiled output:
 
 ```bash
 npm run build
-```
-
-Run compiled output:
-
-```bash
 npm run start
 ```
 
-Run the fixture demo:
+Run the one-shot fixture demo:
 
 ```bash
 npm run demo
 ```
 
-For interactive usage and expected endpoint responses, see [PLATFORM_MANUAL.md](./PLATFORM_MANUAL.md).
+Run the fixture-backed API demo:
 
-## API Overview
+```bash
+STORAGE_MODE=memory DEMO_MODE=true ENABLE_DEBUG_ENDPOINTS=true ENABLE_SCHEDULER=false npm run demo:api
+```
 
-Read/config endpoints do not call Lido or Discourse. `/health`, `/api/protocols`, `/api/proposals`, and `/api/proposals/:id` read app state from config, memory storage, or Firestore.
+In memory/demo mode, data is stored inside the running Node.js process only. Restarting the process clears it.
 
-The endpoints that call Lido/Discourse are `/api/debug/lido/recent`, `/api/debug/lido/fetch-once`, and `/api/admin/fetch/lido`.
+## API
 
-Live-fetch endpoint behavior:
+Storage-backed endpoints do not call Lido:
 
-- `GET /api/debug/lido/recent`: fetches live Lido forum items and returns them without filtering, normalizing, or storing. Use this to inspect current `publisherName` values.
-- `POST /api/debug/lido/fetch-once`: fetches live Lido items, filters by `LIDO_ALLOWED_PUBLISHERS`, normalizes matches, stores them, and returns a fetch-run summary. Debug endpoint only.
-- `POST /api/admin/fetch/lido`: same fetch/filter/normalize/store behavior as debug fetch-once, but intended as the production-style manual admin trigger.
-
-| Method | Route | Returns |
+| Method | Route | Expected return |
 | --- | --- | --- |
-| `GET` | `/` | Service name and core route list. |
+| `GET` | `/` | Service name and route list. |
 | `GET` | `/health` | `{ ok, storageMode, schedulerEnabled }`. |
 | `GET` | `/api/protocols` | Registered protocol adapters and source metadata. |
-| `GET` | `/api/proposals` | Stored proposal list. Supports `protocol` and `limit`. |
-| `GET` | `/api/proposals/:id` | One stored proposal by internal proposal id. |
+| `GET` | `/api/proposals` | Stored proposals from memory or Firestore. |
+| `GET` | `/api/proposals/:id` | One stored proposal by internal id. |
 | `GET` | `/api/proposals/source/:protocol/:sourceType/:sourceId` | One stored proposal by source identity. |
-| `POST` | `/api/admin/fetch/lido` | Fetch-run summary after fetching and storing Lido proposals. |
+| `GET` | `/api/admin/fetch-runs` | Stored fetch runs from memory or Firestore. |
+
+Fetch/debug endpoints call the registered Lido adapter. In memory/demo mode, that adapter uses fixtures. In normal Firestore mode, it calls Lido/Discourse.
+
+| Method | Route | Expected return |
+| --- | --- | --- |
+| `POST` | `/api/admin/fetch/:protocol` | Fetch-run result after fetching, filtering, upserting, and optional notification. |
+| `POST` | `/api/admin/notify-pending` | Counts for pending notifications attempted. |
 | `GET` | `/api/debug/config-safe` | Non-secret runtime config. Debug only. |
-| `GET` | `/api/debug/lido/recent` | Live Lido items before allowlist filtering. Debug only. |
-| `POST` | `/api/debug/lido/fetch-once` | Fetch-run summary for a one-off debug fetch. Debug only. |
+| `GET` | `/api/debug/lido/recent` | Recent raw Lido adapter items; does not store. Debug only. |
+| `POST` | `/api/debug/lido/fetch-once` | Same fetch/store behavior as admin fetch. Debug only. |
+| `GET` | `/api/debug/demo-fixtures` | Demo fixture payloads. Debug only. |
+| `POST` | `/api/debug/reset-demo-state` | Clears memory repositories. Debug and memory/demo only. |
 
-Debug endpoints require:
+Proposal list query params:
 
-```bash
-ENABLE_DEBUG_ENDPOINTS=true
+```text
+protocol
+publisherName
+sourceType=forum|snapshot|onchain
+notificationStatus=pending|sent|skipped|failed
+limit=1..100
+offset=0..
+sort=publishedAt_desc|publishedAt_asc|firstSeenAt_desc|firstSeenAt_asc|lastSeenAt_desc|lastSeenAt_asc
 ```
 
-If auth is enabled, every endpoint requires either:
+Example commands:
 
 ```bash
-Authorization: Bearer <API_AUTH_TOKEN>
+curl -s http://localhost:3000/health
+curl -s http://localhost:3000/api/protocols
+curl -s -X POST http://localhost:3000/api/admin/fetch/lido
+curl -s "http://localhost:3000/api/proposals?protocol=lido&limit=5"
+curl -s http://localhost:3000/api/proposals/source/lido/forum/11415
+curl -s http://localhost:3000/api/admin/fetch-runs
+curl -s -X POST http://localhost:3000/api/admin/notify-pending
 ```
 
-or:
+With auth enabled:
 
 ```bash
-x-api-token: <API_AUTH_TOKEN>
+curl -s http://localhost:3000/health \
+  -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
 ## Scheduler
 
-Scheduled fetches are controlled by:
+Normal scheduled fetching:
 
 ```bash
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 */6 * * *
 ```
 
-Every scheduled run performs the same flow as a manual fetch:
+The cron job runs the same logic as `POST /api/admin/fetch/lido`: fetch, allowlist-filter, dedupe/upsert, optionally notify, and record a fetch run. Overlapping runs for the same protocol are blocked.
 
-1. Fetch recent Lido forum topics.
-2. Filter by `LIDO_ALLOWED_PUBLISHERS`.
-3. Normalize allowlisted items.
-4. Upsert proposals.
-5. Record fetch-run metadata.
+In memory/demo mode, scheduler defaults to disabled unless `ENABLE_SCHEDULER=true` is explicitly set.
 
-The fetch job prevents overlapping runs for the same protocol.
-
-## Operational Troubleshooting
-
-`storedCount` is `0` after a fetch:
-
-The fetch succeeded, but no fetched `publisherName` matched `LIDO_ALLOWED_PUBLISHERS`. Inspect live publishers with:
-
-```bash
-curl -s http://localhost:3000/api/debug/lido/recent
-```
-
-Then update `LIDO_ALLOWED_PUBLISHERS`, restart the server, and fetch again.
-
-`/api/proposals/11415` returns `Proposal not found`:
-
-`11415` is a Lido/Discourse `sourceId`, not the internal stored proposal `id`. First list stored proposals:
-
-```bash
-curl -s http://localhost:3000/api/proposals
-```
-
-Then use the returned internal id, which looks like `lido_forum_11415_<hash>`.
-
-Alternatively, use source-identity lookup:
-
-```bash
-curl -s http://localhost:3000/api/proposals/source/lido/forum/11415
-```
-
-`/api/proposals?limit=abc` returns `400`:
-
-`limit` must be an integer between `1` and `100`.
-
-Debug endpoints return `404`:
-
-Set `ENABLE_DEBUG_ENDPOINTS=true` and restart the server.
-
-Every endpoint returns `401`:
-
-`API_AUTH_ENABLED=true`. Send either:
-
-```bash
-Authorization: Bearer <API_AUTH_TOKEN>
-```
-
-or:
-
-```bash
-x-api-token: <API_AUTH_TOKEN>
-```
-
-Firestore mode fails on startup:
-
-Check that `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` are set. Firebase Storage is not required.
-
-## Testing
+## Tests
 
 Run all tests:
 
@@ -368,64 +315,63 @@ Run build plus all tests:
 npm run check
 ```
 
-Run tests in watch mode:
+Run watch mode:
 
 ```bash
 npm run test:watch
 ```
 
-The suite covers:
-
-- env parsing and safe config
-- Firebase config validation
-- allowlist matching
-- deterministic IDs and hashes
-- Lido response validation and mapping
-- Lido adapter behavior
-- normalization
-- memory repositories
-- mocked Firestore repositories
-- fetch run repository behavior
-- fetch job success, skip, failure, overlap, and retry behavior
-- scheduler behavior
-- API route behavior and auth enforcement
-
-The tests use representative fixture data and mocked external dependencies where needed. They do not rely on live network calls, which keeps the suite deterministic.
+The suite covers env parsing, safe config, Firebase config validation, allowlists, response validation, normalization, deterministic ids/hashes, memory and mocked Firestore repositories, proposal upsert semantics, fetch-run listing, fetch job counts, duplicate handling, notification success/failure/no-duplicate behavior, admin auth, debug gating, proposal query params, scheduler behavior, and demo-mode assumptions. Tests use fixtures/mocks and do not rely on live network calls.
 
 ## Docker
 
-Run local development with docker-compose:
+Development compose:
 
 ```bash
 docker compose up --build
 ```
 
-Run fixture demo with docker-compose:
+Credential-free API demo:
 
 ```bash
 docker compose -f docker-compose.demo.yml up --build
 ```
 
-Build and run the production image:
+Production image:
 
 ```bash
 docker build -t governance-tracking-backend .
 docker run --env-file .env -p 3000:3000 governance-tracking-backend
 ```
 
-Secrets are injected at runtime through environment variables. They are not baked into the image.
+Secrets are injected at runtime. They are not baked into the image.
+
+## Troubleshooting
+
+Fetch succeeds but no proposals are stored:
+
+The fetched `publisherName` values did not match `LIDO_ALLOWED_PUBLISHERS`. Enable debug endpoints, inspect `/api/debug/lido/recent`, update the allowlist, restart, and fetch again.
+
+`/api/proposals/11415` returns `Proposal not found`:
+
+`11415` is a source id, not the internal proposal id. Use `/api/proposals/source/lido/forum/11415` or list proposals and copy the internal `id`.
+
+Debug endpoints return `404`:
+
+Set `ENABLE_DEBUG_ENDPOINTS=true` and restart.
+
+Every endpoint returns `401`:
+
+`API_AUTH_ENABLED=true`; send the configured token.
+
+Firestore startup fails:
+
+Check `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. Firebase Storage is not needed.
+
+Telegram startup fails:
+
+If `ENABLE_TELEGRAM_NOTIFICATIONS=true`, both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be set.
 
 ## Adding Another Protocol Later
 
-The current Lido adapter is the reference implementation. A new protocol should add:
-
-1. A protocol folder under `src/protocols/<protocol>/`.
-2. A source client that fetches external governance data.
-3. Zod schemas for external response validation.
-4. A normalizer that returns `NormalizedGovernanceItem`.
-5. A `ProtocolAdapter` implementation.
-6. Registration in the protocol registry.
-7. Protocol-specific environment values and publisher allowlist support.
-8. Fixtures and unit/integration tests before scheduled fetches are enabled.
-
-The shared fetch job and repositories should not need protocol-specific branching for normal forum-like sources.
+Add a folder under `src/protocols/<protocol>/` with a source client, Zod response schemas, normalizer, adapter, fixtures, and tests. Register the adapter in `src/protocols/registry.ts`. The shared fetch job and repositories should not need protocol-specific branching for normal forum-like sources.

@@ -8,8 +8,25 @@ import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/type
 import type {
   ProposalQuery,
   ProposalRepository,
+  ProposalSort,
+  UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
+
+const DEFAULT_PROPOSAL_LIMIT = 100;
+
+const sortFields: Record<ProposalSort, keyof StoredProposal> = {
+  publishedAt_desc: "publishedAt",
+  publishedAt_asc: "publishedAt",
+  firstSeenAt_desc: "firstSeenAt",
+  firstSeenAt_asc: "firstSeenAt",
+  lastSeenAt_desc: "lastSeenAt",
+  lastSeenAt_asc: "lastSeenAt"
+};
+
+function sortDirection(sort: ProposalSort): "asc" | "desc" {
+  return sort.endsWith("_asc") ? "asc" : "desc";
+}
 
 export class FirestoreProposalRepository implements ProposalRepository {
   private readonly collection: CollectionReference<DocumentData>;
@@ -18,14 +35,27 @@ export class FirestoreProposalRepository implements ProposalRepository {
     this.collection = db.collection("proposals");
   }
 
-  async upsert(proposal: NormalizedGovernanceItem): Promise<UpsertResult> {
-    const ref = this.collection.doc(proposal.id);
-    const snapshot = await ref.get();
-    const existing = snapshot.exists ? (snapshot.data() as StoredProposal) : null;
+  async upsert(
+    proposal: NormalizedGovernanceItem,
+    options: UpsertProposalOptions = {}
+  ): Promise<UpsertResult> {
+    const existing = await this.findBySourceIdentity(
+      proposal.protocol,
+      proposal.sourceType,
+      proposal.sourceId
+    );
+    const ref = this.collection.doc(existing?.id ?? proposal.id);
     const now = new Date().toISOString();
     const storedProposal: StoredProposal = {
       ...existing,
       ...proposal,
+      id: existing?.id ?? proposal.id,
+      status: existing?.status ?? proposal.status,
+      firstSeenAt: existing?.firstSeenAt ?? now,
+      lastSeenAt: now,
+      notificationStatus:
+        existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
+      notificationError: existing?.notificationError,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     };
@@ -34,15 +64,18 @@ export class FirestoreProposalRepository implements ProposalRepository {
 
     return {
       proposal: storedProposal,
-      created: !snapshot.exists
+      created: !existing
     };
   }
 
-  async upsertMany(proposals: NormalizedGovernanceItem[]): Promise<UpsertResult[]> {
+  async upsertMany(
+    proposals: NormalizedGovernanceItem[],
+    options: UpsertProposalOptions = {}
+  ): Promise<UpsertResult[]> {
     const results: UpsertResult[] = [];
 
     for (const proposal of proposals) {
-      results.push(await this.upsert(proposal));
+      results.push(await this.upsert(proposal, options));
     }
 
     return results;
@@ -55,9 +88,28 @@ export class FirestoreProposalRepository implements ProposalRepository {
       firestoreQuery = firestoreQuery.where("protocol", "==", query.protocol);
     }
 
+    if (query.publisherName) {
+      firestoreQuery = firestoreQuery.where("publisherName", "==", query.publisherName);
+    }
+
+    if (query.sourceType) {
+      firestoreQuery = firestoreQuery.where("sourceType", "==", query.sourceType);
+    }
+
+    if (query.notificationStatus) {
+      firestoreQuery = firestoreQuery.where(
+        "notificationStatus",
+        "==",
+        query.notificationStatus
+      );
+    }
+
+    const sort = query.sort ?? "publishedAt_desc";
+
     firestoreQuery = firestoreQuery
-      .orderBy("publishedAt", "desc")
-      .limit(query.limit ?? 100);
+      .orderBy(sortFields[sort], sortDirection(sort))
+      .offset(query.offset ?? 0)
+      .limit(query.limit ?? DEFAULT_PROPOSAL_LIMIT);
 
     const snapshot = await firestoreQuery.get();
 
@@ -88,5 +140,44 @@ export class FirestoreProposalRepository implements ProposalRepository {
     const [doc] = snapshot.docs;
 
     return doc ? (doc.data() as StoredProposal) : null;
+  }
+
+  async findByNotificationStatus(
+    status: StoredProposal["notificationStatus"],
+    query: ProposalQuery = {}
+  ): Promise<StoredProposal[]> {
+    return this.findAll({
+      ...query,
+      notificationStatus: status
+    });
+  }
+
+  async updateNotificationStatus(
+    id: string,
+    status: StoredProposal["notificationStatus"],
+    error?: string
+  ): Promise<StoredProposal | null> {
+    const ref = this.collection.doc(id);
+    const snapshot = await ref.get();
+
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    const existing = snapshot.data() as StoredProposal;
+    const updated: StoredProposal = {
+      ...existing,
+      notificationStatus: status,
+      notificationError: error,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!error) {
+      delete updated.notificationError;
+    }
+
+    await ref.set(updated);
+
+    return updated;
   }
 }

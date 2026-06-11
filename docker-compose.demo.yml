@@ -3,11 +3,17 @@ services:
     build:
       context: .
       target: dev
+    ports:
+      - "3000:3000"
     environment:
       NODE_ENV: development
+      PORT: 3000
       STORAGE_MODE: memory
       DEMO_MODE: "true"
       ENABLE_SCHEDULER: "false"
       ENABLE_DEBUG_ENDPOINTS: "true"
-      LIDO_ALLOWED_PUBLISHERS: Allowed Publisher
-    command: npm run demo
+      ENABLE_TELEGRAM_NOTIFICATIONS: "false"
+      NOTIFY_ON_NEW_PROPOSAL: "true"
+      LIDO_ALLOWED_PUBLISHERS: '["Allowed Publisher"]'
+      LOG_LEVEL: info
+    command: npm run demo:api

@@ -1,6 +1,9 @@
 import { Router } from "express";
-import { toSafeConfig } from "../../config/env.js";
+import { isMemoryMode, toSafeConfig } from "../../config/env.js";
+import { cloneLidoRecentTopicsFixture } from "../../demoFixtures/lidoRecentTopics.fixture.js";
 import type { AppContext } from "../../server.js";
+import { MemoryFetchRunRepository } from "../../storage/fetchRun.repository.js";
+import { MemoryProposalRepository } from "../../storage/memoryProposal.repository.js";
 
 export function createDebugRouter(context: AppContext): Router {
   const router = Router();
@@ -44,6 +47,39 @@ export function createDebugRouter(context: AppContext): Router {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.get("/demo-fixtures", (_request, response) => {
+    response.json({
+      lidoRecentTopics: cloneLidoRecentTopicsFixture()
+    });
+  });
+
+  router.post("/reset-demo-state", (_request, response) => {
+    if (!isMemoryMode(context.env)) {
+      response.status(403).json({
+        error: "Demo state reset is only available in DEMO_MODE=true or STORAGE_MODE=memory."
+      });
+      return;
+    }
+
+    if (
+      !(context.proposalRepository instanceof MemoryProposalRepository) ||
+      !(context.fetchRunRepository instanceof MemoryFetchRunRepository)
+    ) {
+      response.status(409).json({
+        error: "Demo state reset requires in-memory repositories."
+      });
+      return;
+    }
+
+    context.proposalRepository.clear();
+    context.fetchRunRepository.clear();
+
+    response.json({
+      reset: true,
+      storageMode: "memory"
+    });
   });
 
   return router;

@@ -61,4 +61,31 @@ describe("ProtocolRegistry", () => {
       }
     });
   });
+
+  it("uses fixture-backed Lido fetching in demo or memory mode", async () => {
+    const registry = createProtocolRegistry(
+      testEnv({
+        STORAGE_MODE: "memory",
+        DEMO_MODE: "true",
+        LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher"])
+      }),
+      createSilentLogger()
+    );
+    const lido = registry.get("lido");
+
+    await expect(lido?.fetchRecent()).resolves.toMatchObject([
+      {
+        protocol: "lido",
+        sourceType: "forum",
+        sourceId: "1001",
+        publisherName: "Allowed Publisher"
+      },
+      {
+        protocol: "lido",
+        sourceType: "forum",
+        sourceId: "1002",
+        publisherName: "Random Person"
+      }
+    ]);
+  });
 });

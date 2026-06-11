@@ -38,23 +38,54 @@ class FakeQuery {
   constructor(
     protected readonly documents: Map<string, StoredDocument>,
     private readonly filters: Array<{ field: string; value: string }> = [],
-    private readonly limitCount?: number
+    private readonly limitCount?: number,
+    private readonly offsetCount = 0,
+    private readonly orderField = "publishedAt",
+    private readonly orderDirection: "asc" | "desc" = "desc"
   ) {}
 
   where(field: string, _operator: string, value: string): FakeQuery {
     return new FakeQuery(
       this.documents,
       [...this.filters, { field, value }],
-      this.limitCount
+      this.limitCount,
+      this.offsetCount,
+      this.orderField,
+      this.orderDirection
     );
   }
 
-  orderBy(_field: string, _direction: string): FakeQuery {
-    return this;
+  orderBy(field: string, direction: "asc" | "desc"): FakeQuery {
+    return new FakeQuery(
+      this.documents,
+      this.filters,
+      this.limitCount,
+      this.offsetCount,
+      field,
+      direction
+    );
   }
 
   limit(limitCount: number): FakeQuery {
-    return new FakeQuery(this.documents, this.filters, limitCount);
+    return new FakeQuery(
+      this.documents,
+      this.filters,
+      limitCount,
+      this.offsetCount,
+      this.orderField,
+      this.orderDirection
+    );
+  }
+
+  offset(offsetCount: number): FakeQuery {
+    return new FakeQuery(
+      this.documents,
+      this.filters,
+      this.limitCount,
+      offsetCount,
+      this.orderField,
+      this.orderDirection
+    );
   }
 
   async get() {
@@ -62,10 +93,14 @@ class FakeQuery {
       .filter((document) =>
         this.filters.every((filter) => document[filter.field] === filter.value)
       )
-      .sort((left, right) =>
-        String(right.publishedAt ?? "").localeCompare(String(left.publishedAt ?? ""))
-      )
-      .slice(0, this.limitCount ?? 100)
+      .sort((left, right) => {
+        const compared = String(left[this.orderField] ?? "").localeCompare(
+          String(right[this.orderField] ?? "")
+        );
+
+        return this.orderDirection === "asc" ? compared : -compared;
+      })
+      .slice(this.offsetCount, this.offsetCount + (this.limitCount ?? 100))
       .map((document) => ({
         data: () => document
       }));
@@ -125,6 +160,50 @@ describe("FirestoreProposalRepository", () => {
     });
   });
 
+  it("deduplicates proposal documents by source identity and preserves the stored id", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    const first = await repository.upsert(proposal);
+    const second = await repository.upsert({
+      ...proposal,
+      id: "accidental_new_id",
+      title: "Updated through source identity"
+    });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.proposal).toMatchObject({
+      id: proposal.id,
+      title: "Updated through source identity"
+    });
+    await expect(repository.findAll()).resolves.toHaveLength(1);
+    await expect(repository.findById("accidental_new_id")).resolves.toBeNull();
+  });
+
+  it("updates and clears Firestore notification errors", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.updateNotificationStatus(proposal.id, "failed", "Telegram failed");
+
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      notificationStatus: "failed",
+      notificationError: "Telegram failed"
+    });
+
+    await repository.updateNotificationStatus(proposal.id, "sent");
+
+    const stored = await repository.findById(proposal.id);
+    expect(stored).toMatchObject({
+      notificationStatus: "sent"
+    });
+    expect(stored?.notificationError).toBeUndefined();
+  });
+
   it("finds proposal documents by protocol, newest first, with limits", async () => {
     const repository = new FirestoreProposalRepository(createFakeFirestore());
     const lidoOlder = normalizeLidoForumItem(
@@ -179,15 +258,23 @@ describe("FirestoreFetchRunRepository", () => {
       startedAt: "2026-06-05T00:00:00.000Z",
       status: "running",
       fetchedCount: 0,
-      storedCount: 0,
-      skippedCount: 0
+      allowlistedCount: 0,
+      storedNewCount: 0,
+      updatedExistingCount: 0,
+      skippedCount: 0,
+      notificationPendingCount: 0,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
     };
     const finished: FetchRun = {
       ...running,
       finishedAt: "2026-06-05T00:01:00.000Z",
       status: "success",
       fetchedCount: 2,
-      storedCount: 1,
+      allowlistedCount: 1,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
       skippedCount: 1
     };
 
@@ -196,5 +283,6 @@ describe("FirestoreFetchRunRepository", () => {
 
     await expect(repository.findById(running.id)).resolves.toEqual(finished);
     await expect(repository.findById("missing")).resolves.toBeNull();
+    await expect(repository.findAll()).resolves.toEqual([finished]);
   });
 });

@@ -1,6 +1,13 @@
 import request from "supertest";
 import { describe, expect, it, jest } from "@jest/globals";
-import { FetchProtocolGovernanceJob } from "../../src/jobs/fetchProtocolGovernance.job.js";
+import {
+  FetchAlreadyRunningError,
+  FetchProtocolGovernanceJob
+} from "../../src/jobs/fetchProtocolGovernance.job.js";
+import type {
+  NotificationMessage,
+  NotificationService
+} from "../../src/notifications/index.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createApp } from "../../src/server.js";
@@ -13,6 +20,16 @@ import {
   testEnv
 } from "../helpers/builders.js";
 
+class RecordingNotificationService implements NotificationService {
+  readonly name = "recording";
+  readonly enabled = true;
+  readonly messages: NotificationMessage[] = [];
+
+  async send(message: NotificationMessage): Promise<void> {
+    this.messages.push(message);
+  }
+}
+
 describe("API", () => {
   it("returns root service information", async () => {
     const { app } = createApp({ env: testEnv() });
@@ -24,7 +41,9 @@ describe("API", () => {
       routes: expect.arrayContaining([
         "GET /health",
         "GET /api/proposals",
-        "POST /api/admin/fetch/lido"
+        "POST /api/admin/fetch/:protocol",
+        "POST /api/admin/notify-pending",
+        "GET /api/admin/fetch-runs"
       ])
     });
   });
@@ -109,6 +128,7 @@ describe("API", () => {
     );
 
     await proposalRepository.upsertMany([lidoOlder, lidoNewer, aave]);
+    await proposalRepository.updateNotificationStatus(lidoNewer.id, "sent");
 
     const { app } = createApp({
       env: testEnv(),
@@ -119,7 +139,7 @@ describe("API", () => {
     });
 
     const list = await request(app)
-      .get("/api/proposals?protocol=lido&limit=1")
+      .get("/api/proposals?protocol=lido&sourceType=forum&limit=1")
       .expect(200);
     expect(list.body.proposals).toHaveLength(1);
     expect(list.body.proposals[0]).toMatchObject({
@@ -141,6 +161,17 @@ describe("API", () => {
       id: lidoNewer.id,
       sourceId: lidoNewer.sourceId
     });
+
+    const filtered = await request(app)
+      .get(
+        "/api/proposals?publisherName=Allowed%20Publisher&notificationStatus=sent&sort=publishedAt_asc&offset=0&limit=10"
+      )
+      .expect(200);
+    expect(filtered.body.proposals).toHaveLength(1);
+    expect(filtered.body.proposals[0]).toMatchObject({
+      id: lidoNewer.id,
+      notificationStatus: "sent"
+    });
   });
 
   it("rejects invalid proposal list query parameters", async () => {
@@ -157,6 +188,12 @@ describe("API", () => {
 
     await request(app).get("/api/proposals?limit=0").expect(400);
     await request(app).get("/api/proposals?limit=101").expect(400);
+    await request(app).get("/api/proposals?offset=-1").expect(400);
+    await request(app).get("/api/proposals?sourceType=discord").expect(400);
+    await request(app)
+      .get("/api/proposals?notificationStatus=queued")
+      .expect(400);
+    await request(app).get("/api/proposals?sort=createdAt_desc").expect(400);
     await request(app).get("/api/proposals?protocol=lido&protocol=aave").expect(400);
   });
 
@@ -176,6 +213,18 @@ describe("API", () => {
       .expect(404);
 
     expect(response.body.error).toBe("Proposal not found.");
+  });
+
+  it("rejects invalid source identity source types", async () => {
+    const { app } = createApp({ env: testEnv() });
+
+    const response = await request(app)
+      .get("/api/proposals/source/lido/discord/1001")
+      .expect(400);
+
+    expect(response.body.error).toBe(
+      "sourceType must be one of: forum, snapshot, onchain."
+    );
   });
 
   it("keeps debug endpoints disabled by default", async () => {
@@ -260,12 +309,24 @@ describe("API", () => {
           startedAt: "2026-06-05T00:00:00.000Z",
           status: "success",
           fetchedCount: 1,
-          storedCount: 1,
-          skippedCount: 0
+          allowlistedCount: 1,
+          storedNewCount: 1,
+          updatedExistingCount: 0,
+          skippedCount: 0,
+          notificationPendingCount: 0,
+          notificationSentCount: 0,
+          notificationFailedCount: 0,
+          errors: []
         },
         fetchedCount: 1,
-        storedCount: 1,
-        skippedCount: 0
+        allowlistedCount: 1,
+        storedNewCount: 1,
+        updatedExistingCount: 0,
+        skippedCount: 0,
+        notificationPendingCount: 0,
+        notificationSentCount: 0,
+        notificationFailedCount: 0,
+        errors: []
       }))
     };
     const { app } = createApp({
@@ -280,9 +341,53 @@ describe("API", () => {
     expect(fetchJob.run).toHaveBeenCalledWith("lido");
     expect(response.body).toMatchObject({
       fetchedCount: 1,
-      storedCount: 1,
+      storedNewCount: 1,
       skippedCount: 0
     });
+  });
+
+  it("returns demo fixtures and resets demo state only in memory mode", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    await proposalRepository.upsert(proposal);
+
+    const { app } = createApp({
+      env: testEnv({
+        ENABLE_DEBUG_ENDPOINTS: "true"
+      }),
+      repositories: {
+        proposalRepository,
+        fetchRunRepository: new MemoryFetchRunRepository()
+      }
+    });
+
+    const fixtures = await request(app).get("/api/debug/demo-fixtures").expect(200);
+    expect(fixtures.body.lidoRecentTopics.topic_list.topics).toHaveLength(2);
+
+    await request(app)
+      .post("/api/debug/reset-demo-state")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.reset).toBe(true);
+      });
+    await expect(proposalRepository.findAll()).resolves.toEqual([]);
+
+    const firestoreLike = createApp({
+      env: testEnv({
+        STORAGE_MODE: "firestore",
+        DEMO_MODE: "false",
+        ENABLE_DEBUG_ENDPOINTS: "true"
+      }),
+      repositories: {
+        proposalRepository: new MemoryProposalRepository(),
+        fetchRunRepository: new MemoryFetchRunRepository()
+      }
+    });
+
+    await request(firestoreLike.app)
+      .post("/api/debug/reset-demo-state")
+      .expect(403);
   });
 
   it("runs the admin Lido fetch endpoint", async () => {
@@ -294,12 +399,24 @@ describe("API", () => {
           startedAt: "2026-06-05T00:00:00.000Z",
           status: "success",
           fetchedCount: 2,
-          storedCount: 1,
-          skippedCount: 1
+          allowlistedCount: 1,
+          storedNewCount: 1,
+          updatedExistingCount: 0,
+          skippedCount: 1,
+          notificationPendingCount: 0,
+          notificationSentCount: 0,
+          notificationFailedCount: 0,
+          errors: []
         },
         fetchedCount: 2,
-        storedCount: 1,
-        skippedCount: 1
+        allowlistedCount: 1,
+        storedNewCount: 1,
+        updatedExistingCount: 0,
+        skippedCount: 1,
+        notificationPendingCount: 0,
+        notificationSentCount: 0,
+        notificationFailedCount: 0,
+        errors: []
       }))
     };
     const { app } = createApp({
@@ -312,8 +429,104 @@ describe("API", () => {
     expect(fetchJob.run).toHaveBeenCalledWith("lido");
     expect(response.body).toMatchObject({
       fetchedCount: 2,
-      storedCount: 1,
+      storedNewCount: 1,
       skippedCount: 1
+    });
+  });
+
+  it("returns 404 for unknown protocol admin fetches", async () => {
+    const { app } = createApp({ env: testEnv() });
+
+    const response = await request(app).post("/api/admin/fetch/missing").expect(404);
+
+    expect(response.body.error).toBe("Unknown protocol adapter: missing");
+  });
+
+  it("returns 409 when an admin fetch is already running", async () => {
+    const fetchJob = {
+      run: jest.fn(async () => {
+        throw new FetchAlreadyRunningError("lido");
+      })
+    };
+    const { app } = createApp({
+      env: testEnv(),
+      fetchJob: fetchJob as never
+    });
+
+    const response = await request(app).post("/api/admin/fetch/lido").expect(409);
+
+    expect(response.body.error).toBe("Fetch already running for protocol: lido");
+  });
+
+  it("lists fetch runs from the admin endpoint", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    await fetchRunRepository.upsert({
+      id: "fetchRun_lido_test",
+      protocol: "lido",
+      startedAt: "2026-06-05T00:00:00.000Z",
+      finishedAt: "2026-06-05T00:01:00.000Z",
+      status: "success",
+      fetchedCount: 2,
+      allowlistedCount: 1,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
+      skippedCount: 1,
+      notificationPendingCount: 0,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    });
+
+    const { app } = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository: new MemoryProposalRepository(),
+        fetchRunRepository
+      }
+    });
+
+    const response = await request(app).get("/api/admin/fetch-runs").expect(200);
+
+    expect(response.body.fetchRuns).toHaveLength(1);
+    expect(response.body.fetchRuns[0]).toMatchObject({
+      id: "fetchRun_lido_test",
+      storedNewCount: 1
+    });
+
+    await request(app).get("/api/admin/fetch-runs?limit=bad").expect(400);
+    await request(app).get("/api/admin/fetch-runs?sort=finishedAt_desc").expect(400);
+  });
+
+  it("notifies pending proposals through the admin endpoint", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const notificationService = new RecordingNotificationService();
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    await proposalRepository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+
+    const { app } = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository,
+        fetchRunRepository: new MemoryFetchRunRepository()
+      },
+      notificationService
+    });
+
+    const response = await request(app).post("/api/admin/notify-pending").expect(200);
+
+    expect(response.body).toMatchObject({
+      pendingCount: 1,
+      sentCount: 1,
+      failedCount: 0,
+      skippedCount: 0,
+      errors: []
+    });
+    expect(notificationService.messages).toHaveLength(1);
+    await expect(proposalRepository.findById(proposal.id)).resolves.toMatchObject({
+      notificationStatus: "sent"
     });
   });
 
@@ -348,6 +561,8 @@ describe("API", () => {
     await request(app).get("/api/protocols").expect(401);
     await request(app).get("/api/debug/config-safe").expect(401);
     await request(app).post("/api/admin/fetch/lido").expect(401);
+    await request(app).post("/api/admin/notify-pending").expect(401);
+    await request(app).get("/api/admin/fetch-runs").expect(401);
   });
 
   it("rejects invalid auth tokens and accepts bearer tokens", async () => {
@@ -465,7 +680,9 @@ describe("API", () => {
       .expect((response) => {
         expect(response.body).toMatchObject({
           fetchedCount: 2,
-          storedCount: 1,
+          allowlistedCount: 1,
+          storedNewCount: 1,
+          updatedExistingCount: 0,
           skippedCount: 1
         });
       });

@@ -1,78 +1,67 @@
 # Platform Manual
 
-Quick terminal reference for running the governance tracking MVP.
+Quick terminal guide for the current governance tracking MVP.
 
-Assumes the API is available at `http://localhost:3000`.
+Assume the API is at `http://localhost:3000`.
 
-## Start
+## Start In Development
+
+Use credential-free demo/memory mode:
 
 ```bash
 npm install
-nano .env
 npm run dev
 ```
 
-Local development settings:
+Recommended local `.env` values:
 
 ```bash
+NODE_ENV=development
+PORT=3000
 STORAGE_MODE=memory
 DEMO_MODE=true
 ENABLE_SCHEDULER=false
 ENABLE_DEBUG_ENDPOINTS=true
 API_AUTH_ENABLED=false
+LIDO_ALLOWED_PUBLISHERS='["Allowed Publisher"]'
 ```
 
-## Endpoint Sources
+In memory/demo mode, data lives only inside the running Node process. Restarting the app clears it.
 
-These read app state from config, memory, or Firestore. They do not call Lido:
-
-- `GET /health`
-- `GET /api/protocols`
-- `GET /api/proposals`
-- `GET /api/proposals/:id`
-
-These call Lido/Discourse:
-
-- `GET /api/debug/lido/recent`: preview live Lido items only; does not store.
-- `POST /api/debug/lido/fetch-once`: fetch, filter, normalize, store, and return counts; debug only.
-- `POST /api/admin/fetch/lido`: production-style manual fetch with the same store behavior.
-
-## Core Flow
-
-Check the service:
+## One-Shot Demo
 
 ```bash
-curl -s http://localhost:3000/
+npm run demo
+```
+
+Expected return: formatted JSON showing a fixture-backed first fetch that inserts one allowlisted proposal, a second fetch that updates the same proposal, skipped non-allowlisted items, and final stored proposals.
+
+## API Demo Flow
+
+Check service state:
+
+```bash
 curl -s http://localhost:3000/health
 curl -s http://localhost:3000/api/protocols
 ```
 
-Expected return: service metadata, health, and registered protocols.
+Expected return: health info and registered protocol metadata.
 
-Preview live Lido data:
+Preview Lido adapter items:
 
 ```bash
 curl -s http://localhost:3000/api/debug/lido/recent
 ```
 
-Expected return: live items with `sourceId`, `publisherName`, `sourceUrl`, and raw source data. Nothing is stored.
+Expected return: recent Lido items. In demo/memory mode this is fixture data; in normal Firestore mode it calls Lido.
 
-Update `.env` with trusted publishers:
-
-```bash
-LIDO_ALLOWED_PUBLISHERS='[
-  "Publisher One",
-  "Publisher Two"
-]'
-```
-
-Restart `npm run dev`, then fetch and store allowlisted proposals:
+Fetch, filter, store, and record a run:
 
 ```bash
-curl -s -X POST http://localhost:3000/api/debug/lido/fetch-once
+curl -s -X POST http://localhost:3000/api/admin/fetch/lido
 ```
 
-Expected return: fetch-run counts, especially `fetchedCount`, `storedCount`, and `skippedCount`.
+Expected return: counts such as `fetchedCount`, `allowlistedCount`, `storedNewCount`, `updatedExistingCount`, `skippedCount`, and notification counts.
 
 List stored proposals:
 
@@ -80,104 +69,67 @@ List stored proposals:
 curl -s "http://localhost:3000/api/proposals?protocol=lido&limit=5"
 ```
 
-Expected return: stored normalized proposals. Use the returned `id`, not `sourceId`.
+Expected return: stored proposals from memory or Firestore. This endpoint does not call Lido.
 
-Read one stored proposal:
-
-```bash
-curl -s http://localhost:3000/api/proposals/<proposal-id>
-```
-
-Expected return: one proposal, or `Proposal not found`.
-
-Read by source identity when you only have the Lido topic id:
+Read one proposal:
 
 ```bash
-curl -s http://localhost:3000/api/proposals/source/lido/forum/<source-id>
+curl -s http://localhost:3000/api/proposals/<internal-proposal-id>
+curl -s http://localhost:3000/api/proposals/source/lido/forum/<lido-topic-id>
 ```
 
 Expected return: one stored proposal, or `Proposal not found`.
 
-## Useful Commands
-
-Run fixture demo:
+List fetch runs:
 
 ```bash
-npm run demo
+curl -s http://localhost:3000/api/admin/fetch-runs
 ```
 
-Expected return: formatted JSON showing fixture fetch, filtering, storage, and skipped count.
+Expected return: stored fetch-run records from memory or Firestore.
 
-Run tests:
+Notify pending proposals:
 
 ```bash
-npm test
+curl -s -X POST http://localhost:3000/api/admin/notify-pending
 ```
 
-Expected return: all Jest tests pass.
+Expected return: `pendingCount`, `sentCount`, `failedCount`, `skippedCount`, and `errors`.
 
-Run build plus tests:
+Reset demo state:
 
 ```bash
-npm run check
+curl -s -X POST http://localhost:3000/api/debug/reset-demo-state
 ```
 
-Expected return: TypeScript build passes, then all tests pass.
+Expected return: `{ "reset": true }`. Only works when debug endpoints are enabled and storage is memory/demo.
 
-## Auth Check
-
-Enable auth:
+## Query Examples
 
 ```bash
-API_AUTH_ENABLED=true
-API_AUTH_TOKEN=dev-secret-change-me
+curl -s "http://localhost:3000/api/proposals?notificationStatus=sent"
+curl -s "http://localhost:3000/api/proposals?publisherName=Allowed%20Publisher"
+curl -s "http://localhost:3000/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
 ```
 
-Without a token:
+Expected return: filtered stored proposal lists. These queries read storage only.
+
+## Production-Like Run
+
+Set Firestore and auth values:
 
 ```bash
-curl -i http://localhost:3000/health
-```
-
-Expected return: `401`.
-
-With a token:
-
-```bash
-curl -s http://localhost:3000/health \
-  -H "Authorization: Bearer dev-secret-change-me"
-```
-
-Expected return: normal health response.
-
-## Scheduler Check
-
-Normal schedule:
-
-```bash
-ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 */6 * * *
-```
-
-Quick local test schedule:
-
-```bash
-ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=* * * * *
-```
-
-Expected behavior: scheduled runs do the same fetch/filter/normalize/store flow as debug fetch-once.
-
-## Firestore Mode
-
-Set:
-
-```bash
+NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
-FIREBASE_PROJECT_ID=replace-with-firebase-project-id
-FIREBASE_CLIENT_EMAIL=replace-with-service-account-client-email
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-service-account-private-key\n-----END PRIVATE KEY-----\n"
+ENABLE_SCHEDULER=true
+FETCH_INTERVAL_CRON=0 */6 * * *
+ENABLE_DEBUG_ENDPOINTS=false
+API_AUTH_ENABLED=true
+API_AUTH_TOKEN=replace-with-long-random-secret
+FIREBASE_PROJECT_ID=replace-with-project-id
+FIREBASE_CLIENT_EMAIL=replace-with-client-email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace\n-----END PRIVATE KEY-----\n"
 ```
 
 Run:
@@ -187,14 +139,33 @@ npm run build
 npm run start
 ```
 
-Trigger admin fetch:
+Authenticated request:
 
 ```bash
-curl -s -X POST http://localhost:3000/api/admin/fetch/lido \
+curl -s http://localhost:3000/health \
   -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected return: fetch-run counts; stored proposals and fetch runs go to Firestore.
+## Telegram
+
+```bash
+ENABLE_TELEGRAM_NOTIFICATIONS=true
+TELEGRAM_BOT_TOKEN=replace-with-token
+TELEGRAM_CHAT_ID=replace-with-chat-id
+NOTIFY_ON_NEW_PROPOSAL=true
+```
+
+Expected behavior: newly discovered allowlisted proposals are notified once. Existing proposals are updated but not notified again.
+
+## Tests
+
+```bash
+npm test
+npm run check
+npm run test:watch
+```
+
+`npm test` runs all Jest tests. `npm run check` runs TypeScript build plus all tests.
 
 ## Docker
 
@@ -205,4 +176,4 @@ docker build -t governance-tracking-backend .
 docker run --env-file .env -p 3000:3000 governance-tracking-backend
 ```
 
-For deeper explanations and troubleshooting, see [README.md](./README.md).
+The demo compose file runs memory/demo mode and does not need Firebase or Telegram credentials.

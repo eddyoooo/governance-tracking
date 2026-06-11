@@ -1,6 +1,8 @@
 import type { Logger } from "pino";
 import type { Env } from "../config/env.js";
+import { isMemoryMode } from "../config/env.js";
 import { LidoAdapter } from "./lido/lido.adapter.js";
+import { createLidoDemoClient } from "./lido/lido.demoClient.js";
 import type { ProtocolAdapter } from "./types.js";
 
 export class ProtocolRegistry {
@@ -21,6 +23,13 @@ export class ProtocolRegistry {
 
 export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegistry {
   const registry = new ProtocolRegistry();
+  const lidoClient = isMemoryMode(env)
+    ? createLidoDemoClient({
+        forumBaseUrl: env.lidoForumBaseUrl,
+        forumApiBaseUrl: env.lidoForumApiBaseUrl,
+        logger
+      })
+    : undefined;
 
   registry.register(
     new LidoAdapter({
@@ -28,7 +37,8 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       forumBaseUrl: env.lidoForumBaseUrl,
       forumApiBaseUrl: env.lidoForumApiBaseUrl,
       allowedPublishers: env.lidoAllowedPublishers,
-      logger
+      logger,
+      client: lidoClient
     })
   );
 

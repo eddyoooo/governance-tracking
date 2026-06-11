@@ -10,9 +10,12 @@ describe("env parsing", () => {
 
     expect(env.port).toBe(3000);
     expect(env.storageMode).toBe("firestore");
+    expect(env.enableScheduler).toBe(true);
     expect(env.fetchIntervalCron).toBe("0 */6 * * *");
     expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
+    expect(env.enableTelegramNotifications).toBe(false);
+    expect(env.notifyOnNewProposal).toBe(true);
   });
 
   it("parses JSON array allowlists", () => {
@@ -70,6 +73,8 @@ describe("env parsing", () => {
       ENABLE_SCHEDULER: "false",
       ENABLE_DEBUG_ENDPOINTS: " true ",
       LIDO_ENABLED: "FALSE",
+      ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+      NOTIFY_ON_NEW_PROPOSAL: "false",
       API_AUTH_ENABLED: "true"
     } as NodeJS.ProcessEnv);
 
@@ -77,6 +82,8 @@ describe("env parsing", () => {
     expect(env.enableScheduler).toBe(false);
     expect(env.enableDebugEndpoints).toBe(true);
     expect(env.lidoEnabled).toBe(false);
+    expect(env.enableTelegramNotifications).toBe(true);
+    expect(env.notifyOnNewProposal).toBe(false);
     expect(env.apiAuthEnabled).toBe(true);
   });
 
@@ -103,6 +110,7 @@ describe("env parsing", () => {
     } as NodeJS.ProcessEnv);
 
     expect(isMemoryMode(env)).toBe(true);
+    expect(env.enableScheduler).toBe(false);
   });
 
   it("uses memory mode when storage mode is memory", () => {
@@ -112,6 +120,17 @@ describe("env parsing", () => {
     } as NodeJS.ProcessEnv);
 
     expect(isMemoryMode(env)).toBe(true);
+    expect(env.enableScheduler).toBe(false);
+  });
+
+  it("allows scheduler to be explicitly enabled in demo mode", () => {
+    const env = loadEnv({
+      STORAGE_MODE: "memory",
+      DEMO_MODE: "true",
+      ENABLE_SCHEDULER: "true"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.enableScheduler).toBe(true);
   });
 
   it("rejects invalid storage mode", () => {
@@ -142,14 +161,21 @@ describe("env parsing", () => {
       FIREBASE_CLIENT_EMAIL: "service@example.com",
       FIREBASE_PRIVATE_KEY: "private-key",
       API_AUTH_ENABLED: "true",
-      API_AUTH_TOKEN: "secret-token"
+      API_AUTH_TOKEN: "secret-token",
+      ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      TELEGRAM_CHAT_ID: "chat-id"
     } as NodeJS.ProcessEnv);
     const safeConfig = toSafeConfig(env);
 
     expect(JSON.stringify(safeConfig)).not.toContain("private-key");
     expect(JSON.stringify(safeConfig)).not.toContain("secret-token");
+    expect(JSON.stringify(safeConfig)).not.toContain("telegram-token");
+    expect(JSON.stringify(safeConfig)).not.toContain("chat-id");
     expect(safeConfig.fetchIntervalCron).toBe("0 */6 * * *");
     expect(safeConfig.firebase.hasPrivateKey).toBe(true);
     expect(safeConfig.apiAuth.hasToken).toBe(true);
+    expect(safeConfig.notifications.hasTelegramBotToken).toBe(true);
+    expect(safeConfig.notifications.hasTelegramChatId).toBe(true);
   });
 });

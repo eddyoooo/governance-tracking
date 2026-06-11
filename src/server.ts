@@ -3,7 +3,15 @@ import express, { type Express } from "express";
 import type { Logger } from "pino";
 import { pinoHttp } from "pino-http";
 import { env as defaultEnv, type Env } from "./config/env.js";
-import { FetchProtocolGovernanceJob } from "./jobs/fetchProtocolGovernance.job.js";
+import {
+  FetchAlreadyRunningError,
+  FetchProtocolGovernanceJob,
+  UnknownProtocolAdapterError
+} from "./jobs/fetchProtocolGovernance.job.js";
+import {
+  createNotificationService,
+  type NotificationService
+} from "./notifications/index.js";
 import { createProtocolRegistry, type ProtocolRegistry } from "./protocols/registry.js";
 import {
   createRepositories,
@@ -25,6 +33,7 @@ export interface AppContext {
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
   protocolRegistry: ProtocolRegistry;
+  notificationService: NotificationService;
   fetchJob: FetchProtocolGovernanceJob;
 }
 
@@ -33,6 +42,7 @@ export interface CreateAppOptions {
   logger?: Logger;
   repositories?: Repositories;
   protocolRegistry?: ProtocolRegistry;
+  notificationService?: NotificationService;
   fetchJob?: FetchProtocolGovernanceJob;
 }
 
@@ -47,13 +57,19 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
   const repositories = options.repositories ?? createRepositories(runtimeEnv, logger);
   const protocolRegistry =
     options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
+  const notificationService =
+    options.notificationService ?? createNotificationService(runtimeEnv, logger);
   const fetchJob =
     options.fetchJob ??
     new FetchProtocolGovernanceJob(
       protocolRegistry,
       repositories.proposalRepository,
       repositories.fetchRunRepository,
-      logger
+      logger,
+      {
+        notificationService,
+        notifyOnNewProposal: runtimeEnv.notifyOnNewProposal
+      }
     );
   const context: AppContext = {
     env: runtimeEnv,
@@ -61,6 +77,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     proposalRepository: repositories.proposalRepository,
     fetchRunRepository: repositories.fetchRunRepository,
     protocolRegistry,
+    notificationService,
     fetchJob
   };
   const app = express();
@@ -86,7 +103,9 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
         "GET /api/proposals",
         "GET /api/proposals/:id",
         "GET /api/protocols",
-        "POST /api/admin/fetch/lido"
+        "POST /api/admin/fetch/:protocol",
+        "POST /api/admin/notify-pending",
+        "GET /api/admin/fetch-runs"
       ]
     });
   });
@@ -105,6 +124,17 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       _next: express.NextFunction
     ) => {
       const message = error instanceof Error ? error.message : String(error);
+
+      if (error instanceof UnknownProtocolAdapterError) {
+        response.status(404).json({ error: message });
+        return;
+      }
+
+      if (error instanceof FetchAlreadyRunningError) {
+        response.status(409).json({ error: message });
+        return;
+      }
+
       logger.error({ error }, "Request failed");
       response.status(500).json({ error: message });
     }

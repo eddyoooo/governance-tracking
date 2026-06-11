@@ -1,0 +1,58 @@
+export const lidoRecentTopicsFixture = {
+  users: [
+    {
+      id: 1,
+      username: "allowed-publisher",
+      name: "Allowed Publisher"
+    },
+    {
+      id: 2,
+      username: "random-person",
+      name: "Random Person"
+    }
+  ],
+  topic_list: {
+    topics: [
+      {
+        id: 1001,
+        title: "Allowed Lido Proposal",
+        slug: "allowed-lido-proposal",
+        created_at: "2026-05-01T10:00:00.000Z",
+        last_posted_at: "2026-05-01T10:30:00.000Z",
+        posts_count: 2,
+        reply_count: 1,
+        views: 42,
+        like_count: 4,
+        category_id: 9,
+        posters: [
+          {
+            user_id: 1,
+            description: "Original Poster, Most Recent Poster"
+          }
+        ]
+      },
+      {
+        id: 1002,
+        title: "Non Allowlisted Lido Proposal",
+        slug: "non-allowlisted-lido-proposal",
+        created_at: "2026-05-02T10:00:00.000Z",
+        last_posted_at: "2026-05-02T10:30:00.000Z",
+        posts_count: 1,
+        reply_count: 0,
+        views: 12,
+        like_count: 1,
+        category_id: 9,
+        posters: [
+          {
+            user_id: 2,
+            description: "Original Poster, Most Recent Poster"
+          }
+        ]
+      }
+    ]
+  }
+} as const;
+
+export function cloneLidoRecentTopicsFixture(): unknown {
+  return JSON.parse(JSON.stringify(lidoRecentTopicsFixture)) as unknown;
+}

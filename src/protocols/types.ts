@@ -1,5 +1,6 @@
 export type GovernanceSourceType = "forum" | "snapshot" | "onchain";
 export type ProposalStatus = "new" | "seen" | "archived";
+export type NotificationStatus = "pending" | "sent" | "skipped" | "failed";
 
 export interface GovernanceSource {
   protocol: string;
@@ -35,6 +36,10 @@ export interface NormalizedGovernanceItem {
 }
 
 export interface StoredProposal extends NormalizedGovernanceItem {
+  firstSeenAt: string;
+  lastSeenAt: string;
+  notificationStatus: NotificationStatus;
+  notificationError?: string;
   createdAt: string;
   updatedAt: string;
 }

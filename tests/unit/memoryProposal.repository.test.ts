@@ -50,8 +50,108 @@ describe("MemoryProposalRepository", () => {
 
     expect(first.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
     expect(first.proposal.updatedAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(first.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(first.proposal.lastSeenAt).toBe("2026-06-05T00:00:00.000Z");
     expect(second.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(second.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(second.proposal.lastSeenAt).toBe("2026-06-05T06:00:00.000Z");
     expect(second.proposal.updatedAt).toBe("2026-06-05T06:00:00.000Z");
+  });
+
+  it("deduplicates by source identity even when the incoming id changes", async () => {
+    const repository = new MemoryProposalRepository();
+    const normalized = normalizeLidoForumItem(createRawGovernanceItem());
+
+    const first = await repository.upsert(normalized);
+    const second = await repository.upsert({
+      ...normalized,
+      id: "accidental_new_id",
+      title: "Updated through source identity"
+    });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.proposal.id).toBe(normalized.id);
+    expect(await repository.findAll()).toHaveLength(1);
+    expect(await repository.findById("accidental_new_id")).toBeNull();
+  });
+
+  it("sets notification status for new proposals and preserves it on updates", async () => {
+    const repository = new MemoryProposalRepository();
+    const normalized = normalizeLidoForumItem(createRawGovernanceItem());
+
+    const first = await repository.upsert(normalized, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.updateNotificationStatus(first.proposal.id, "sent");
+    const second = await repository.upsert({
+      ...normalized,
+      title: "Updated title"
+    });
+
+    expect(first.proposal.notificationStatus).toBe("pending");
+    expect(second.proposal.notificationStatus).toBe("sent");
+  });
+
+  it("updates mutable source fields while preserving first-seen and notification state", async () => {
+    const repository = new MemoryProposalRepository();
+    const initial = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "1001",
+        title: "Original title",
+        publisherName: "Original Publisher",
+        sourceUrl: "https://research.lido.fi/t/original/1001",
+        publishedAt: "2026-05-01T10:00:00.000Z",
+        fetchedAt: "2026-05-01T11:00:00.000Z",
+        raw: {
+          id: 1001,
+          title: "Original title"
+        }
+      })
+    );
+    const changed = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "1001",
+        title: "Changed title",
+        publisherName: "Changed Publisher",
+        sourceUrl: "https://research.lido.fi/t/changed/1001",
+        publishedAt: "2026-05-02T10:00:00.000Z",
+        fetchedAt: "2026-05-02T11:00:00.000Z",
+        raw: {
+          id: 1001,
+          title: "Changed title",
+          extra: "new upstream payload field"
+        }
+      })
+    );
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    const first = await repository.upsert(initial, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.updateNotificationStatus(first.proposal.id, "failed", "boom");
+
+    jest.setSystemTime(new Date("2026-06-05T06:00:00.000Z"));
+    const second = await repository.upsert(changed, {
+      notificationStatusForNew: "pending"
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.proposal).toMatchObject({
+      title: "Changed title",
+      publisherName: "Changed Publisher",
+      sourceUrl: "https://research.lido.fi/t/changed/1001",
+      publishedAt: "2026-05-02T10:00:00.000Z",
+      fetchedAt: "2026-05-02T11:00:00.000Z",
+      firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T06:00:00.000Z",
+      createdAt: "2026-06-05T00:00:00.000Z",
+      notificationStatus: "failed",
+      notificationError: "boom"
+    });
+    expect(second.proposal.rawHash).toBe(changed.rawHash);
+    expect(second.proposal.rawHash).not.toBe(initial.rawHash);
   });
 
   it("upserts many proposals in order and reports created flags", async () => {
@@ -90,12 +190,13 @@ describe("MemoryProposalRepository", () => {
     ]);
   });
 
-  it("filters by protocol and applies limits", async () => {
+  it("filters by query fields, applies limits, offsets, and sort order", async () => {
     const repository = new MemoryProposalRepository();
     const lido = normalizeLidoForumItem(
       createRawGovernanceItem({
         protocol: "lido",
         sourceId: "1001",
+        publisherName: "Allowed Publisher",
         publishedAt: "2026-05-01T10:00:00.000Z"
       })
     );
@@ -103,6 +204,7 @@ describe("MemoryProposalRepository", () => {
       createRawGovernanceItem({
         protocol: "aave",
         sourceId: "1002",
+        publisherName: "Allowed Publisher",
         publishedAt: "2026-05-02T10:00:00.000Z"
       })
     );
@@ -110,17 +212,31 @@ describe("MemoryProposalRepository", () => {
       createRawGovernanceItem({
         protocol: "lido",
         sourceId: "1003",
+        publisherName: "DAO Ops",
         publishedAt: "2026-05-03T10:00:00.000Z"
       })
     );
 
     await repository.upsertMany([lido, aave, secondLido]);
+    await repository.updateNotificationStatus(secondLido.id, "sent");
 
-    const proposals = await repository.findAll({ protocol: "lido", limit: 1 });
+    const proposals = await repository.findAll({
+      protocol: "lido",
+      publisherName: "DAO Ops",
+      sourceType: "forum",
+      notificationStatus: "sent",
+      limit: 1,
+      offset: 0,
+      sort: "publishedAt_desc"
+    });
 
     expect(proposals).toHaveLength(1);
     expect(proposals[0].protocol).toBe("lido");
     expect(proposals[0].sourceId).toBe("1003");
+
+    await expect(
+      repository.findAll({ sort: "publishedAt_asc", limit: 1, offset: 1 })
+    ).resolves.toMatchObject([{ sourceId: "1002" }]);
   });
 
   it("returns null for unknown proposal ids", async () => {
@@ -151,5 +267,26 @@ describe("MemoryProposalRepository", () => {
     await expect(
       repository.findBySourceIdentity("lido", "forum", "missing")
     ).resolves.toBeNull();
+  });
+
+  it("finds pending notifications and clears notification errors after success", async () => {
+    const repository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1001" }));
+    const second = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1002" }));
+
+    await repository.upsert(first, { notificationStatusForNew: "pending" });
+    await repository.upsert(second, { notificationStatusForNew: "skipped" });
+    await repository.updateNotificationStatus(first.id, "failed", "Telegram failed");
+
+    await expect(
+      repository.findByNotificationStatus("failed")
+    ).resolves.toMatchObject([{ sourceId: "1001", notificationError: "Telegram failed" }]);
+
+    await repository.updateNotificationStatus(first.id, "sent");
+
+    await expect(repository.findById(first.id)).resolves.toMatchObject({
+      notificationStatus: "sent"
+    });
+    expect((await repository.findById(first.id))?.notificationError).toBeUndefined();
   });
 });
