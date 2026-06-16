@@ -39,7 +39,13 @@ Expected result: API starts on port `3000`, uses in-memory storage, uses fixture
 npm run demo
 ```
 
-Expected result: JSON showing two fetches. The first fetch stores one allowlisted proposal. The second fetch sees the same proposal again, counts it as unchanged, and does not duplicate or rewrite it. `storedProposalCount` should remain `1`.
+Expected result: a guided terminal walkthrough using live Lido proposal data with in-memory storage. It announces each step, pauses briefly, then demonstrates health, protocols, safe config, live Lido preview, fetch/store, proposal reads, proposal filters, fetch-run history, notification retry behavior, duplicate/no-rewrite behavior, API auth, and demo reset.
+
+For a faster dry run:
+
+```bash
+DEMO_STEP_DELAY_MS=0 npm run demo
+```
 
 ## 3. Check Service Health
 

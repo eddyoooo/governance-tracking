@@ -49,7 +49,7 @@ If the same proposal appears again in a later fetch, the backend does not create
 - Record fetch-run metadata with fetched, allowlisted, stored, updated, unchanged, skipped, and notification counts.
 - Optionally send Telegram notifications for new allowlisted proposals.
 - Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
-- Run a credential-free fixture demo in memory mode.
+- Run a guided terminal demo in memory mode against live Lido data.
 - Run scheduled polling every 15 minutes in normal mode.
 - Run with Docker and docker-compose.
 - Run deterministic Jest/Supertest tests without live network dependency.
@@ -199,6 +199,8 @@ npm run demo
 npm test
 npm run check
 ```
+
+`npm run demo` runs a guided terminal walkthrough using live Lido proposal data and in-memory storage. It announces each capability before running it, pauses between steps, and can be sped up with `DEMO_STEP_DELAY_MS=0 npm run demo`.
 
 Use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md) for the full capability checklist, curl commands, Docker commands, and expected results.
 
