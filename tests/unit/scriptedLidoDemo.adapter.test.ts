@@ -5,6 +5,10 @@ import {
 } from "../../src/demoFixtures/scriptedLidoDemo.adapter.js";
 import { telegramTestNotificationFixtures } from "../../src/demoFixtures/telegramNotification.fixture.js";
 
+const lidoTelegramFixtures = telegramTestNotificationFixtures.filter(
+  (fixture) => fixture.protocol === "lido"
+);
+
 function createAdapter(): ScriptedLidoDemoAdapter {
   return new ScriptedLidoDemoAdapter({
     allowedPublishers: telegramTestNotificationFixtures.map(
@@ -27,13 +31,13 @@ describe("ScriptedLidoDemoAdapter", () => {
 
     const first = adapter.revealNext();
     expect(first).toMatchObject({
-      sourceId: telegramTestNotificationFixtures[0].sourceId
+      sourceId: lidoTelegramFixtures[0].sourceId
     });
 
     await expect(adapter.fetchRecent()).resolves.toMatchObject([
       {
-        sourceId: telegramTestNotificationFixtures[0].sourceId,
-        publisherName: telegramTestNotificationFixtures[0].publisherName
+        sourceId: lidoTelegramFixtures[0].sourceId,
+        publisherName: lidoTelegramFixtures[0].publisherName
       },
       {
         sourceId: nonAllowlistedDemoFixture.sourceId,
@@ -45,7 +49,7 @@ describe("ScriptedLidoDemoAdapter", () => {
   it("does not reveal beyond the configured fixture set", () => {
     const adapter = createAdapter();
 
-    for (const fixture of telegramTestNotificationFixtures) {
+    for (const fixture of lidoTelegramFixtures) {
       expect(adapter.revealNext()).toMatchObject({
         sourceId: fixture.sourceId
       });
@@ -62,15 +66,15 @@ describe("ScriptedLidoDemoAdapter", () => {
     const items = await adapter.fetchRecent();
     const normalized = adapter.normalize(items[0]);
 
-    expect(items).toHaveLength(telegramTestNotificationFixtures.length + 1);
+    expect(items).toHaveLength(lidoTelegramFixtures.length + 1);
     expect(items.map((item) => item.sourceId)).toEqual([
-      ...telegramTestNotificationFixtures.map((fixture) => fixture.sourceId),
+      ...lidoTelegramFixtures.map((fixture) => fixture.sourceId),
       nonAllowlistedDemoFixture.sourceId
     ]);
     expect(normalized).toMatchObject({
       protocol: "lido",
       sourceType: "forum",
-      sourceId: telegramTestNotificationFixtures[0].sourceId
+      sourceId: lidoTelegramFixtures[0].sourceId
     });
   });
 });

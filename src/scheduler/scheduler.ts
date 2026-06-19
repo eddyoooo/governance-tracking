@@ -13,11 +13,21 @@ export function startScheduler(context: AppContext): ScheduledTask | null {
     throw new Error(`Invalid FETCH_INTERVAL_CRON: ${env.fetchIntervalCron}`);
   }
 
-  logger.info({ cron: env.fetchIntervalCron }, "Starting governance fetch scheduler");
+  const scheduledProtocols = context.protocolRegistry
+    .list()
+    .filter((adapter) => adapter.enabled)
+    .map((adapter) => adapter.protocol);
+
+  logger.info(
+    { cron: env.fetchIntervalCron, protocols: scheduledProtocols },
+    "Starting governance fetch scheduler"
+  );
 
   return cron.schedule(env.fetchIntervalCron, () => {
-    fetchJob.run("lido").catch((error) => {
-      logger.error({ error }, "Scheduled Lido fetch failed");
-    });
+    for (const protocol of scheduledProtocols) {
+      fetchJob.run(protocol).catch((error) => {
+        logger.error({ error, protocol }, "Scheduled governance fetch failed");
+      });
+    }
   });
 }

@@ -10,6 +10,10 @@ import {
   type TelegramTestNotificationFixture
 } from "./telegramNotification.fixture.js";
 
+const lidoDemoFixtures = telegramTestNotificationFixtures.filter(
+  (fixture) => fixture.protocol === "lido"
+);
+
 const nonAllowlistedDemoFixture: TelegramTestNotificationFixture = {
   protocol: "lido",
   sourceType: "forum",
@@ -46,30 +50,27 @@ export class ScriptedLidoDemoAdapter implements ProtocolAdapter {
   }
 
   get totalAllowlistedFixtures(): number {
-    return telegramTestNotificationFixtures.length;
+    return lidoDemoFixtures.length;
   }
 
   revealNext(): TelegramTestNotificationFixture | null {
-    if (this.visibleAllowlistedCount >= telegramTestNotificationFixtures.length) {
+    if (this.visibleAllowlistedCount >= lidoDemoFixtures.length) {
       return null;
     }
 
-    const fixture = telegramTestNotificationFixtures[this.visibleAllowlistedCount];
+    const fixture = lidoDemoFixtures[this.visibleAllowlistedCount];
     this.visibleAllowlistedCount += 1;
 
     return fixture;
   }
 
   revealAll(): void {
-    this.visibleAllowlistedCount = telegramTestNotificationFixtures.length;
+    this.visibleAllowlistedCount = lidoDemoFixtures.length;
   }
 
   async fetchRecent(): Promise<RawGovernanceItem[]> {
     const fetchedAt = new Date().toISOString();
-    const visibleFixtures = telegramTestNotificationFixtures.slice(
-      0,
-      this.visibleAllowlistedCount
-    );
+    const visibleFixtures = lidoDemoFixtures.slice(0, this.visibleAllowlistedCount);
     const fixtures = this.includeNonAllowlistedItem
       ? [...visibleFixtures, nonAllowlistedDemoFixture]
       : visibleFixtures;

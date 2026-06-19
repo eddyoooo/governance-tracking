@@ -35,37 +35,42 @@ const delayMsFromEnv = z.preprocess((value) => {
   return value;
 }, z.coerce.number().nonnegative().optional()).transform((value) => value ?? 3000);
 
-const stringListFromEnv = z.preprocess((value) => {
-  if (Array.isArray(value)) {
-    return value;
-  }
+function stringListFromEnv(variableName: string) {
+  return z.preprocess(
+    (value) => {
+      if (Array.isArray(value)) {
+        return value;
+      }
 
-  if (typeof value !== "string") {
-    return [];
-  }
+      if (typeof value !== "string") {
+        return [];
+      }
 
-  const trimmed = value.trim();
+      const trimmed = value.trim();
 
-  if (!trimmed) {
-    return [];
-  }
+      if (!trimmed) {
+        return [];
+      }
 
-  if (trimmed.startsWith("[")) {
-    try {
-      return JSON.parse(trimmed) as unknown;
-    } catch {
-      throw new Error("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
-    }
-  }
+      if (trimmed.startsWith("[")) {
+        try {
+          return JSON.parse(trimmed) as unknown;
+        } catch {
+          throw new Error(`Invalid JSON array in ${variableName}.`);
+        }
+      }
 
-  if (trimmed.startsWith("{")) {
-    throw new Error("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
-  }
+      if (trimmed.startsWith("{")) {
+        throw new Error(`Invalid JSON array in ${variableName}.`);
+      }
 
-  return trimmed.split(",");
-}, z.array(z.string()).transform((items) =>
-  items.map((item) => item.trim()).filter(Boolean)
-));
+      return trimmed.split(",");
+    },
+    z
+      .array(z.string())
+      .transform((items) => items.map((item) => item.trim()).filter(Boolean))
+  );
+}
 
 const telegramUserIdListFromEnv = z.preprocess((value) => {
   if (Array.isArray(value)) {
@@ -135,8 +140,22 @@ const rawEnvSchema = z
     LIDO_FORUM_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_FORUM_API_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_ENABLED: booleanFromEnv.default(true),
-    LIDO_ALLOWED_PUBLISHERS: stringListFromEnv.default([]),
+    LIDO_ALLOWED_PUBLISHERS: stringListFromEnv("LIDO_ALLOWED_PUBLISHERS").default([]),
     LIDO_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(5),
+    AAVE_FORUM_BASE_URL: z.string().url().default("https://governance.aave.com"),
+    AAVE_FORUM_API_BASE_URL: z
+      .string()
+      .url()
+      .default("https://governance.aave.com"),
+    AAVE_ENABLED: booleanFromEnv.default(true),
+    AAVE_ALLOWED_PUBLISHERS: stringListFromEnv("AAVE_ALLOWED_PUBLISHERS").default([]),
+    AAVE_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(10),
+    AAVE_CATEGORY_FETCH_MAX_PAGES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(5)
+      .default(2),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
@@ -166,6 +185,12 @@ const rawEnvSchema = z
     lidoEnabled: value.LIDO_ENABLED,
     lidoAllowedPublishers: value.LIDO_ALLOWED_PUBLISHERS,
     lidoFetchMaxPages: value.LIDO_FETCH_MAX_PAGES,
+    aaveForumBaseUrl: value.AAVE_FORUM_BASE_URL,
+    aaveForumApiBaseUrl: value.AAVE_FORUM_API_BASE_URL,
+    aaveEnabled: value.AAVE_ENABLED,
+    aaveAllowedPublishers: value.AAVE_ALLOWED_PUBLISHERS,
+    aaveFetchMaxPages: value.AAVE_FETCH_MAX_PAGES,
+    aaveCategoryFetchMaxPages: value.AAVE_CATEGORY_FETCH_MAX_PAGES,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,
@@ -209,6 +234,14 @@ export function toSafeConfig(env: Env) {
       forumApiBaseUrl: env.lidoForumApiBaseUrl,
       allowedPublisherCount: env.lidoAllowedPublishers.length,
       fetchMaxPages: env.lidoFetchMaxPages
+    },
+    aave: {
+      enabled: env.aaveEnabled,
+      forumBaseUrl: env.aaveForumBaseUrl,
+      forumApiBaseUrl: env.aaveForumApiBaseUrl,
+      allowedPublisherCount: env.aaveAllowedPublishers.length,
+      fetchMaxPages: env.aaveFetchMaxPages,
+      categoryFetchMaxPages: env.aaveCategoryFetchMaxPages
     },
     notifications: {
       telegramEnabled: env.enableTelegramNotifications,

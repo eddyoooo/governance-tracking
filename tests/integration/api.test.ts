@@ -89,18 +89,33 @@ describe("API", () => {
 
     const response = await request(app).get("/api/protocols").expect(200);
 
-    expect(response.body.protocols).toHaveLength(1);
-    expect(response.body.protocols[0]).toMatchObject({
-      protocol: "lido",
-      enabled: true,
-      allowedPublisherCount: 2,
-      source: {
-        protocol: "lido",
-        type: "forum",
-        name: "Lido Research Forum",
-        baseUrl: "https://research.lido.fi"
-      }
-    });
+    expect(response.body.protocols).toHaveLength(2);
+    expect(response.body.protocols).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "lido",
+          enabled: true,
+          allowedPublisherCount: 2,
+          source: expect.objectContaining({
+            protocol: "lido",
+            type: "forum",
+            name: "Lido Research Forum",
+            baseUrl: "https://research.lido.fi"
+          })
+        }),
+        expect.objectContaining({
+          protocol: "aave",
+          enabled: true,
+          allowedPublisherCount: 0,
+          source: expect.objectContaining({
+            protocol: "aave",
+            type: "forum",
+            name: "Aave Governance Forum",
+            baseUrl: "https://governance.aave.com"
+          })
+        })
+      ])
+    );
   });
 
   it("lists, filters, limits, and reads stored proposals", async () => {
@@ -315,6 +330,10 @@ describe("API", () => {
       lido: {
         fetchMaxPages: 5
       },
+      aave: {
+        fetchMaxPages: 10,
+        categoryFetchMaxPages: 2
+      },
       apiAuth: {
         hasToken: true
       },
@@ -328,11 +347,25 @@ describe("API", () => {
     expect(serialized).not.toContain("222222222");
   });
 
-  it("fetches debug Lido recent items through the registered adapter", async () => {
+  it("fetches debug recent items through the registered adapter", async () => {
     const registry = new ProtocolRegistry();
     registry.register(
       createFakeProtocolAdapter({
         items: [createRawGovernanceItem({ sourceId: "1001" })]
+      })
+    );
+    registry.register(
+      createFakeProtocolAdapter({
+        protocol: "aave",
+        publisherAllowlist: ["AaveLabs"],
+        items: [
+          createRawGovernanceItem({
+            protocol: "aave",
+            sourceId: "25170",
+            publisherName: "AaveLabs",
+            sourceUrl: "https://governance.aave.com/t/arfc-deploy-aave-v4-on-arc/25170"
+          })
+        ]
       })
     );
     const { app } = createApp({
@@ -353,9 +386,22 @@ describe("API", () => {
         }
       ]
     });
+
+    const aaveResponse = await request(app).get("/api/debug/aave/recent").expect(200);
+
+    expect(aaveResponse.body).toMatchObject({
+      count: 1,
+      items: [
+        {
+          protocol: "aave",
+          sourceId: "25170",
+          publisherName: "AaveLabs"
+        }
+      ]
+    });
   });
 
-  it("returns 404 from debug Lido recent when the adapter is missing", async () => {
+  it("returns 404 from debug protocol recent when the adapter is missing", async () => {
     const { app } = createApp({
       env: testEnv({
         ENABLE_DEBUG_ENDPOINTS: "true"
@@ -365,7 +411,7 @@ describe("API", () => {
 
     const response = await request(app).get("/api/debug/lido/recent").expect(404);
 
-    expect(response.body.error).toBe("Lido adapter not found.");
+    expect(response.body.error).toBe("Protocol adapter not found.");
   });
 
   it("runs the debug fetch-once endpoint", async () => {
@@ -431,6 +477,33 @@ describe("API", () => {
     });
 
     const fixtures = await request(app).get("/api/debug/demo-fixtures").expect(200);
+    expect(fixtures.body.aaveSite.categories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 10,
+          slug: "new-market",
+          parent_category_id: 4
+        }),
+        expect.objectContaining({
+          id: 17,
+          slug: "oracles",
+          parent_category_id: 7
+        })
+      ])
+    );
+    expect(fixtures.body.aaveRecentTopics.topic_list.topics).toHaveLength(4);
+    expect(fixtures.body.aaveRecentTopics.topic_list.topics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 25170,
+          title: "[ARFC] Deploy Aave V4 on Arc"
+        }),
+        expect.objectContaining({
+          id: 25168,
+          title: "Risk Stewards: Supply Cap Increases on Aave V3 / 2026.06.18"
+        })
+      ])
+    );
     expect(fixtures.body.lidoRecentTopics.topic_list.topics).toHaveLength(2);
     expect(fixtures.body.telegramTestNotifications).toEqual(
       expect.arrayContaining([
@@ -472,7 +545,7 @@ describe("API", () => {
       .expect(403);
   });
 
-  it("runs the admin Lido fetch endpoint", async () => {
+  it("runs protocol admin fetch endpoints", async () => {
     const fetchJob = {
       run: jest.fn(async () => ({
         run: {
@@ -514,6 +587,9 @@ describe("API", () => {
       storedNewCount: 1,
       skippedCount: 1
     });
+
+    await request(app).post("/api/admin/fetch/aave").expect(200);
+    expect(fetchJob.run).toHaveBeenCalledWith("aave");
   });
 
   it("returns 404 for unknown protocol admin fetches", async () => {

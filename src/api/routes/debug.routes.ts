@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { isMemoryMode, toSafeConfig } from "../../config/env.js";
+import { cloneAaveRecentTopicsFixture } from "../../demoFixtures/aaveRecentTopics.fixture.js";
+import { cloneAaveSiteFixture } from "../../demoFixtures/aaveSite.fixture.js";
 import { cloneLidoRecentTopicsFixture } from "../../demoFixtures/lidoRecentTopics.fixture.js";
 import { telegramTestNotificationFixtures } from "../../demoFixtures/telegramNotification.fixture.js";
 import type { AppContext } from "../../server.js";
@@ -22,12 +24,12 @@ export function createDebugRouter(context: AppContext): Router {
     response.json(toSafeConfig(context.env));
   });
 
-  router.get("/lido/recent", async (_request, response, next) => {
+  router.get("/:protocol/recent", async (request, response, next) => {
     try {
-      const adapter = context.protocolRegistry.get("lido");
+      const adapter = context.protocolRegistry.get(request.params.protocol);
 
       if (!adapter) {
-        response.status(404).json({ error: "Lido adapter not found." });
+        response.status(404).json({ error: "Protocol adapter not found." });
         return;
       }
 
@@ -41,9 +43,9 @@ export function createDebugRouter(context: AppContext): Router {
     }
   });
 
-  router.post("/lido/fetch-once", async (_request, response, next) => {
+  router.post("/:protocol/fetch-once", async (request, response, next) => {
     try {
-      const result = await context.fetchJob.run("lido");
+      const result = await context.fetchJob.run(request.params.protocol);
       response.json(result);
     } catch (error) {
       next(error);
@@ -52,6 +54,8 @@ export function createDebugRouter(context: AppContext): Router {
 
   router.get("/demo-fixtures", (_request, response) => {
     response.json({
+      aaveRecentTopics: cloneAaveRecentTopicsFixture(),
+      aaveSite: cloneAaveSiteFixture(),
       lidoRecentTopics: cloneLidoRecentTopicsFixture(),
       telegramTestNotifications: telegramTestNotificationFixtures
     });

@@ -1,0 +1,13 @@
+{
+  "users": [],
+  "topic_list": {
+    "topics": [
+      {
+        "id": "not-a-number",
+        "title": 123,
+        "slug": "broken-topic",
+        "created_at": "not-a-date"
+      }
+    ]
+  }
+}

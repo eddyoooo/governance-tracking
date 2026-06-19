@@ -28,7 +28,18 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
     },
     proposalRepository: {},
     fetchRunRepository: {},
-    protocolRegistry: {}
+    protocolRegistry: {
+      list: jest.fn(() => [
+        {
+          protocol: "lido",
+          enabled: true
+        },
+        {
+          protocol: "aave",
+          enabled: true
+        }
+      ])
+    }
   };
 }
 
@@ -61,7 +72,7 @@ describe("scheduler", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
-  it("schedules the Lido fetch job with the configured cron", () => {
+  it("schedules enabled protocol fetch jobs with the configured cron", () => {
     const task = { stop: jest.fn() };
     const context = createContext();
     validateMock.mockReturnValue(true);
@@ -71,12 +82,12 @@ describe("scheduler", () => {
     expect(validateMock).toHaveBeenCalledWith("*/15 * * * *");
     expect(scheduleMock).toHaveBeenCalledWith("*/15 * * * *", expect.any(Function));
     expect(context.logger.info).toHaveBeenCalledWith(
-      { cron: "*/15 * * * *" },
+      { cron: "*/15 * * * *", protocols: ["lido", "aave"] },
       "Starting governance fetch scheduler"
     );
   });
 
-  it("runs the Lido fetch job when the scheduled callback fires", async () => {
+  it("runs every enabled protocol fetch job when the scheduled callback fires", async () => {
     let scheduledCallback: (() => void) | undefined;
     const context = createContext();
     validateMock.mockReturnValue(true);
@@ -90,6 +101,35 @@ describe("scheduler", () => {
     await Promise.resolve();
 
     expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
+    expect(context.fetchJob.run).toHaveBeenCalledWith("aave");
+    expect(context.fetchJob.run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not run disabled protocol adapters from the scheduler", async () => {
+    let scheduledCallback: (() => void) | undefined;
+    const context = createContext();
+    context.protocolRegistry.list.mockReturnValueOnce([
+      {
+        protocol: "lido",
+        enabled: true
+      },
+      {
+        protocol: "aave",
+        enabled: false
+      }
+    ]);
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((_cron: string, callback: () => void) => {
+      scheduledCallback = callback;
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    scheduledCallback?.();
+    await Promise.resolve();
+
+    expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
+    expect(context.fetchJob.run).not.toHaveBeenCalledWith("aave");
   });
 
   it("logs scheduled fetch failures without throwing from the callback", async () => {
@@ -109,8 +149,8 @@ describe("scheduler", () => {
     await Promise.resolve();
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      { error },
-      "Scheduled Lido fetch failed"
+      { error, protocol: "lido" },
+      "Scheduled governance fetch failed"
     );
   });
 });

@@ -1,12 +1,12 @@
 # Governance Tracking
 
-Backend MVP for tracking governance activity. The current system tracks Lido forum proposals, keeps only items from trusted publishers, deduplicates them, stores normalized proposal records, records fetch runs, and can optionally notify Telegram when a new trusted proposal appears.
+Backend MVP for tracking governance activity. The current system tracks Lido and Aave forum activity, keeps only items from trusted publishers, deduplicates them, stores normalized proposal records, records fetch runs, and can optionally notify Telegram when a new trusted proposal appears.
 
 For exact commands and expected terminal/API results, use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md).
 
 ## What It Does
 
-The platform fetches recent Lido governance topics from `https://research.lido.fi`, validates the Discourse JSON response, extracts each topic's `publisherName`, and compares that publisher against `LIDO_ALLOWED_PUBLISHERS`. Only allowlisted topics are stored as governance proposals.
+The platform fetches recent governance topics from Discourse-based protocol forums, validates the JSON response, extracts each topic's `publisherName`, and compares that publisher against the protocol's allowlist. Only allowlisted topics are stored as governance proposals.
 
 For Lido, the backend intentionally calls the category-specific Discourse endpoint:
 
@@ -20,6 +20,24 @@ The endpoint currently returns 30 proposal-category topics per page. The backend
 
 The Lido proposal category also exposes an RSS feed at `/c/proposals/9.rss`; the current implementation still uses the JSON polling path because it gives us structured pagination and topic metadata.
 
+For Aave, the verified forum is:
+
+```text
+https://governance.aave.com
+```
+
+It is Discourse-based. Aave does not have one equivalent proposal-only category like Lido. Proposal-like activity appears across Governance, Governance subcategories, Risk, Risk subcategories, Development, Finance, and other operational categories.
+
+For Aave, the adapter uses two coverage layers:
+
+```text
+GET /latest.json?page=<page>
+GET /site.json
+GET /c/<category-path>/<category-id>/l/latest.json?page=<page>
+```
+
+The global latest feed gives broad forum coverage. The site/category pass discovers all public top-level categories and subcategories, then polls category-specific latest pages as a safety net. This means an allowlisted Aave publisher should be seen even if the topic is posted outside the Governance parent category. The Aave allowlist keeps stored records focused on trusted publishers. The initial test allowlist is `AaveLabs`, `TokenLogic`, and `LlamaRisk`.
+
 Stored proposals are deduplicated by:
 
 ```text
@@ -32,14 +50,22 @@ For Lido, that means:
 lido + forum + <discourse-topic-id>
 ```
 
+For Aave, that means:
+
+```text
+aave + forum + <discourse-topic-id>
+```
+
 If the same proposal appears again in a later fetch, the backend does not create a duplicate. If source content changed, it updates the existing record. If the source content is identical except for fetch timestamps, it skips rewriting the proposal and records that repeat sighting in the fetch-run `unchangedExistingCount`.
 
 ## Current Capabilities
 
-- Fetch Lido forum governance topics.
+- Fetch Lido and Aave forum governance topics.
 - Paginate Lido proposal-category pages for better notification coverage.
+- Paginate Aave forum latest pages for broad trusted-publisher coverage.
+- Poll Aave public category and subcategory latest pages as an extra coverage layer.
 - Stop pagination once it reaches already-known allowlisted proposal pages.
-- Validate external Lido responses with Zod.
+- Validate external Discourse responses with Zod.
 - Filter proposals by trusted publisher allowlist.
 - Store normalized proposal records in Firestore or memory mode.
 - Deduplicate proposals across repeated fetches.
@@ -50,22 +76,22 @@ If the same proposal appears again in a later fetch, the backend does not create
 - Optionally send Telegram notifications for new allowlisted proposals.
 - Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
 - Run a guided terminal demo in memory mode with scripted Lido proposal discovery.
-- Run scheduled polling every 15 minutes in normal mode.
+- Run scheduled polling for every enabled protocol every 15 minutes in normal mode.
 - Run with Docker and docker-compose.
 - Run deterministic Jest/Supertest tests without live network dependency.
 
 ## Out Of Scope
 
-This step intentionally does not include AI summaries, agents, classification, category tagging, urgency scoring, recommended actions, portfolio impact logic, Snapshot ingestion, on-chain governance ingestion, non-Lido protocol adapters, or an Angular dashboard.
+This step intentionally does not include AI summaries, agents, classification, category tagging, urgency scoring, recommended actions, portfolio impact logic, Snapshot ingestion, on-chain governance ingestion, or an Angular dashboard.
 
 Firebase Storage is not used. Firestore is the structured database in normal operation.
 
 ## Architecture
 
 ```text
-Lido Discourse JSON or demo fixture
-  -> LidoForumClient
-  -> LidoAdapter
+Protocol Discourse JSON or demo fixture
+  -> protocol forum client
+  -> protocol adapter
   -> publisher allowlist filter
   -> normalizer
   -> fetch job
@@ -76,7 +102,7 @@ Lido Discourse JSON or demo fixture
 
 Important folders:
 
-- `src/protocols`: protocol interfaces, registry, allowlist logic, Lido adapter/client/normalizer.
+- `src/protocols`: protocol interfaces, registry, allowlist logic, Lido and Aave adapters/clients/normalizers.
 - `src/jobs`: fetch/filter/normalize/upsert/notify business logic.
 - `src/storage`: Firestore and memory repositories.
 - `src/notifications`: Noop and Telegram notification services.
@@ -179,6 +205,21 @@ LIDO_ALLOWED_PUBLISHERS='[
 LIDO_FETCH_MAX_PAGES=5
 ```
 
+Aave allowlist should also use JSON array format:
+
+```bash
+AAVE_FORUM_BASE_URL=https://governance.aave.com
+AAVE_FORUM_API_BASE_URL=https://governance.aave.com
+AAVE_ENABLED=true
+AAVE_ALLOWED_PUBLISHERS='[
+  "AaveLabs",
+  "TokenLogic",
+  "LlamaRisk"
+]'
+AAVE_FETCH_MAX_PAGES=10
+AAVE_CATEGORY_FETCH_MAX_PAGES=2
+```
+
 Telegram is optional and sends direct messages only to explicitly allowlisted
 Telegram user IDs. Each user must open the bot and send `/start` once before
 Telegram allows the bot to message them.
@@ -208,10 +249,20 @@ npm run test:e2e:telegram
 npm run check
 ```
 
-`npm run demo` runs a terminal walkthrough using scripted Lido proposal fixtures and in-memory storage. It reveals three new allowlisted proposals one by one, runs the normal fetch/store/notify logic after each reveal, exercises the API endpoints, and can be sped up with `DEMO_STEP_DELAY_MS=0 npm run demo`. The fixture set also includes one real non-allowlisted Lido proposal, shown as `skippedPublisherFixture`, to prove the platform fetches it but does not store or notify it. If Telegram is enabled in `.env`, this complete demo sends the proposal notifications through Telegram.
+`npm run demo` runs a terminal walkthrough using scripted Lido proposal fixtures, Aave forum fixtures, and in-memory storage. It reveals three new allowlisted Lido proposals one by one, runs the normal fetch/store/notify logic after each reveal, then demonstrates Aave preview/fetch/store/dedupe using the global latest plus public category/subcategory coverage path. The fixture set also includes one real non-allowlisted Lido proposal, shown as `skippedPublisherFixture`, to prove the platform fetches it but does not store or notify it. Speed it up with `DEMO_STEP_DELAY_MS=0 npm run demo`. If Telegram is enabled in `.env`, this complete demo sends proposal notifications through Telegram.
 
-`npm run telegram:test-send` sends real Lido proposal test alerts from different
-publishers to the configured `TELEGRAM_ALLOWED_USER_IDS`. `npm run test:e2e:telegram`
+Aave can be tested through the same API surface:
+
+```bash
+curl -s -X POST http://localhost:3000/api/admin/fetch/aave
+curl -s "http://localhost:3000/api/proposals?protocol=aave&limit=5"
+curl -s http://localhost:3000/api/debug/aave/recent
+```
+
+In memory/demo mode these use Aave fixtures. In normal Firestore mode they call the live Aave forum, including the global latest feed plus all public category/subcategory feeds discovered from `/site.json`.
+
+`npm run telegram:test-send` sends real Lido and Aave governance test alerts from
+different publishers to the configured `TELEGRAM_ALLOWED_USER_IDS`. `npm run test:e2e:telegram`
 runs the real Telegram E2E test and sends the same fixture-backed proposal set
 through the pending-notification flow. Both commands use
 `src/demoFixtures/telegramNotification.fixture.ts`. The manual test-send command

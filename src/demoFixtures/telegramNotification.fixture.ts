@@ -5,7 +5,7 @@ export interface TelegramTestNotificationFixture extends NotificationMessage {
   publishedAt: string;
 }
 
-// Real Lido proposal-category records sampled from research.lido.fi for Telegram demos.
+// Real forum records sampled from tracked protocol forums for Telegram demos.
 export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[] = [
   {
     protocol: "lido",
@@ -33,6 +33,33 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
     title: "Utilizing Market Opportunities: stETH / LDO trade",
     sourceUrl: "https://research.lido.fi/t/utilizing-market-opportunities-steth-ldo-trade/11358",
     publishedAt: "2026-03-27T14:41:43.902Z"
+  },
+  {
+    protocol: "aave",
+    sourceType: "forum",
+    sourceId: "25170",
+    publisherName: "AaveLabs",
+    title: "[ARFC] Deploy Aave V4 on Arc",
+    sourceUrl: "https://governance.aave.com/t/arfc-deploy-aave-v4-on-arc/25170",
+    publishedAt: "2026-06-19T12:00:28.625Z"
+  },
+  {
+    protocol: "aave",
+    sourceType: "forum",
+    sourceId: "25168",
+    publisherName: "LlamaRisk",
+    title: "Risk Stewards: Supply Cap Increases on Aave V3 / 2026.06.18",
+    sourceUrl: "https://governance.aave.com/t/risk-stewards-supply-cap-increases-on-aave-v3-2026-06-18/25168",
+    publishedAt: "2026-06-18T20:17:30.736Z"
+  },
+  {
+    protocol: "aave",
+    sourceType: "forum",
+    sourceId: "25154",
+    publisherName: "TokenLogic",
+    title: "[ARFC] Umbrella Parameter Update: Target Liquidity and Emission Optimization",
+    sourceUrl: "https://governance.aave.com/t/arfc-umbrella-parameter-update-target-liquidity-and-emission-optimization/25154",
+    publishedAt: "2026-06-16T15:45:02.282Z"
   }
 ];
 

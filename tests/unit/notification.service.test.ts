@@ -43,21 +43,33 @@ describe("notification services", () => {
 
     expect(telegramTestNotificationFixtures.length).toBeGreaterThanOrEqual(2);
     expect(new Set(publisherNames).size).toBe(telegramTestNotificationFixtures.length);
+    expect(new Set(telegramTestNotificationFixtures.map((fixture) => fixture.protocol))).toEqual(
+      new Set(["lido", "aave"])
+    );
     expect(publisherNames).toEqual(
       expect.arrayContaining([
         "Lido Labs Foundation - Operations Team",
-        "Lido | Finance Team"
+        "Lido | Finance Team",
+        "AaveLabs",
+        "LlamaRisk",
+        "TokenLogic"
       ])
     );
 
     for (const fixture of telegramTestNotificationFixtures) {
-      expect(fixture.protocol).toBe("lido");
       expect(fixture.sourceType).toBe("forum");
       expect(fixture.sourceId).toMatch(/^\d+$/);
       expect(fixture.publisherName).not.toBe("Governance Tracker Test");
-      expect(fixture.sourceUrl).toMatch(
-        new RegExp(`^https://research\\.lido\\.fi/t/.+/${fixture.sourceId}$`)
-      );
+      if (fixture.protocol === "lido") {
+        expect(fixture.sourceUrl).toMatch(
+          new RegExp(`^https://research\\.lido\\.fi/t/.+/${fixture.sourceId}$`)
+        );
+      } else {
+        expect(fixture.protocol).toBe("aave");
+        expect(fixture.sourceUrl).toMatch(
+          new RegExp(`^https://governance\\.aave\\.com/t/.+/${fixture.sourceId}$`)
+        );
+      }
       expect(new Date(fixture.publishedAt).toISOString()).toBe(fixture.publishedAt);
     }
   });

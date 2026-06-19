@@ -6,6 +6,8 @@ import {
 } from "./demoFixtures/scriptedLidoDemo.adapter.js";
 import type { FetchProtocolResult } from "./jobs/fetchProtocolGovernance.job.js";
 import type { NotifyPendingResult } from "./notifications/proposalNotifications.js";
+import { AaveAdapter } from "./protocols/aave/aave.adapter.js";
+import { createAaveDemoClient } from "./protocols/aave/aave.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
 import type { RawGovernanceItem, StoredProposal } from "./protocols/types.js";
 import { createApp } from "./server.js";
@@ -38,6 +40,7 @@ const DEMO_ALLOWED_PUBLISHERS = [
   "Lido | Finance Team",
   "Lido Ecosystem Foundation - Operations Team"
 ];
+const DEMO_AAVE_ALLOWED_PUBLISHERS = ["AaveLabs", "TokenLogic", "LlamaRisk"];
 
 function readStepDelayMs(): number {
   const raw = process.env.DEMO_STEP_DELAY_MS;
@@ -129,9 +132,13 @@ function summarizeFetchRuns(fetchRuns: FetchRun[]) {
   }));
 }
 
-function createDemoRegistry(adapter: ScriptedLidoDemoAdapter): ProtocolRegistry {
+function createDemoRegistry(
+  lidoAdapter: ScriptedLidoDemoAdapter,
+  aaveAdapter: AaveAdapter
+): ProtocolRegistry {
   const registry = new ProtocolRegistry();
-  registry.register(adapter);
+  registry.register(lidoAdapter);
+  registry.register(aaveAdapter);
 
   return registry;
 }
@@ -150,6 +157,9 @@ async function main(): Promise<void> {
     ENABLE_DEBUG_ENDPOINTS: "true",
     LIDO_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_ALLOWED_PUBLISHERS),
     LIDO_FETCH_MAX_PAGES: "5",
+    AAVE_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_AAVE_ALLOWED_PUBLISHERS),
+    AAVE_FETCH_MAX_PAGES: "10",
+    AAVE_CATEGORY_FETCH_MAX_PAGES: "2",
     API_AUTH_ENABLED: "false",
     LOG_LEVEL: "silent"
   });
@@ -157,14 +167,26 @@ async function main(): Promise<void> {
     allowedPublishers: env.lidoAllowedPublishers,
     forumBaseUrl: env.lidoForumBaseUrl
   });
+  const aaveAdapter = new AaveAdapter({
+    enabled: env.aaveEnabled,
+    forumBaseUrl: env.aaveForumBaseUrl,
+    forumApiBaseUrl: env.aaveForumApiBaseUrl,
+    allowedPublishers: env.aaveAllowedPublishers,
+    maxPages: env.aaveFetchMaxPages,
+    categoryMaxPages: env.aaveCategoryFetchMaxPages,
+    client: createAaveDemoClient({
+      forumBaseUrl: env.aaveForumBaseUrl,
+      forumApiBaseUrl: env.aaveForumApiBaseUrl
+    })
+  });
   const { app, context } = createApp({
     env,
-    protocolRegistry: createDemoRegistry(adapter)
+    protocolRegistry: createDemoRegistry(adapter, aaveAdapter)
   });
   const api = request(app);
 
   console.log("Governance tracker demo");
-  console.log("Using memory storage and scripted Lido proposal fixtures.");
+  console.log("Using memory storage, scripted Lido fixtures, and Aave forum fixtures.");
   console.log(
     env.enableTelegramNotifications
       ? `Telegram is enabled for ${env.telegramAllowedUserIds.length} allowed user(s).`
@@ -186,6 +208,7 @@ async function main(): Promise<void> {
         demoMode: boolean;
         notifications: unknown;
         lido: unknown;
+        aave: unknown;
         apiAuth: unknown;
       }>(api, "/api/debug/config-safe");
 
@@ -194,6 +217,7 @@ async function main(): Promise<void> {
         demoMode: config.demoMode,
         notifications: config.notifications,
         lido: config.lido,
+        aave: config.aave,
         apiAuth: config.apiAuth
       };
     },
@@ -204,7 +228,17 @@ async function main(): Promise<void> {
     async () => {
       const fixtures = await getJson<{
         lidoRecentTopics: unknown;
+        aaveRecentTopics?: { topic_list?: { topics?: unknown[] } };
+        aaveSite?: {
+          categories?: Array<{
+            id: number;
+            slug: string;
+            parent_category_id?: number;
+            read_restricted?: boolean;
+          }>;
+        };
         telegramTestNotifications?: Array<{
+          protocol: string;
           sourceId: string;
           publisherName: string;
           title: string;
@@ -212,7 +246,22 @@ async function main(): Promise<void> {
       }>(api, "/api/debug/demo-fixtures");
 
       return {
+        aaveFixtureSummary: {
+          recentTopicCount: fixtures.aaveRecentTopics?.topic_list?.topics?.length ?? 0,
+          publicCategoryCount: fixtures.aaveSite?.categories?.filter(
+            (category) => !category.read_restricted
+          ).length ?? 0,
+          sampleSubcategories: fixtures.aaveSite?.categories
+            ?.filter((category) => category.parent_category_id)
+            .slice(0, 4)
+            .map((category) => ({
+              id: category.id,
+              slug: category.slug,
+              parentCategoryId: category.parent_category_id
+            }))
+        },
         telegramFixtures: fixtures.telegramTestNotifications?.map((fixture) => ({
+          protocol: fixture.protocol,
           sourceId: fixture.sourceId,
           publisherName: fixture.publisherName,
           title: fixture.title
@@ -303,11 +352,87 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
-  const stored = await getJson<ProposalsResponse>(api, "/api/proposals?limit=10");
-  const [firstProposal] = stored.proposals;
+  await runStep(
+    "GET /api/debug/aave/recent",
+    async () => {
+      const recent = await getJson<DebugRecentResponse>(api, "/api/debug/aave/recent");
+      const categoryIds = [
+        ...new Set(
+          recent.items
+            .map((item) => {
+              const raw = item.raw as { topic?: { category_id?: number } };
+              return raw.topic?.category_id;
+            })
+            .filter((categoryId): categoryId is number => Boolean(categoryId))
+        )
+      ];
 
-  if (!firstProposal) {
-    throw new Error("Expected at least one stored proposal in the demo.");
+      return {
+        count: recent.count,
+        uniqueSourceIds: new Set(recent.items.map((item) => item.sourceId)).size,
+        allowlistedCount: recent.items.filter((item) =>
+          DEMO_AAVE_ALLOWED_PUBLISHERS.includes(item.publisherName)
+        ).length,
+        categoryIds: categoryIds.slice(0, 12),
+        items: recent.items.slice(0, 5).map((item) => ({
+          sourceId: item.sourceId,
+          publisherName: item.publisherName,
+          title: item.title
+        }))
+      };
+    },
+    stepDelayMs
+  );
+
+  const aaveFirstFetch = await runStep(
+    "POST /api/admin/fetch/aave",
+    async () => {
+      const result = await postJson<FetchProtocolResult>(api, "/api/admin/fetch/aave");
+
+      return summarizeFetch(result);
+    },
+    stepDelayMs
+  );
+
+  await runStep(
+    "GET /api/proposals?protocol=aave&limit=10",
+    async () => {
+      const response = await getJson<ProposalsResponse>(
+        api,
+        "/api/proposals?protocol=aave&limit=10"
+      );
+
+      return {
+        count: response.proposals.length,
+        proposals: response.proposals.map(summarizeProposal)
+      };
+    },
+    stepDelayMs
+  );
+
+  const aaveDuplicateFetch = await runStep(
+    "POST /api/debug/aave/fetch-once",
+    async () => {
+      const result = await postJson<FetchProtocolResult>(
+        api,
+        "/api/debug/aave/fetch-once"
+      );
+
+      return summarizeFetch(result);
+    },
+    stepDelayMs
+  );
+
+  const stored = await getJson<ProposalsResponse>(api, "/api/proposals?limit=10");
+  const firstLidoProposal = stored.proposals.find(
+    (proposal) => proposal.protocol === "lido"
+  );
+  const firstAaveProposal = stored.proposals.find(
+    (proposal) => proposal.protocol === "aave"
+  );
+
+  if (!firstLidoProposal || !firstAaveProposal) {
+    throw new Error("Expected at least one stored Lido and Aave proposal in the demo.");
   }
 
   await runStep(
@@ -315,7 +440,7 @@ async function main(): Promise<void> {
     async () => {
       const response = await getJson<ProposalResponse>(
         api,
-        `/api/proposals/${firstProposal.id}`
+        `/api/proposals/${firstLidoProposal.id}`
       );
 
       return summarizeProposal(response.proposal);
@@ -327,7 +452,19 @@ async function main(): Promise<void> {
     async () => {
       const response = await getJson<ProposalResponse>(
         api,
-        `/api/proposals/source/lido/forum/${firstProposal.sourceId}`
+        `/api/proposals/source/lido/forum/${firstLidoProposal.sourceId}`
+      );
+
+      return summarizeProposal(response.proposal);
+    },
+    stepDelayMs
+  );
+  await runStep(
+    "GET /api/proposals/source/aave/forum/:sourceId",
+    async () => {
+      const response = await getJson<ProposalResponse>(
+        api,
+        `/api/proposals/source/aave/forum/${firstAaveProposal.sourceId}`
       );
 
       return summarizeProposal(response.proposal);
@@ -339,11 +476,11 @@ async function main(): Promise<void> {
     async () => {
       const byPublisher = await getJson<ProposalsResponse>(
         api,
-        `/api/proposals?publisherName=${encodeURIComponent(firstProposal.publisherName)}`
+        `/api/proposals?publisherName=${encodeURIComponent(firstLidoProposal.publisherName)}`
       );
       const byNotification = await getJson<ProposalsResponse>(
         api,
-        `/api/proposals?notificationStatus=${firstProposal.notificationStatus}`
+        `/api/proposals?notificationStatus=${firstLidoProposal.notificationStatus}`
       );
       const sorted = await getJson<ProposalsResponse>(
         api,
@@ -464,6 +601,10 @@ async function main(): Promise<void> {
   console.log("\nSummary");
   printJson({
     discoveredProposals: discoverySummaries,
+    aave: {
+      firstFetch: aaveFirstFetch,
+      duplicateFetch: aaveDuplicateFetch
+    },
     telegram:
       env.enableTelegramNotifications
         ? "notifications sent during each new proposal fetch"

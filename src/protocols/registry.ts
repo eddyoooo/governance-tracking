@@ -1,6 +1,8 @@
 import type { Logger } from "pino";
 import type { Env } from "../config/env.js";
 import { isMemoryMode } from "../config/env.js";
+import { AaveAdapter } from "./aave/aave.adapter.js";
+import { createAaveDemoClient } from "./aave/aave.demoClient.js";
 import { LidoAdapter } from "./lido/lido.adapter.js";
 import { createLidoDemoClient } from "./lido/lido.demoClient.js";
 import type { ProtocolAdapter } from "./types.js";
@@ -30,6 +32,13 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
         logger
       })
     : undefined;
+  const aaveClient = isMemoryMode(env)
+    ? createAaveDemoClient({
+        forumBaseUrl: env.aaveForumBaseUrl,
+        forumApiBaseUrl: env.aaveForumApiBaseUrl,
+        logger
+      })
+    : undefined;
 
   registry.register(
     new LidoAdapter({
@@ -40,6 +49,18 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       maxPages: env.lidoFetchMaxPages,
       logger,
       client: lidoClient
+    })
+  );
+  registry.register(
+    new AaveAdapter({
+      enabled: env.aaveEnabled,
+      forumBaseUrl: env.aaveForumBaseUrl,
+      forumApiBaseUrl: env.aaveForumApiBaseUrl,
+      allowedPublishers: env.aaveAllowedPublishers,
+      maxPages: env.aaveFetchMaxPages,
+      categoryMaxPages: env.aaveCategoryFetchMaxPages,
+      logger,
+      client: aaveClient
     })
   );
 

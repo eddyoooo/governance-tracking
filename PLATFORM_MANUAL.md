@@ -29,9 +29,12 @@ ENABLE_DEBUG_ENDPOINTS=true
 API_AUTH_ENABLED=false
 LIDO_ALLOWED_PUBLISHERS='["Allowed Publisher"]'
 LIDO_FETCH_MAX_PAGES=5
+AAVE_ALLOWED_PUBLISHERS='["AaveLabs","TokenLogic","LlamaRisk"]'
+AAVE_FETCH_MAX_PAGES=10
+AAVE_CATEGORY_FETCH_MAX_PAGES=2
 ```
 
-Expected result: API starts on port `3000`, uses in-memory storage, uses fixture-backed Lido data, and does not require Firebase or Telegram.
+Expected result: API starts on port `3000`, uses in-memory storage, uses fixture-backed Lido and Aave data, and does not require Firebase or Telegram.
 
 ## 2. Run The One-Shot Demo
 
@@ -39,12 +42,14 @@ Expected result: API starts on port `3000`, uses in-memory storage, uses fixture
 npm run demo
 ```
 
-Expected result: a terminal walkthrough using in-memory storage and scripted
-Lido proposal fixtures. It reveals three new allowlisted proposals one by one,
-runs the normal fetch/store/notify logic after each reveal, exercises the API
+Expected result: a terminal walkthrough using in-memory storage, scripted Lido
+proposal fixtures, and Aave forum fixtures. It reveals three new allowlisted
+Lido proposals one by one, runs the normal fetch/store/notify logic after each
+reveal, then demonstrates Aave preview/fetch/store/dedupe using the global
+latest plus public category/subcategory coverage path. It also exercises API
 endpoints, checks duplicate/no-rewrite behavior, checks auth behavior, and resets
 demo state. If Telegram is enabled in `.env`, the complete demo sends Telegram
-notifications during the three discovery fetches.
+notifications during the new proposal fetches.
 
 The demo fixture set has four real Lido proposal records:
 
@@ -64,13 +69,14 @@ What the complete demo shows:
 - It starts an in-memory API so the demo does not need Firestore.
 - It prints available routes from `GET /`.
 - It checks `GET /health` to prove the API is alive.
-- It checks `GET /api/protocols` to prove Lido is registered.
+- It checks `GET /api/protocols` to prove Lido and Aave are registered.
 - It checks `GET /api/debug/config-safe` to show non-secret runtime settings.
 - It checks `GET /api/debug/demo-fixtures` to show the local fixture set.
 - It runs three discovery fetches with `POST /api/admin/fetch/lido`; each one reveals one new allowlisted Lido proposal.
 - It sends a Telegram notification during each discovery fetch when Telegram is enabled.
-- It calls `GET /api/debug/lido/recent` to show what the adapter currently sees before storage.
+- It calls `GET /api/debug/lido/recent` and `GET /api/debug/aave/recent` to show what adapters currently see before storage.
 - It calls `GET /api/proposals` to show what was actually persisted after filtering.
+- It calls `POST /api/admin/fetch/aave` and `POST /api/debug/aave/fetch-once` to prove Aave fetch, storage, dedupe, and no-rewrite behavior.
 - It calls both proposal detail endpoints to show internal-id lookup and source-id lookup.
 - It filters proposals by publisher and notification status.
 - It calls `GET /api/admin/fetch-runs` to show the audit trail of fetch attempts.
@@ -101,15 +107,16 @@ Expected result:
 curl -s "$API/api/protocols"
 ```
 
-Expected result: registered protocols, currently Lido, including source metadata and allowlist count.
+Expected result: registered protocols, currently Lido and Aave, including source metadata and allowlist counts.
 
-## 5. Preview Lido Items Before Storage
+## 5. Preview Protocol Items Before Storage
 
 ```bash
 curl -s "$API/api/debug/lido/recent"
+curl -s "$API/api/debug/aave/recent"
 ```
 
-Expected result: recent Lido adapter items with `sourceId`, `title`, `publisherName`, `sourceUrl`, and raw payload data.
+Expected result: recent adapter items with `sourceId`, `title`, `publisherName`, `sourceUrl`, and raw payload data.
 
 Important: this does not store proposals. It is for inspecting what the adapter sees before allowlist filtering.
 
@@ -119,8 +126,7 @@ To inspect the fixture payload used in demo/memory mode:
 curl -s "$API/api/debug/demo-fixtures"
 ```
 
-Expected result: raw demo fixture JSON for the Lido recent-topics response and
-the real Lido proposal records used by the Telegram/demo notification flow.
+Expected result: raw demo fixture JSON for the Lido and Aave recent-topics responses, Aave public category/subcategory metadata, and the real Lido proposal records used by the Telegram/demo notification flow.
 The response also includes the non-allowlisted fixture used to prove skipped
 publisher behavior.
 
@@ -128,6 +134,7 @@ publisher behavior.
 
 ```bash
 curl -s -X POST "$API/api/admin/fetch/lido"
+curl -s -X POST "$API/api/admin/fetch/aave"
 ```
 
 Expected result:
@@ -147,12 +154,17 @@ Expected result:
 }
 ```
 
-The Lido category endpoint returns 30 proposal topics per page. With `LIDO_FETCH_MAX_PAGES=5`, one run can inspect up to 150 recent proposal-category topics before stopping.
+The Lido category endpoint returns 30 proposal topics per page. With `LIDO_FETCH_MAX_PAGES=5`, one Lido run can inspect up to 150 recent proposal-category topics before stopping.
+
+Aave uses the verified Discourse forum at `https://governance.aave.com`. It does not have one clean proposal-only category equivalent to Lido, so the Aave adapter uses two coverage layers: `GET /latest.json?page=<page>` for global forum latest topics, then `GET /site.json` to discover public categories/subcategories and poll each `GET /c/<category-path>/<category-id>/l/latest.json?page=<page>` feed. This is intentionally more robust than Lido because Aave proposal-like posts can appear across Governance, Governance subcategories, Risk, Risk subcategories, Development, Finance, and other public categories.
+
+With `AAVE_FETCH_MAX_PAGES=10`, one Aave run can inspect up to 300 global latest topics. With `AAVE_CATEGORY_FETCH_MAX_PAGES=2`, it can also inspect up to 60 topics per public category/subcategory before deduplicating by Discourse topic id.
 
 Debug equivalent when `ENABLE_DEBUG_ENDPOINTS=true`:
 
 ```bash
 curl -s -X POST "$API/api/debug/lido/fetch-once"
+curl -s -X POST "$API/api/debug/aave/fetch-once"
 ```
 
 Expected result: same fetch result shape as the admin fetch endpoint.
@@ -190,6 +202,7 @@ Expected result: `storedNewCount` becomes `0`, `unchangedExistingCount` increase
 
 ```bash
 curl -s "$API/api/proposals?protocol=lido&limit=5"
+curl -s "$API/api/proposals?protocol=aave&limit=5"
 ```
 
 Expected result: stored proposals after allowlist filtering. This endpoint reads memory or Firestore only; it does not call Lido.
@@ -216,6 +229,7 @@ By source identity:
 
 ```bash
 curl -s "$API/api/proposals/source/lido/forum/<lido-topic-id>"
+curl -s "$API/api/proposals/source/aave/forum/<aave-topic-id>"
 ```
 
 Expected result: one stored proposal, or:
@@ -232,7 +246,7 @@ These two endpoints can return the same proposal through different keys. The
 internal id is generated by the platform, for example
 `lido_forum_11624_445bfbca21`. The source identity uses the original source
 fields, for example protocol `lido`, source type `forum`, and Lido Discourse
-topic id `11624`.
+topic id `11624`. Aave works the same way, except the protocol is `aave`.
 
 ## 9. List Fetch Runs
 
@@ -349,6 +363,7 @@ Then run:
 
 ```bash
 curl -s -X POST "$API/api/admin/fetch/lido"
+curl -s -X POST "$API/api/admin/fetch/aave"
 ```
 
 Expected result: new allowlisted proposals are sent once to the configured
@@ -361,8 +376,8 @@ Send direct-message test alerts without fetching proposals:
 npm run telegram:test-send
 ```
 
-Expected result: each configured allowed user receives multiple real Lido
-proposal-style messages from different publishers, and the terminal prints how
+Expected result: each configured allowed user receives multiple real Lido and Aave
+governance-style messages from different publishers, and the terminal prints how
 many messages and users were targeted. The message content comes from
 `src/demoFixtures/telegramNotification.fixture.ts`. Messages are spaced by
 `TELEGRAM_TEST_SEND_DELAY_MS`, which defaults to `3000`. Each message starts
@@ -381,7 +396,7 @@ npm run test:e2e:telegram
 ```
 
 Expected result: the test seeds multiple pending proposals in memory from the
-same real Lido fixture set, sends them through the real Telegram service to the
+same real Lido/Aave fixture set, sends them through the real Telegram service to the
 allowed users, and marks each one `sent`.
 
 ## 15. Run Tests
@@ -415,6 +430,13 @@ DEMO_MODE=false
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=*/15 * * * *
 LIDO_FETCH_MAX_PAGES=5
+AAVE_FETCH_MAX_PAGES=10
+AAVE_CATEGORY_FETCH_MAX_PAGES=2
+AAVE_ALLOWED_PUBLISHERS='[
+  "AaveLabs",
+  "TokenLogic",
+  "LlamaRisk"
+]'
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 FIREBASE_PROJECT_ID=replace-with-project-id
@@ -456,7 +478,7 @@ Expected result: backend listens on local port `3000`. Demo compose uses memory 
 
 ## Endpoint Source Map
 
-These do not call Lido/Discourse:
+These do not call protocol forums:
 
 ```text
 GET /health
@@ -468,15 +490,18 @@ GET /api/admin/fetch-runs
 GET /api/debug/demo-fixtures
 ```
 
-These fetch through the Lido adapter:
+These fetch through protocol adapters:
 
 ```text
 GET /api/debug/lido/recent
+GET /api/debug/aave/recent
 POST /api/debug/lido/fetch-once
+POST /api/debug/aave/fetch-once
 POST /api/admin/fetch/lido
+POST /api/admin/fetch/aave
 ```
 
-In demo/memory mode, the Lido adapter uses fixtures. In normal Firestore mode, it calls Lido/Discourse.
+In demo/memory mode, adapters use fixtures. In normal Firestore mode, they call their live protocol forums.
 
 ## Common Results
 

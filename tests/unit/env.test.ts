@@ -5,6 +5,7 @@ describe("env parsing", () => {
   it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
     const env = loadEnv({
       LIDO_ALLOWED_PUBLISHERS: " Allowed Publisher,DAO Ops ",
+      AAVE_ALLOWED_PUBLISHERS: " AaveLabs, TokenLogic, LlamaRisk ",
       FIREBASE_PRIVATE_KEY: "line1\\nline2"
     } as NodeJS.ProcessEnv);
 
@@ -14,6 +15,16 @@ describe("env parsing", () => {
     expect(env.fetchIntervalCron).toBe("*/15 * * * *");
     expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
     expect(env.lidoFetchMaxPages).toBe(5);
+    expect(env.aaveForumBaseUrl).toBe("https://governance.aave.com");
+    expect(env.aaveForumApiBaseUrl).toBe("https://governance.aave.com");
+    expect(env.aaveEnabled).toBe(true);
+    expect(env.aaveAllowedPublishers).toEqual([
+      "AaveLabs",
+      "TokenLogic",
+      "LlamaRisk"
+    ]);
+    expect(env.aaveFetchMaxPages).toBe(10);
+    expect(env.aaveCategoryFetchMaxPages).toBe(2);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
@@ -28,13 +39,19 @@ describe("env parsing", () => {
         "Lido Labs Foundation - Operations Team",
         "Lido | Finance Team",
         "Lido Ecosystem Foundation - Operations Team"
-      ])
+      ]),
+      AAVE_ALLOWED_PUBLISHERS: JSON.stringify(["AaveLabs", "TokenLogic", "LlamaRisk"])
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoAllowedPublishers).toEqual([
       "Lido Labs Foundation - Operations Team",
       "Lido | Finance Team",
       "Lido Ecosystem Foundation - Operations Team"
+    ]);
+    expect(env.aaveAllowedPublishers).toEqual([
+      "AaveLabs",
+      "TokenLogic",
+      "LlamaRisk"
     ]);
   });
 
@@ -55,6 +72,12 @@ describe("env parsing", () => {
         LIDO_ALLOWED_PUBLISHERS: "[not-json"
       } as NodeJS.ProcessEnv)
     ).toThrow("Invalid JSON array in LIDO_ALLOWED_PUBLISHERS.");
+
+    expect(() =>
+      loadEnv({
+        AAVE_ALLOWED_PUBLISHERS: "[not-json"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in AAVE_ALLOWED_PUBLISHERS.");
   });
 
   it("rejects JSON allowlists that are not arrays of strings", () => {
@@ -77,6 +100,7 @@ describe("env parsing", () => {
       ENABLE_SCHEDULER: "false",
       ENABLE_DEBUG_ENDPOINTS: " true ",
       LIDO_ENABLED: "FALSE",
+      AAVE_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       TELEGRAM_E2E_ENABLED: "true",
       NOTIFY_ON_NEW_PROPOSAL: "false",
@@ -87,6 +111,7 @@ describe("env parsing", () => {
     expect(env.enableScheduler).toBe(false);
     expect(env.enableDebugEndpoints).toBe(true);
     expect(env.lidoEnabled).toBe(false);
+    expect(env.aaveEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.notifyOnNewProposal).toBe(false);
@@ -220,10 +245,14 @@ describe("env parsing", () => {
 
   it("parses and validates Lido pagination controls", () => {
     const env = loadEnv({
-      LIDO_FETCH_MAX_PAGES: "7"
+      LIDO_FETCH_MAX_PAGES: "7",
+      AAVE_FETCH_MAX_PAGES: "6",
+      AAVE_CATEGORY_FETCH_MAX_PAGES: "3"
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoFetchMaxPages).toBe(7);
+    expect(env.aaveFetchMaxPages).toBe(6);
+    expect(env.aaveCategoryFetchMaxPages).toBe(3);
 
     expect(() =>
       loadEnv({
@@ -234,6 +263,30 @@ describe("env parsing", () => {
     expect(() =>
       loadEnv({
         LIDO_FETCH_MAX_PAGES: "21"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        AAVE_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        AAVE_FETCH_MAX_PAGES: "21"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        AAVE_CATEGORY_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        AAVE_CATEGORY_FETCH_MAX_PAGES: "6"
       } as NodeJS.ProcessEnv)
     ).toThrow();
   });
@@ -276,6 +329,8 @@ describe("env parsing", () => {
     expect(safeConfig.firebase.hasPrivateKey).toBe(true);
     expect(safeConfig.apiAuth.hasToken).toBe(true);
     expect(safeConfig.lido.fetchMaxPages).toBe(5);
+    expect(safeConfig.aave.fetchMaxPages).toBe(10);
+    expect(safeConfig.aave.categoryFetchMaxPages).toBe(2);
     expect(safeConfig.notifications.hasTelegramBotToken).toBe(true);
     expect(safeConfig.notifications.telegramAllowedUserCount).toBe(2);
     expect(safeConfig.notifications.telegramE2EEnabled).toBe(true);

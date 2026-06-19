@@ -16,5 +16,8 @@ services:
       NOTIFY_ON_NEW_PROPOSAL: "true"
       LIDO_ALLOWED_PUBLISHERS: '["Allowed Publisher"]'
       LIDO_FETCH_MAX_PAGES: 5
+      AAVE_ALLOWED_PUBLISHERS: '["AaveLabs","TokenLogic","LlamaRisk"]'
+      AAVE_FETCH_MAX_PAGES: 10
+      AAVE_CATEGORY_FETCH_MAX_PAGES: 2
       LOG_LEVEL: info
     command: npm run demo:api
