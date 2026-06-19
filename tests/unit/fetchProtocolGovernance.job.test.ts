@@ -262,6 +262,73 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
+  it("deduplicates duplicate source identities within the same fetch and notifies once", async () => {
+    const notificationService = new RecordingNotificationService();
+    const duplicate = createRawGovernanceItem({
+      sourceId: "1001",
+      fetchedAt: "2026-06-05T00:15:00.000Z"
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        items: [
+          createRawGovernanceItem({
+            sourceId: "1001",
+            fetchedAt: "2026-06-05T00:00:00.000Z"
+          }),
+          duplicate
+        ],
+        publisherAllowlist: ["Allowed Publisher"]
+      }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService,
+      true
+    );
+
+    const result = await job.run("lido");
+    const proposals = await proposalRepository.findAll();
+
+    expect(result).toMatchObject({
+      fetchedCount: 2,
+      allowlistedCount: 2,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 1,
+      skippedCount: 0,
+      notificationSentCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      sourceId: "1001",
+      notificationStatus: "sent"
+    });
+    expect(notificationService.messages).toHaveLength(1);
+  });
+
+  it("does not queue or send new proposal notifications when notify-on-new is disabled", async () => {
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService,
+      false
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      storedNewCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 0
+    });
+    expect(notificationService.messages).toHaveLength(0);
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "skipped"
+    });
+  });
+
   it("sends Telegram-style notifications only for newly inserted proposals", async () => {
     const notificationService = new RecordingNotificationService();
     const { job, proposalRepository } = createJob(
@@ -295,6 +362,59 @@ describe("FetchProtocolGovernanceJob", () => {
     });
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "sent"
+    });
+  });
+
+  it("does not stop pagination when an allowlisted page mixes known and new items", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const known = createRawGovernanceItem({
+      sourceId: "1001",
+      publisherName: "Allowed Publisher"
+    });
+    const newOnSamePage = createRawGovernanceItem({
+      sourceId: "1002",
+      publisherName: "Allowed Publisher"
+    });
+    const laterPage = createRawGovernanceItem({
+      sourceId: "1003",
+      publisherName: "Allowed Publisher"
+    });
+
+    await proposalRepository.upsert(normalizeLidoForumItem(known), {
+      notificationStatusForNew: "skipped"
+    });
+
+    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
+      const shouldStop = await options?.shouldStopAfterPage?.({
+        page: 0,
+        items: [known, newOnSamePage],
+        hasMore: true
+      });
+
+      return shouldStop ? [known, newOnSamePage] : [known, newOnSamePage, laterPage];
+    });
+    const { job } = createJob(
+      createFakeProtocolAdapter({
+        fetchRecent,
+        publisherAllowlist: ["Allowed Publisher"]
+      }),
+      proposalRepository
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      fetchedCount: 3,
+      allowlistedCount: 3,
+      storedNewCount: 2,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 1,
+      skippedCount: 0
+    });
+    await expect(
+      proposalRepository.findBySourceIdentity("lido", "forum", "1003")
+    ).resolves.toMatchObject({
+      sourceId: "1003"
     });
   });
 

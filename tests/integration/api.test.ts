@@ -174,6 +174,65 @@ describe("API", () => {
     });
   });
 
+  it("sorts proposal API results by firstSeenAt with stable offsets", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "1001",
+        publishedAt: "2026-05-03T10:00:00.000Z"
+      })
+    );
+    const second = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "1002",
+        publishedAt: "2026-05-01T10:00:00.000Z"
+      })
+    );
+    const third = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "1003",
+        publishedAt: "2026-05-02T10:00:00.000Z"
+      })
+    );
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    await proposalRepository.upsert(first);
+
+    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
+    await proposalRepository.upsert(second);
+
+    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
+    await proposalRepository.upsert(third);
+    jest.useRealTimers();
+
+    const { app } = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository,
+        fetchRunRepository: new MemoryFetchRunRepository()
+      }
+    });
+
+    const descending = await request(app)
+      .get("/api/proposals?sort=firstSeenAt_desc&limit=2&offset=0")
+      .expect(200);
+    expect(
+      descending.body.proposals.map(
+        (proposal: { sourceId: string }) => proposal.sourceId
+      )
+    ).toEqual(["1003", "1002"]);
+
+    const ascendingOffset = await request(app)
+      .get("/api/proposals?sort=firstSeenAt_asc&limit=2&offset=1")
+      .expect(200);
+    expect(
+      ascendingOffset.body.proposals.map(
+        (proposal: { sourceId: string }) => proposal.sourceId
+      )
+    ).toEqual(["1002", "1003"]);
+  });
+
   it("rejects invalid proposal list query parameters", async () => {
     const { app } = createApp({ env: testEnv() });
 
@@ -240,7 +299,8 @@ describe("API", () => {
       env: testEnv({
         ENABLE_DEBUG_ENDPOINTS: "true",
         API_AUTH_TOKEN: "secret-token",
-        FIREBASE_PRIVATE_KEY: "private-key"
+        FIREBASE_PRIVATE_KEY: "private-key",
+        TELEGRAM_ALLOWED_USER_IDS: JSON.stringify(["111111111", "222222222"])
       })
     });
 
@@ -257,10 +317,15 @@ describe("API", () => {
       },
       apiAuth: {
         hasToken: true
+      },
+      notifications: {
+        telegramAllowedUserCount: 2
       }
     });
     expect(serialized).not.toContain("secret-token");
     expect(serialized).not.toContain("private-key");
+    expect(serialized).not.toContain("111111111");
+    expect(serialized).not.toContain("222222222");
   });
 
   it("fetches debug Lido recent items through the registered adapter", async () => {
@@ -367,6 +432,20 @@ describe("API", () => {
 
     const fixtures = await request(app).get("/api/debug/demo-fixtures").expect(200);
     expect(fixtures.body.lidoRecentTopics.topic_list.topics).toHaveLength(2);
+    expect(fixtures.body.telegramTestNotifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "lido",
+          sourceType: "forum",
+          publisherName: "Lido Labs Foundation - Operations Team"
+        }),
+        expect.objectContaining({
+          protocol: "lido",
+          sourceType: "forum",
+          publisherName: "Lido | Finance Team"
+        })
+      ])
+    );
 
     await request(app)
       .post("/api/debug/reset-demo-state")
@@ -592,6 +671,26 @@ describe("API", () => {
       .expect(200);
 
     expect(response.body.ok).toBe(true);
+  });
+
+  it("accepts a raw Authorization token but does not fall back to x-api-token after a bad Authorization header", async () => {
+    const { app } = createApp({
+      env: testEnv({
+        API_AUTH_ENABLED: "true",
+        API_AUTH_TOKEN: "test-token"
+      })
+    });
+
+    await request(app)
+      .get("/health")
+      .set("Authorization", "test-token")
+      .expect(200);
+
+    await request(app)
+      .get("/health")
+      .set("Authorization", "Bearer wrong-token")
+      .set("x-api-token", "test-token")
+      .expect(403);
   });
 
   it("accepts x-api-token auth headers", async () => {

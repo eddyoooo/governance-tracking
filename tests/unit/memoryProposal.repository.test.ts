@@ -270,6 +270,38 @@ describe("MemoryProposalRepository", () => {
     ).resolves.toMatchObject([{ sourceId: "1002" }]);
   });
 
+  it("sorts by firstSeenAt and keeps pagination stable for dashboard reads", async () => {
+    const repository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1001" }));
+    const second = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1002" }));
+    const third = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1003" }));
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    await repository.upsert(first);
+
+    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
+    await repository.upsert(second);
+
+    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
+    await repository.upsert(third);
+
+    await expect(
+      repository.findAll({
+        sort: "firstSeenAt_asc",
+        limit: 2,
+        offset: 1
+      })
+    ).resolves.toMatchObject([{ sourceId: "1002" }, { sourceId: "1003" }]);
+
+    await expect(
+      repository.findAll({
+        sort: "firstSeenAt_desc",
+        limit: 2
+      })
+    ).resolves.toMatchObject([{ sourceId: "1003" }, { sourceId: "1002" }]);
+  });
+
   it("returns null for unknown proposal ids", async () => {
     const repository = new MemoryProposalRepository();
 
@@ -319,5 +351,14 @@ describe("MemoryProposalRepository", () => {
       notificationStatus: "sent"
     });
     expect((await repository.findById(first.id))?.notificationError).toBeUndefined();
+  });
+
+  it("returns null when updating notification status for an unknown proposal", async () => {
+    const repository = new MemoryProposalRepository();
+
+    await expect(
+      repository.updateNotificationStatus("missing", "sent")
+    ).resolves.toBeNull();
+    await expect(repository.findAll()).resolves.toEqual([]);
   });
 });

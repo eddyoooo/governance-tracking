@@ -49,7 +49,7 @@ If the same proposal appears again in a later fetch, the backend does not create
 - Record fetch-run metadata with fetched, allowlisted, stored, updated, unchanged, skipped, and notification counts.
 - Optionally send Telegram notifications for new allowlisted proposals.
 - Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
-- Run a guided terminal demo in memory mode against live Lido data.
+- Run a guided terminal demo in memory mode with scripted Lido proposal discovery.
 - Run scheduled polling every 15 minutes in normal mode.
 - Run with Docker and docker-compose.
 - Run deterministic Jest/Supertest tests without live network dependency.
@@ -179,13 +179,19 @@ LIDO_ALLOWED_PUBLISHERS='[
 LIDO_FETCH_MAX_PAGES=5
 ```
 
-Telegram is optional:
+Telegram is optional and sends direct messages only to explicitly allowlisted
+Telegram user IDs. Each user must open the bot and send `/start` once before
+Telegram allows the bot to message them.
 
 ```bash
 ENABLE_TELEGRAM_NOTIFICATIONS=false
 TELEGRAM_BOT_TOKEN=replace-with-telegram-bot-token
-TELEGRAM_CHAT_ID=replace-with-telegram-chat-id
-NOTIFY_ON_NEW_PROPOSAL=true
+TELEGRAM_ALLOWED_USER_IDS='[
+  123456789,
+  987654321
+]'
+TELEGRAM_E2E_ENABLED=true
+TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
 
 ## Development
@@ -196,13 +202,24 @@ Common commands:
 npm install
 npm run dev
 npm run demo
+npm run telegram:test-send
 npm test
+npm run test:e2e:telegram
 npm run check
 ```
 
-`npm run demo` runs a guided terminal walkthrough using live Lido proposal data and in-memory storage. It announces each capability before running it, pauses between steps, and can be sped up with `DEMO_STEP_DELAY_MS=0 npm run demo`.
+`npm run demo` runs a terminal walkthrough using scripted Lido proposal fixtures and in-memory storage. It reveals three new allowlisted proposals one by one, runs the normal fetch/store/notify logic after each reveal, exercises the API endpoints, and can be sped up with `DEMO_STEP_DELAY_MS=0 npm run demo`. The fixture set also includes one real non-allowlisted Lido proposal, shown as `skippedPublisherFixture`, to prove the platform fetches it but does not store or notify it. If Telegram is enabled in `.env`, this complete demo sends the proposal notifications through Telegram.
 
-Use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md) for the full capability checklist, curl commands, Docker commands, and expected results.
+`npm run telegram:test-send` sends real Lido proposal test alerts from different
+publishers to the configured `TELEGRAM_ALLOWED_USER_IDS`. `npm run test:e2e:telegram`
+runs the real Telegram E2E test and sends the same fixture-backed proposal set
+through the pending-notification flow. Both commands use
+`src/demoFixtures/telegramNotification.fixture.ts`. The manual test-send command
+waits `3000ms` between proposal messages by default; use
+`TELEGRAM_TEST_SEND_DELAY_MS=0 npm run telegram:test-send` for a fast run. Telegram
+messages start with a bold all-caps `NEW GOVERNANCE ITEM TRACKED` header.
+
+Use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md) for the full capability checklist, curl commands, Docker commands, expected results, demo walkthrough, and explanation of common fetch counts such as `skippedCount` and `unchangedExistingCount`.
 
 ## Adding Another Protocol Later
 

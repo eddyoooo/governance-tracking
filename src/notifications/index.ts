@@ -13,9 +13,9 @@ export function createNotificationService(
     return new NoopNotificationService();
   }
 
-  if (!env.telegramBotToken || !env.telegramChatId) {
+  if (!env.telegramBotToken || env.telegramAllowedUserIds.length === 0) {
     throw new Error(
-      "Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set."
+      "Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_IDS must be set."
     );
   }
 
@@ -23,7 +23,7 @@ export function createNotificationService(
 
   return new TelegramNotificationService({
     botToken: env.telegramBotToken,
-    chatId: env.telegramChatId,
+    allowedUserIds: env.telegramAllowedUserIds,
     logger
   });
 }
@@ -35,6 +35,7 @@ export type {
 export { NoopNotificationService } from "./noopNotification.service.js";
 export {
   formatTelegramGovernanceMessage,
+  TelegramNotificationDeliveryError,
   TelegramNotificationService
 } from "./telegramNotification.service.js";
 export {

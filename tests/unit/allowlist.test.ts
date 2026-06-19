@@ -32,6 +32,17 @@ describe("publisher allowlist", () => {
     );
   });
 
+  it("matches configured Lido publisher names despite separator differences", () => {
+    expect(
+      matchesPublisherAllowlist("Lido Finance Team", ["Lido | Finance Team"])
+    ).toBe(true);
+    expect(
+      matchesPublisherAllowlist("lido labs foundation operations team", [
+        "Lido Labs Foundation - Operations Team"
+      ])
+    ).toBe(true);
+  });
+
   it("allows small publisher typos", () => {
     expect(matchesPublisherAllowlist("Allowd Publisher", ["Allowed Publisher"])).toBe(
       true

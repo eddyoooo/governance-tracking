@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { isMemoryMode, toSafeConfig } from "../../config/env.js";
 import { cloneLidoRecentTopicsFixture } from "../../demoFixtures/lidoRecentTopics.fixture.js";
+import { telegramTestNotificationFixtures } from "../../demoFixtures/telegramNotification.fixture.js";
 import type { AppContext } from "../../server.js";
 import { MemoryFetchRunRepository } from "../../storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../storage/memoryProposal.repository.js";
@@ -51,7 +52,8 @@ export function createDebugRouter(context: AppContext): Router {
 
   router.get("/demo-fixtures", (_request, response) => {
     response.json({
-      lidoRecentTopics: cloneLidoRecentTopicsFixture()
+      lidoRecentTopics: cloneLidoRecentTopicsFixture(),
+      telegramTestNotifications: telegramTestNotificationFixtures
     });
   });
 

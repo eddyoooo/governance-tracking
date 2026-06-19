@@ -39,13 +39,45 @@ Expected result: API starts on port `3000`, uses in-memory storage, uses fixture
 npm run demo
 ```
 
-Expected result: a guided terminal walkthrough using live Lido proposal data with in-memory storage. It announces each step, pauses briefly, then demonstrates health, protocols, safe config, live Lido preview, fetch/store, proposal reads, proposal filters, fetch-run history, notification retry behavior, duplicate/no-rewrite behavior, API auth, and demo reset.
+Expected result: a terminal walkthrough using in-memory storage and scripted
+Lido proposal fixtures. It reveals three new allowlisted proposals one by one,
+runs the normal fetch/store/notify logic after each reveal, exercises the API
+endpoints, checks duplicate/no-rewrite behavior, checks auth behavior, and resets
+demo state. If Telegram is enabled in `.env`, the complete demo sends Telegram
+notifications during the three discovery fetches.
+
+The demo fixture set has four real Lido proposal records:
+
+- Three allowlisted records from the configured Lido publishers. These should be stored and, when Telegram is enabled, notified once.
+- One non-allowlisted record from `Vladimir` titled `CMv2 Prover Bot Funding`. This is the `skippedPublisherFixture` in the demo output.
+
+`skippedPublisherFixture` exists to prove the allowlist is doing work. The platform fetches that item, counts it as skipped, does not store it as a proposal, and does not send a Telegram notification for it.
 
 For a faster dry run:
 
 ```bash
 DEMO_STEP_DELAY_MS=0 npm run demo
 ```
+
+What the complete demo shows:
+
+- It starts an in-memory API so the demo does not need Firestore.
+- It prints available routes from `GET /`.
+- It checks `GET /health` to prove the API is alive.
+- It checks `GET /api/protocols` to prove Lido is registered.
+- It checks `GET /api/debug/config-safe` to show non-secret runtime settings.
+- It checks `GET /api/debug/demo-fixtures` to show the local fixture set.
+- It runs three discovery fetches with `POST /api/admin/fetch/lido`; each one reveals one new allowlisted Lido proposal.
+- It sends a Telegram notification during each discovery fetch when Telegram is enabled.
+- It calls `GET /api/debug/lido/recent` to show what the adapter currently sees before storage.
+- It calls `GET /api/proposals` to show what was actually persisted after filtering.
+- It calls both proposal detail endpoints to show internal-id lookup and source-id lookup.
+- It filters proposals by publisher and notification status.
+- It calls `GET /api/admin/fetch-runs` to show the audit trail of fetch attempts.
+- It calls `POST /api/admin/notify-pending` to prove queued notification handling is wired.
+- It calls `POST /api/debug/lido/fetch-once` after discovery to prove repeat fetches do not duplicate or rewrite unchanged proposals.
+- It checks auth behavior by showing that protected endpoints reject requests without a token.
+- It resets in-memory state so the demo can be repeated.
 
 ## 3. Check Service Health
 
@@ -87,7 +119,10 @@ To inspect the fixture payload used in demo/memory mode:
 curl -s "$API/api/debug/demo-fixtures"
 ```
 
-Expected result: raw demo fixture JSON for the Lido recent-topics response.
+Expected result: raw demo fixture JSON for the Lido recent-topics response and
+the real Lido proposal records used by the Telegram/demo notification flow.
+The response also includes the non-allowlisted fixture used to prove skipped
+publisher behavior.
 
 ## 6. Fetch, Filter, Store
 
@@ -122,13 +157,34 @@ curl -s -X POST "$API/api/debug/lido/fetch-once"
 
 Expected result: same fetch result shape as the admin fetch endpoint.
 
-Run it again:
+After the complete demo has already revealed and stored all three allowlisted
+fixtures, this endpoint usually returns:
+
+```json
+{
+  "fetchedCount": 4,
+  "allowlistedCount": 3,
+  "storedNewCount": 0,
+  "updatedExistingCount": 0,
+  "unchangedExistingCount": 3,
+  "skippedCount": 1,
+  "notificationSentCount": 0,
+  "notificationFailedCount": 0,
+  "errors": []
+}
+```
+
+That means the adapter saw four items, three matched the publisher allowlist,
+one was skipped, all three allowlisted proposals were already stored and
+unchanged, and no duplicate Telegram notifications were sent.
+
+Run a one-item fetch example again:
 
 ```bash
 curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected result: `storedNewCount` becomes `0`, `unchangedExistingCount` becomes `1`, and no duplicate proposal is created. `updatedExistingCount` only increases if source content changed.
+Expected result: `storedNewCount` becomes `0`, `unchangedExistingCount` increases for already-known unchanged proposals, and no duplicate proposal is created. `updatedExistingCount` only increases if source content changed.
 
 ## 7. List Stored Proposals
 
@@ -171,6 +227,12 @@ Expected result: one stored proposal, or:
 ```
 
 Use source identity when you only know the Lido/Discourse topic id.
+
+These two endpoints can return the same proposal through different keys. The
+internal id is generated by the platform, for example
+`lido_forum_11624_445bfbca21`. The source identity uses the original source
+fields, for example protocol `lido`, source type `forum`, and Lido Discourse
+topic id `11624`.
 
 ## 9. List Fetch Runs
 
@@ -266,13 +328,21 @@ curl -s "$API/health" \
 
 ## 14. Test Telegram Setup
 
+Telegram notifications are direct user notifications, not group/channel posts.
+Each recipient must open the bot and send `/start` once. The backend then sends
+only to numeric user IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
+
 Set:
 
 ```bash
 ENABLE_TELEGRAM_NOTIFICATIONS=true
 TELEGRAM_BOT_TOKEN=replace-with-token
-TELEGRAM_CHAT_ID=replace-with-chat-id
-NOTIFY_ON_NEW_PROPOSAL=true
+TELEGRAM_ALLOWED_USER_IDS='[
+  123456789,
+  987654321
+]'
+TELEGRAM_E2E_ENABLED=true
+TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
 
 Then run:
@@ -281,7 +351,38 @@ Then run:
 curl -s -X POST "$API/api/admin/fetch/lido"
 ```
 
-Expected result: new allowlisted proposals are notified once. Existing proposals are not notified again; unchanged repeat sightings are counted without rewriting the proposal.
+Expected result: new allowlisted proposals are sent once to the configured
+Telegram user IDs. Existing proposals are not notified again; unchanged repeat
+sightings are counted without rewriting the proposal.
+
+Send direct-message test alerts without fetching proposals:
+
+```bash
+npm run telegram:test-send
+```
+
+Expected result: each configured allowed user receives multiple real Lido
+proposal-style messages from different publishers, and the terminal prints how
+many messages and users were targeted. The message content comes from
+`src/demoFixtures/telegramNotification.fixture.ts`. Messages are spaced by
+`TELEGRAM_TEST_SEND_DELAY_MS`, which defaults to `3000`. Each message starts
+with a bold all-caps `NEW GOVERNANCE ITEM TRACKED` header.
+
+For a fast dry run:
+
+```bash
+TELEGRAM_TEST_SEND_DELAY_MS=0 npm run telegram:test-send
+```
+
+Run the real Telegram E2E test:
+
+```bash
+npm run test:e2e:telegram
+```
+
+Expected result: the test seeds multiple pending proposals in memory from the
+same real Lido fixture set, sends them through the real Telegram service to the
+allowed users, and marks each one `sent`.
 
 ## 15. Run Tests
 

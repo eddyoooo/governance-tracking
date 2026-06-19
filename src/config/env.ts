@@ -27,6 +27,14 @@ const booleanFromEnv = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const delayMsFromEnv = z.preprocess((value) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+
+  return value;
+}, z.coerce.number().nonnegative().optional()).transform((value) => value ?? 3000);
+
 const stringListFromEnv = z.preprocess((value) => {
   if (Array.isArray(value)) {
     return value;
@@ -59,6 +67,59 @@ const stringListFromEnv = z.preprocess((value) => {
   items.map((item) => item.trim()).filter(Boolean)
 ));
 
+const telegramUserIdListFromEnv = z.preprocess((value) => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  if (trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed) as unknown;
+    } catch {
+      throw new Error("Invalid JSON array in TELEGRAM_ALLOWED_USER_IDS.");
+    }
+  }
+
+  if (trimmed.startsWith("{")) {
+    throw new Error("Invalid JSON array in TELEGRAM_ALLOWED_USER_IDS.");
+  }
+
+  return trimmed.split(",");
+}, z.array(z.union([z.string(), z.number()])).transform((items, context) => {
+  const userIds = new Set<string>();
+
+  for (const item of items) {
+    const userId = String(item).trim();
+
+    if (!userId) {
+      continue;
+    }
+
+    if (!/^[1-9]\d*$/.test(userId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "TELEGRAM_ALLOWED_USER_IDS must contain positive numeric Telegram user IDs."
+      });
+      continue;
+    }
+
+    userIds.add(userId);
+  }
+
+  return [...userIds];
+}));
+
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -78,7 +139,9 @@ const rawEnvSchema = z
     LIDO_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(5),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
-    TELEGRAM_CHAT_ID: z.string().default(""),
+    TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
+    TELEGRAM_E2E_ENABLED: booleanFromEnv.default(false),
+    TELEGRAM_TEST_SEND_DELAY_MS: delayMsFromEnv,
     NOTIFY_ON_NEW_PROPOSAL: booleanFromEnv.default(true),
     API_AUTH_ENABLED: booleanFromEnv.default(false),
     API_AUTH_TOKEN: z.string().default(""),
@@ -105,7 +168,9 @@ const rawEnvSchema = z
     lidoFetchMaxPages: value.LIDO_FETCH_MAX_PAGES,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
-    telegramChatId: value.TELEGRAM_CHAT_ID,
+    telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,
+    telegramE2EEnabled: value.TELEGRAM_E2E_ENABLED,
+    telegramTestSendDelayMs: value.TELEGRAM_TEST_SEND_DELAY_MS,
     notifyOnNewProposal: value.NOTIFY_ON_NEW_PROPOSAL,
     apiAuthEnabled: value.API_AUTH_ENABLED,
     apiAuthToken: value.API_AUTH_TOKEN,
@@ -149,7 +214,9 @@ export function toSafeConfig(env: Env) {
       telegramEnabled: env.enableTelegramNotifications,
       notifyOnNewProposal: env.notifyOnNewProposal,
       hasTelegramBotToken: Boolean(env.telegramBotToken),
-      hasTelegramChatId: Boolean(env.telegramChatId)
+      telegramAllowedUserCount: env.telegramAllowedUserIds.length,
+      telegramE2EEnabled: env.telegramE2EEnabled,
+      telegramTestSendDelayMs: env.telegramTestSendDelayMs
     },
     apiAuth: {
       enabled: env.apiAuthEnabled,

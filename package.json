@@ -14,7 +14,9 @@
     "start": "node dist/index.js",
     "demo": "tsx src/demo.ts",
     "demo:api": "tsx src/index.ts",
+    "telegram:test-send": "tsx src/telegramTestSend.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "test:e2e:telegram": "TELEGRAM_E2E_ENABLED=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/e2e/telegram.e2e.test.ts",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch"
   },
   "dependencies": {

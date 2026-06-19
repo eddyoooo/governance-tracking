@@ -180,6 +180,74 @@ describe("LidoForumClient", () => {
     ]);
   });
 
+  it("uses last_poster_username when poster metadata points to a missing user", async () => {
+    const payload = {
+      users: [],
+      topic_list: {
+        topics: [
+          {
+            id: 42,
+            title: "Missing user topic",
+            slug: "missing-user-topic",
+            created_at: "2026-05-01T10:00:00.000Z",
+            last_poster_username: "fallback-user",
+            posters: [{ user_id: 999, description: "Original Poster" }]
+          }
+        ]
+      }
+    };
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch(payload)
+    });
+
+    const topics = await client.fetchRecentTopics();
+
+    expect(topics[0]).toMatchObject({
+      sourceId: "42",
+      publisherName: "fallback-user"
+    });
+    expect(topics[0].raw).toMatchObject({
+      publisher: undefined
+    });
+  });
+
+  it("keeps unknown future Discourse fields in the raw payload", async () => {
+    const payload = {
+      users: [{ id: 1, username: "allowed", name: "Allowed Publisher" }],
+      topic_list: {
+        topics: [
+          {
+            id: 77,
+            title: "Future field topic",
+            slug: "future-field-topic",
+            created_at: "2026-05-01T10:00:00.000Z",
+            unexpected_discourse_field: {
+              nested: true
+            },
+            posters: [{ user_id: 1, description: "Original Poster" }]
+          }
+        ]
+      }
+    };
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch(payload)
+    });
+
+    const [topic] = await client.fetchRecentTopics();
+
+    expect(topic.raw).toMatchObject({
+      topic: {
+        unexpected_discourse_field: {
+          nested: true
+        }
+      }
+    });
+  });
+
   it("rejects malformed recent topic responses", async () => {
     const payload = await loadFixture("malformed-response.json");
     const client = new LidoForumClient({

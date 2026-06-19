@@ -16,6 +16,9 @@ describe("env parsing", () => {
     expect(env.lidoFetchMaxPages).toBe(5);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
+    expect(env.telegramAllowedUserIds).toEqual([]);
+    expect(env.telegramE2EEnabled).toBe(false);
+    expect(env.telegramTestSendDelayMs).toBe(3000);
     expect(env.notifyOnNewProposal).toBe(true);
   });
 
@@ -75,6 +78,7 @@ describe("env parsing", () => {
       ENABLE_DEBUG_ENDPOINTS: " true ",
       LIDO_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+      TELEGRAM_E2E_ENABLED: "true",
       NOTIFY_ON_NEW_PROPOSAL: "false",
       API_AUTH_ENABLED: "true"
     } as NodeJS.ProcessEnv);
@@ -84,8 +88,80 @@ describe("env parsing", () => {
     expect(env.enableDebugEndpoints).toBe(true);
     expect(env.lidoEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
+    expect(env.telegramE2EEnabled).toBe(true);
     expect(env.notifyOnNewProposal).toBe(false);
     expect(env.apiAuthEnabled).toBe(true);
+  });
+
+  it("parses and deduplicates Telegram allowed user ids", () => {
+    const jsonEnv = loadEnv({
+      TELEGRAM_ALLOWED_USER_IDS: JSON.stringify([123456789, "987654321", "123456789"])
+    } as NodeJS.ProcessEnv);
+    const commaEnv = loadEnv({
+      TELEGRAM_ALLOWED_USER_IDS: " 123456789,987654321,123456789 "
+    } as NodeJS.ProcessEnv);
+
+    expect(jsonEnv.telegramAllowedUserIds).toEqual(["123456789", "987654321"]);
+    expect(commaEnv.telegramAllowedUserIds).toEqual(["123456789", "987654321"]);
+  });
+
+  it("parses and validates Telegram test-send delays", () => {
+    expect(
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: "0"
+      } as NodeJS.ProcessEnv).telegramTestSendDelayMs
+    ).toBe(0);
+    expect(
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: "4500"
+      } as NodeJS.ProcessEnv).telegramTestSendDelayMs
+    ).toBe(4500);
+    expect(
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: ""
+      } as NodeJS.ProcessEnv).telegramTestSendDelayMs
+    ).toBe(3000);
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: "-1"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+    expect(() =>
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: "abc"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+  });
+
+  it("rejects invalid Telegram allowed user ids", () => {
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ALLOWED_USER_IDS: "[not-json"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in TELEGRAM_ALLOWED_USER_IDS.");
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ALLOWED_USER_IDS: JSON.stringify({ userId: 123456789 })
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in TELEGRAM_ALLOWED_USER_IDS.");
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ALLOWED_USER_IDS: JSON.stringify([123456789, -1])
+      } as NodeJS.ProcessEnv)
+    ).toThrow(
+      "TELEGRAM_ALLOWED_USER_IDS must contain positive numeric Telegram user IDs."
+    );
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ALLOWED_USER_IDS: "@username"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(
+      "TELEGRAM_ALLOWED_USER_IDS must contain positive numeric Telegram user IDs."
+    );
   });
 
   it("rejects invalid boolean strings instead of silently treating them as false", () => {
@@ -185,19 +261,24 @@ describe("env parsing", () => {
       API_AUTH_TOKEN: "secret-token",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       TELEGRAM_BOT_TOKEN: "telegram-token",
-      TELEGRAM_CHAT_ID: "chat-id"
+      TELEGRAM_ALLOWED_USER_IDS: JSON.stringify([123456789, "987654321"]),
+      TELEGRAM_E2E_ENABLED: "true",
+      TELEGRAM_TEST_SEND_DELAY_MS: "3000"
     } as NodeJS.ProcessEnv);
     const safeConfig = toSafeConfig(env);
 
     expect(JSON.stringify(safeConfig)).not.toContain("private-key");
     expect(JSON.stringify(safeConfig)).not.toContain("secret-token");
     expect(JSON.stringify(safeConfig)).not.toContain("telegram-token");
-    expect(JSON.stringify(safeConfig)).not.toContain("chat-id");
+    expect(JSON.stringify(safeConfig)).not.toContain("123456789");
+    expect(JSON.stringify(safeConfig)).not.toContain("987654321");
     expect(safeConfig.fetchIntervalCron).toBe("*/15 * * * *");
     expect(safeConfig.firebase.hasPrivateKey).toBe(true);
     expect(safeConfig.apiAuth.hasToken).toBe(true);
     expect(safeConfig.lido.fetchMaxPages).toBe(5);
     expect(safeConfig.notifications.hasTelegramBotToken).toBe(true);
-    expect(safeConfig.notifications.hasTelegramChatId).toBe(true);
+    expect(safeConfig.notifications.telegramAllowedUserCount).toBe(2);
+    expect(safeConfig.notifications.telegramE2EEnabled).toBe(true);
+    expect(safeConfig.notifications.telegramTestSendDelayMs).toBe(3000);
   });
 });
