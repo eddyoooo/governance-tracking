@@ -11,7 +11,7 @@ import { MemoryProposalRepository } from "../../storage/memoryProposal.repositor
 export function createDebugRouter(context: AppContext): Router {
   const router = Router();
 
-  router.use((request, response, next) => {
+  router.use((_request, response, next) => {
     if (!context.env.enableDebugEndpoints) {
       response.status(404).json({ error: "Debug endpoints are disabled." });
       return;

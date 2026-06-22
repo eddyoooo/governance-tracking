@@ -180,7 +180,7 @@ async function main(): Promise<void> {
       forumApiBaseUrl: env.aaveForumApiBaseUrl
     })
   });
-  const { app, context } = createApp({
+  const { app } = createApp({
     env,
     protocolRegistry: createDemoRegistry(adapter, aaveAdapter)
   });

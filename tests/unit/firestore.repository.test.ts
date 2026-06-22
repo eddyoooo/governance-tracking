@@ -223,6 +223,37 @@ describe("FirestoreProposalRepository", () => {
     await expect(repository.findById("accidental_new_id")).resolves.toBeNull();
   });
 
+  it("falls back to source identity fields for legacy Firestore proposal documents", async () => {
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({
+        proposals: {
+          legacy_doc_id: {
+            ...proposal,
+            id: "legacy_doc_id",
+            firstSeenAt: "2026-06-05T00:00:00.000Z",
+            lastSeenAt: "2026-06-05T00:00:00.000Z",
+            notificationStatus: "skipped",
+            createdAt: "2026-06-05T00:00:00.000Z",
+            updatedAt: "2026-06-05T00:00:00.000Z"
+          }
+        }
+      })
+    );
+
+    const result = await repository.upsert({
+      ...proposal,
+      title: "Updated legacy document"
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.proposal).toMatchObject({
+      id: "legacy_doc_id",
+      title: "Updated legacy document"
+    });
+    await expect(repository.findAll()).resolves.toHaveLength(1);
+  });
+
   it("updates and clears Firestore notification errors", async () => {
     const repository = new FirestoreProposalRepository(createFakeFirestore());
     const proposal = normalizeLidoForumItem(createRawGovernanceItem());

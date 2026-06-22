@@ -248,9 +248,12 @@ npm run dev
 npm run demo
 npm run telegram:test-send
 npm test
+npm run typecheck:strict
 npm run test:e2e:telegram
 npm run check
 ```
+
+`npm run check` runs the production TypeScript build, the stricter unused-symbol typecheck, and the full Jest/Supertest test suite.
 
 `npm run demo` runs a terminal walkthrough using scripted Lido proposal fixtures, Aave forum fixtures, and in-memory storage. It reveals three new allowlisted Lido proposals one by one, runs the normal fetch/store/notify logic after each reveal, then demonstrates Aave preview/fetch/store/dedupe using the global latest plus public category/subcategory coverage path. The fixture set also includes one real non-allowlisted Lido proposal, shown as `skippedPublisherFixture`, to prove the platform fetches it but does not store or notify it. Speed it up with `DEMO_STEP_DELAY_MS=0 npm run demo`. If Telegram is enabled in `.env`, this complete demo sends proposal notifications through Telegram.
 

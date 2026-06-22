@@ -5,6 +5,7 @@ import type {
 } from "../../protocols/types.js";
 import type { AppContext } from "../../server.js";
 import type { ProposalSort } from "../../storage/proposal.repository.js";
+import { proposalSortValues } from "../../storage/proposal.repositoryUtils.js";
 
 const MAX_PROPOSAL_LIMIT = 100;
 const sourceTypes = new Set<GovernanceSourceType>(["forum", "snapshot", "onchain"]);
@@ -14,14 +15,7 @@ const notificationStatuses = new Set<NotificationStatus>([
   "skipped",
   "failed"
 ]);
-const proposalSorts = new Set<ProposalSort>([
-  "publishedAt_desc",
-  "publishedAt_asc",
-  "firstSeenAt_desc",
-  "firstSeenAt_asc",
-  "lastSeenAt_desc",
-  "lastSeenAt_asc"
-]);
+const proposalSorts = new Set<ProposalSort>(proposalSortValues);
 
 class QueryParameterError extends Error {}
 
@@ -124,7 +118,7 @@ function parseSort(value: unknown): ProposalSort | undefined {
 
   if (!proposalSorts.has(parsed as ProposalSort)) {
     throw new QueryParameterError(
-      "Query parameter sort must be one of: publishedAt_desc, publishedAt_asc, firstSeenAt_desc, firstSeenAt_asc, lastSeenAt_desc, lastSeenAt_asc."
+      `Query parameter sort must be one of: ${proposalSortValues.join(", ")}.`
     );
   }
 

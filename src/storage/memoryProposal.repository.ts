@@ -2,41 +2,17 @@ import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/type
 import type {
   ProposalQuery,
   ProposalRepository,
-  ProposalSort,
   UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
-
-const DEFAULT_PROPOSAL_LIMIT = 100;
-
-const sortFields: Record<ProposalSort, keyof StoredProposal> = {
-  publishedAt_desc: "publishedAt",
-  publishedAt_asc: "publishedAt",
-  firstSeenAt_desc: "firstSeenAt",
-  firstSeenAt_asc: "firstSeenAt",
-  lastSeenAt_desc: "lastSeenAt",
-  lastSeenAt_asc: "lastSeenAt"
-};
-
-function sortDirection(sort: ProposalSort): "asc" | "desc" {
-  return sort.endsWith("_asc") ? "asc" : "desc";
-}
-
-function hasMeaningfulProposalChange(
-  existing: StoredProposal,
-  proposal: NormalizedGovernanceItem
-): boolean {
-  return (
-    existing.protocol !== proposal.protocol ||
-    existing.sourceType !== proposal.sourceType ||
-    existing.sourceId !== proposal.sourceId ||
-    existing.title !== proposal.title ||
-    existing.publisherName !== proposal.publisherName ||
-    existing.sourceUrl !== proposal.sourceUrl ||
-    existing.publishedAt !== proposal.publishedAt ||
-    existing.rawHash !== proposal.rawHash
-  );
-}
+import {
+  buildStoredProposal,
+  DEFAULT_PROPOSAL_LIMIT,
+  hasMeaningfulProposalChange,
+  proposalIdFromSourceIdentity,
+  proposalSortDirection,
+  proposalSortFields
+} from "./proposal.repositoryUtils.js";
 
 export class MemoryProposalRepository implements ProposalRepository {
   private readonly proposals = new Map<string, StoredProposal>();
@@ -63,19 +39,7 @@ export class MemoryProposalRepository implements ProposalRepository {
       };
     }
 
-    const now = new Date().toISOString();
-    const storedProposal: StoredProposal = {
-      ...existing,
-      ...proposal,
-      id: existing?.id ?? proposal.id,
-      firstSeenAt: existing?.firstSeenAt ?? now,
-      lastSeenAt: now,
-      notificationStatus:
-        existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
-      notificationError: existing?.notificationError,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now
-    };
+    const storedProposal = buildStoredProposal(proposal, existing, options);
 
     this.proposals.set(storedProposal.id, storedProposal);
 
@@ -103,8 +67,8 @@ export class MemoryProposalRepository implements ProposalRepository {
     const limit = query.limit ?? DEFAULT_PROPOSAL_LIMIT;
     const offset = query.offset ?? 0;
     const sort = query.sort ?? "publishedAt_desc";
-    const sortField = sortFields[sort];
-    const direction = sortDirection(sort);
+    const sortField = proposalSortFields[sort];
+    const direction = proposalSortDirection(sort);
 
     return [...this.proposals.values()]
       .filter((proposal) => !query.protocol || proposal.protocol === query.protocol)
@@ -136,12 +100,8 @@ export class MemoryProposalRepository implements ProposalRepository {
     sourceId: string
   ): Promise<StoredProposal | null> {
     return (
-      [...this.proposals.values()].find(
-        (proposal) =>
-          proposal.protocol === protocol &&
-          proposal.sourceType === sourceType &&
-          proposal.sourceId === sourceId
-      ) ?? null
+      this.proposals.get(proposalIdFromSourceIdentity(protocol, sourceType, sourceId)) ??
+      null
     );
   }
 

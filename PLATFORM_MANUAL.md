@@ -412,7 +412,7 @@ Expected result: all Jest/Supertest tests pass.
 npm run check
 ```
 
-Expected result: TypeScript build passes, then all tests pass.
+Expected result: production TypeScript build passes, stricter unused-symbol typecheck passes, then all tests pass.
 
 ```bash
 npm run test:watch
