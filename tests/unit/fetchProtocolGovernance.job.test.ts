@@ -414,6 +414,34 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
+  it("does not retry failed proposal notifications during ordinary duplicate fetches", async () => {
+    const notificationService = new RecordingNotificationService({ fail: true });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    const first = await job.run("lido");
+    const second = await job.run("lido");
+
+    expect(first).toMatchObject({
+      storedNewCount: 1,
+      notificationFailedCount: 1
+    });
+    expect(second).toMatchObject({
+      storedNewCount: 0,
+      unchangedExistingCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(notificationService.messages).toHaveLength(1);
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "failed",
+      notificationError: "Telegram exploded"
+    });
+  });
+
   it("throws for unknown protocols without recording a fetch run", async () => {
     const { job, fetchRunRepository } = createJob();
 
@@ -454,6 +482,59 @@ describe("FetchProtocolGovernanceJob", () => {
       fetchedCount: 1,
       storedNewCount: 1,
       skippedCount: 0
+    });
+  });
+
+  it("allows different protocols to run concurrently while blocking same-protocol overlap", async () => {
+    let resolveLidoFetch: (items: RawGovernanceItem[]) => void = () => undefined;
+    const lidoFetch = jest.fn(
+      () =>
+        new Promise<RawGovernanceItem[]>((resolve) => {
+          resolveLidoFetch = resolve;
+        })
+    );
+    const aaveFetch = jest.fn(async () => [
+      createRawGovernanceItem({
+        protocol: "aave",
+        sourceId: "2001",
+        publisherName: "AaveLabs"
+      })
+    ]);
+    const registry = new ProtocolRegistry();
+    registry.register(
+      createFakeProtocolAdapter({
+        protocol: "lido",
+        fetchRecent: lidoFetch
+      })
+    );
+    registry.register(
+      createFakeProtocolAdapter({
+        protocol: "aave",
+        publisherAllowlist: ["AaveLabs"],
+        fetchRecent: aaveFetch
+      })
+    );
+    const job = new FetchProtocolGovernanceJob(
+      registry,
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      createSilentLogger()
+    );
+
+    const lidoRun = job.run("lido");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(job.run("lido")).rejects.toBeInstanceOf(FetchAlreadyRunningError);
+    await expect(job.run("aave")).resolves.toMatchObject({
+      protocol: "aave",
+      storedNewCount: 1
+    });
+
+    resolveLidoFetch([createRawGovernanceItem()]);
+    await expect(lidoRun).resolves.toMatchObject({
+      protocol: "lido",
+      storedNewCount: 1
     });
   });
 
@@ -530,5 +611,58 @@ describe("FetchProtocolGovernanceJob", () => {
       "running",
       "success"
     ]);
+  });
+
+  it("records partial counts when a later allowed item fails normalization", async () => {
+    const fetchRecent = jest.fn<() => Promise<RawGovernanceItem[]>>(async () => [
+      createRawGovernanceItem({
+        sourceId: "1001"
+      }),
+      createRawGovernanceItem({
+        sourceId: "1002"
+      }),
+      createRawGovernanceItem({
+        sourceId: "1003",
+        publisherName: "Random Person"
+      })
+    ]);
+    const normalize = jest
+      .fn()
+      .mockImplementationOnce((item: RawGovernanceItem) => ({
+        id: `normalized_${item.sourceId}`,
+        protocol: item.protocol,
+        sourceType: item.sourceType,
+        sourceId: item.sourceId,
+        title: item.title,
+        publisherName: item.publisherName,
+        sourceUrl: item.sourceUrl,
+        publishedAt: item.publishedAt,
+        fetchedAt: item.fetchedAt,
+        rawHash: "a".repeat(64)
+      }))
+      .mockImplementationOnce(() => {
+        throw new Error("Second normalizer failed");
+      });
+    const { job, fetchRunRepository, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        fetchRecent,
+        normalize: normalize as never,
+        publisherAllowlist: ["Allowed Publisher"]
+      })
+    );
+
+    await expect(job.run("lido")).rejects.toThrow("Second normalizer failed");
+
+    expect(fetchRunRepository.upserts[1]).toMatchObject({
+      status: "failed",
+      fetchedCount: 3,
+      allowlistedCount: 2,
+      storedNewCount: 1,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 0,
+      skippedCount: 1,
+      errors: ["Second normalizer failed"]
+    });
+    await expect(proposalRepository.findAll()).resolves.toHaveLength(1);
   });
 });

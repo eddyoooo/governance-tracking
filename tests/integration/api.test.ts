@@ -2,7 +2,8 @@ import request from "supertest";
 import { describe, expect, it, jest } from "@jest/globals";
 import {
   FetchAlreadyRunningError,
-  FetchProtocolGovernanceJob
+  FetchProtocolGovernanceJob,
+  UnknownProtocolAdapterError
 } from "../../src/jobs/fetchProtocolGovernance.job.js";
 import type {
   NotificationMessage,
@@ -187,6 +188,11 @@ describe("API", () => {
       id: lidoNewer.id,
       notificationStatus: "sent"
     });
+
+    const blankFilter = await request(app)
+      .get("/api/proposals?publisherName=%20%20&limit=10")
+      .expect(200);
+    expect(blankFilter.body.proposals).toHaveLength(3);
   });
 
   it("sorts proposal API results by firstSeenAt with stable offsets", async () => {
@@ -309,6 +315,12 @@ describe("API", () => {
       .expect(400);
     await request(app).get("/api/proposals?sort=createdAt_desc").expect(400);
     await request(app).get("/api/proposals?protocol=lido&protocol=aave").expect(400);
+    await request(app)
+      .get("/api/proposals?sourceType=forum&sourceType=snapshot")
+      .expect(400);
+    await request(app)
+      .get("/api/proposals?notificationStatus=sent&notificationStatus=failed")
+      .expect(400);
   });
 
   it("returns 404 for missing proposals", async () => {
@@ -498,6 +510,41 @@ describe("API", () => {
       storedNewCount: 1,
       skippedCount: 0
     });
+  });
+
+  it("maps debug fetch-once job errors to stable HTTP statuses", async () => {
+    const missingFetchJob = {
+      run: jest.fn(async () => {
+        throw new UnknownProtocolAdapterError("missing");
+      })
+    };
+    const runningFetchJob = {
+      run: jest.fn(async () => {
+        throw new FetchAlreadyRunningError("lido");
+      })
+    };
+    const missingApp = createApp({
+      env: testEnv({
+        ENABLE_DEBUG_ENDPOINTS: "true"
+      }),
+      fetchJob: missingFetchJob as never
+    }).app;
+    const runningApp = createApp({
+      env: testEnv({
+        ENABLE_DEBUG_ENDPOINTS: "true"
+      }),
+      fetchJob: runningFetchJob as never
+    }).app;
+
+    const missingResponse = await request(missingApp)
+      .post("/api/debug/missing/fetch-once")
+      .expect(404);
+    expect(missingResponse.body.error).toBe("Unknown protocol adapter: missing");
+
+    const runningResponse = await request(runningApp)
+      .post("/api/debug/lido/fetch-once")
+      .expect(409);
+    expect(runningResponse.body.error).toBe("Fetch already running for protocol: lido");
   });
 
   it("returns demo fixtures and resets demo state only in memory mode", async () => {
@@ -692,7 +739,13 @@ describe("API", () => {
     });
 
     await request(app).get("/api/admin/fetch-runs?limit=bad").expect(400);
+    await request(app).get("/api/admin/fetch-runs?limit=0").expect(400);
+    await request(app).get("/api/admin/fetch-runs?limit=101").expect(400);
+    await request(app).get("/api/admin/fetch-runs?offset=-1").expect(400);
     await request(app).get("/api/admin/fetch-runs?sort=finishedAt_desc").expect(400);
+    await request(app)
+      .get("/api/admin/fetch-runs?sort=startedAt_desc&sort=startedAt_asc")
+      .expect(400);
   });
 
   it("notifies pending proposals through the admin endpoint", async () => {

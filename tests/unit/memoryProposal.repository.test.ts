@@ -394,4 +394,18 @@ describe("MemoryProposalRepository", () => {
     ).resolves.toBeNull();
     await expect(repository.findAll()).resolves.toEqual([]);
   });
+
+  it("clears in-memory proposal state for repeatable demo runs", async () => {
+    const repository = new MemoryProposalRepository();
+
+    await repository.upsert(normalizeLidoForumItem(createRawGovernanceItem()));
+    expect(await repository.findAll()).toHaveLength(1);
+
+    repository.clear();
+
+    expect(await repository.findAll()).toEqual([]);
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "1001")
+    ).resolves.toBeNull();
+  });
 });

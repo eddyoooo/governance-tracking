@@ -82,4 +82,16 @@ describe("MemoryFetchRunRepository", () => {
       repository.findAll({ sort: "startedAt_asc", limit: 1, offset: 1 })
     ).resolves.toMatchObject([{ id: "newer" }]);
   });
+
+  it("clears in-memory fetch run state for repeatable demo runs", async () => {
+    const repository = new MemoryFetchRunRepository();
+
+    await repository.upsert(createRun());
+    expect(await repository.findAll()).toHaveLength(1);
+
+    repository.clear();
+
+    await expect(repository.findAll()).resolves.toEqual([]);
+    await expect(repository.findById("fetchRun_lido_test")).resolves.toBeNull();
+  });
 });
