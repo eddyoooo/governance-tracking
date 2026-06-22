@@ -13,7 +13,6 @@ services:
       ENABLE_SCHEDULER: "false"
       ENABLE_DEBUG_ENDPOINTS: "true"
       ENABLE_TELEGRAM_NOTIFICATIONS: "false"
-      NOTIFY_ON_NEW_PROPOSAL: "true"
       LIDO_ALLOWED_PUBLISHERS: '["Allowed Publisher"]'
       LIDO_FETCH_MAX_PAGES: 5
       AAVE_ALLOWED_PUBLISHERS: '["AaveLabs","TokenLogic","LlamaRisk"]'

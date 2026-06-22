@@ -40,6 +40,45 @@ describe("Lido normalizer", () => {
     expect(first.rawHash).toBe(second.rawHash);
   });
 
+  it("ignores volatile Discourse counters when hashing source content", async () => {
+    const raw = await loadRawFixture("allowed-publisher-raw.json");
+    const first = normalizeLidoForumItem({
+      ...raw,
+      raw: {
+        topic: {
+          id: 1001,
+          views: 10,
+          reply_count: 1,
+          last_posted_at: "2026-06-05T00:00:00.000Z"
+        }
+      }
+    });
+    const second = normalizeLidoForumItem({
+      ...raw,
+      raw: {
+        topic: {
+          id: 1001,
+          views: 999,
+          reply_count: 50,
+          last_posted_at: "2026-06-06T00:00:00.000Z"
+        }
+      }
+    });
+
+    expect(first.rawHash).toBe(second.rawHash);
+  });
+
+  it("changes rawHash when meaningful source content changes", async () => {
+    const raw = await loadRawFixture("allowed-publisher-raw.json");
+    const first = normalizeLidoForumItem(raw);
+    const second = normalizeLidoForumItem({
+      ...raw,
+      title: "Updated Lido proposal title"
+    });
+
+    expect(first.rawHash).not.toBe(second.rawHash);
+  });
+
   it("changes deterministic id when the source id changes", async () => {
     const raw = await loadRawFixture("allowed-publisher-raw.json");
     const first = normalizeLidoForumItem(raw);

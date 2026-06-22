@@ -51,8 +51,10 @@ describe("MemoryProposalRepository", () => {
     expect(first.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
     expect(first.proposal.updatedAt).toBe("2026-06-05T00:00:00.000Z");
     expect(first.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(first.proposal.lastSeenAt).toBe("2026-06-05T00:00:00.000Z");
     expect(second.proposal.createdAt).toBe("2026-06-05T00:00:00.000Z");
     expect(second.proposal.firstSeenAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(second.proposal.lastSeenAt).toBe("2026-06-05T06:00:00.000Z");
     expect(second.proposal.updatedAt).toBe("2026-06-05T06:00:00.000Z");
   });
 
@@ -86,6 +88,7 @@ describe("MemoryProposalRepository", () => {
     expect(second.proposal).toMatchObject({
       fetchedAt: "2026-06-05T00:00:00.000Z",
       firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T00:00:00.000Z",
       updatedAt: "2026-06-05T00:00:00.000Z"
     });
   });
@@ -177,6 +180,7 @@ describe("MemoryProposalRepository", () => {
       publishedAt: "2026-05-02T10:00:00.000Z",
       fetchedAt: "2026-05-02T11:00:00.000Z",
       firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T06:00:00.000Z",
       createdAt: "2026-06-05T00:00:00.000Z",
       notificationStatus: "failed",
       notificationError: "boom"
@@ -300,6 +304,35 @@ describe("MemoryProposalRepository", () => {
         limit: 2
       })
     ).resolves.toMatchObject([{ sourceId: "1003" }, { sourceId: "1002" }]);
+  });
+
+  it("sorts by lastSeenAt so dashboard reads can prioritize recently changed proposals", async () => {
+    const repository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1001" }));
+    const second = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1002" }));
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    await repository.upsert(first);
+
+    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
+    await repository.upsert(second);
+
+    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
+    await repository.upsert({
+      ...first,
+      title: "Updated first proposal"
+    });
+
+    await expect(repository.findAll({ sort: "lastSeenAt_desc" })).resolves.toMatchObject([
+      { sourceId: "1001", lastSeenAt: "2026-06-05T00:20:00.000Z" },
+      { sourceId: "1002", lastSeenAt: "2026-06-05T00:10:00.000Z" }
+    ]);
+
+    await expect(repository.findAll({ sort: "lastSeenAt_asc" })).resolves.toMatchObject([
+      { sourceId: "1002", lastSeenAt: "2026-06-05T00:10:00.000Z" },
+      { sourceId: "1001", lastSeenAt: "2026-06-05T00:20:00.000Z" }
+    ]);
   });
 
   it("returns null for unknown proposal ids", async () => {

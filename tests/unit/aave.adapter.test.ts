@@ -157,44 +157,6 @@ describe("AaveAdapter", () => {
     expect(items.map((item) => item.sourceId)).toEqual(["25170", "25168"]);
   });
 
-  it("stops pagination when the job-provided page stop callback returns true", async () => {
-    const client = {
-      fetchRecentTopicPage: jest.fn(async (options: { page: number }) => ({
-        page: options.page,
-        topics: [
-          {
-            sourceId: String(25170 + options.page),
-            title: `Page ${options.page}`,
-            slug: `page-${options.page}`,
-            publisherName: "AaveLabs",
-            sourceUrl: `https://governance.aave.com/t/page-${options.page}/${25170 + options.page}`,
-            publishedAt: "2026-06-19T12:00:28.625Z",
-            raw: { id: 25170 + options.page }
-          }
-        ],
-        hasMore: true
-      })),
-      fetchCategories: jest.fn(async () => []),
-      fetchCategoryTopicPage: jest.fn(async () => ({
-        page: 0,
-        topics: [],
-        hasMore: false
-      }))
-    };
-    const adapter = new AaveAdapter(
-      createAdapterOptions({
-        client: client as never
-      })
-    );
-
-    const items = await adapter.fetchRecent({
-      shouldStopAfterPage: ({ page }) => page === 0
-    });
-
-    expect(client.fetchRecentTopicPage).toHaveBeenCalledTimes(1);
-    expect(items.map((item) => item.sourceId)).toEqual(["25170"]);
-  });
-
   it("stops at the configured max page count and logs a warning", async () => {
     const logger = createSilentLogger();
     const client = {
@@ -444,6 +406,33 @@ describe("AaveAdapter", () => {
       fetchedAt: "2026-06-19T13:00:00.000Z",
       raw: { id: 25170 }
     });
+    const normalizedWithVolatileRaw = adapter.normalize({
+      protocol: "aave",
+      sourceType: "forum",
+      sourceId: "25170",
+      title: "[ARFC] Deploy Aave V4 on Arc",
+      publisherName: "AaveLabs",
+      sourceUrl: "https://governance.aave.com/t/arfc-deploy-aave-v4-on-arc/25170",
+      publishedAt: "2026-06-19T12:00:28.625Z",
+      fetchedAt: "2026-06-19T14:00:00.000Z",
+      raw: {
+        id: 25170,
+        views: 999,
+        reply_count: 50,
+        last_posted_at: "2026-06-20T00:00:00.000Z"
+      }
+    });
+    const normalizedWithChangedTitle = adapter.normalize({
+      protocol: "aave",
+      sourceType: "forum",
+      sourceId: "25170",
+      title: "[ARFC] Deploy Aave V4 on Arc - updated",
+      publisherName: "AaveLabs",
+      sourceUrl: "https://governance.aave.com/t/arfc-deploy-aave-v4-on-arc/25170",
+      publishedAt: "2026-06-19T12:00:28.625Z",
+      fetchedAt: "2026-06-19T14:00:00.000Z",
+      raw: { id: 25170 }
+    });
 
     expect(normalized).toMatchObject({
       id: expect.stringMatching(/^aave_forum_25170_/),
@@ -451,5 +440,7 @@ describe("AaveAdapter", () => {
       sourceType: "forum",
       sourceId: "25170"
     });
+    expect(normalized.rawHash).toBe(normalizedWithVolatileRaw.rawHash);
+    expect(normalized.rawHash).not.toBe(normalizedWithChangedTitle.rawHash);
   });
 });

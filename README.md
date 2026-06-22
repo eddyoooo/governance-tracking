@@ -16,7 +16,7 @@ GET /c/proposals/9/l/latest.json?page=<page>
 
 `proposals` is the category slug and `9` is the Lido forum category id for proposal topics. This is used instead of the forum-wide `GET /latest.json` endpoint because the product goal is to track governance proposals, not every latest forum discussion.
 
-The endpoint currently returns 30 proposal-category topics per page. The backend paginates up to `LIDO_FETCH_MAX_PAGES` pages and stops early once an allowlisted page is entirely already known.
+The endpoint currently returns 30 proposal-category topics per page. The backend paginates up to `LIDO_FETCH_MAX_PAGES` pages on each run. It intentionally does not stop early based only on known allowlisted publishers, because non-allowlisted activity and pinned topics can otherwise hide a newer trusted-publisher post on a later page.
 
 The Lido proposal category also exposes an RSS feed at `/c/proposals/9.rss`; the current implementation still uses the JSON polling path because it gives us structured pagination and topic metadata.
 
@@ -64,19 +64,19 @@ If the same proposal appears again in a later fetch, the backend does not create
 - Paginate Lido proposal-category pages for better notification coverage.
 - Paginate Aave forum latest pages for broad trusted-publisher coverage.
 - Poll Aave public category and subcategory latest pages as an extra coverage layer.
-- Stop pagination once it reaches already-known allowlisted proposal pages.
+- Use bounded pagination instead of early stopping so trusted-publisher posts are less likely to be missed behind non-allowlisted activity.
 - Validate external Discourse responses with Zod.
 - Filter proposals by trusted publisher allowlist.
 - Store normalized proposal records in Firestore or memory mode.
 - Deduplicate proposals across repeated fetches.
 - Skip unnecessary proposal writes when a repeat poll only changes fetch timestamps.
-- Track `firstSeenAt`, `createdAt`, and `updatedAt` on stored proposal records.
+- Track `firstSeenAt`, `lastSeenAt`, `createdAt`, and `updatedAt` on stored proposal records.
 - Track proposal notification state: `pending`, `sent`, `skipped`, or `failed`.
 - Record fetch-run metadata with fetched, allowlisted, stored, updated, unchanged, skipped, and notification counts.
 - Optionally send Telegram notifications for new allowlisted proposals.
 - Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
 - Run a guided terminal demo in memory mode with scripted Lido proposal discovery.
-- Run scheduled polling for every enabled protocol every 15 minutes in normal mode.
+- Run scheduled polling for every enabled protocol every six hours in normal mode.
 - Run with Docker and docker-compose.
 - Run deterministic Jest/Supertest tests without live network dependency.
 
@@ -124,6 +124,7 @@ Proposal records include source data and platform tracking metadata:
   "sourceUrl": "https://research.lido.fi/t/example/11415",
   "publishedAt": "2026-06-05T09:00:00.000Z",
   "firstSeenAt": "2026-06-05T10:00:00.000Z",
+  "lastSeenAt": "2026-06-05T10:00:00.000Z",
   "fetchedAt": "2026-06-05T10:00:00.000Z",
   "rawHash": "64-character-sha256-hash",
   "notificationStatus": "skipped",
@@ -151,6 +152,8 @@ Fetch-run records explain what happened during each fetch:
 ```
 
 `updatedExistingCount` means an already-stored proposal changed in a meaningful source field such as title, publisher, URL, published time, or raw payload hash. `unchangedExistingCount` means the proposal was seen again but the stored record was identical, so the backend skipped the write.
+
+`lastSeenAt` is updated when a proposal is first stored or when source content changes. Unchanged repeat sightings are tracked in fetch-run counts instead of rewriting proposal documents on every poll. `rawHash` is a stable source-content hash; volatile Discourse counters such as views or reply counts are intentionally ignored so they do not create noisy updates.
 
 Firestore collections:
 
@@ -180,7 +183,7 @@ NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=*/15 * * * *
+FETCH_INTERVAL_CRON=0 */6 * * *
 ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret

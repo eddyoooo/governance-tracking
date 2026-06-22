@@ -67,8 +67,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       repositories.fetchRunRepository,
       logger,
       {
-        notificationService,
-        notifyOnNewProposal: runtimeEnv.notifyOnNewProposal
+        notificationService
       }
     );
   const context: AppContext = {

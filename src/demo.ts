@@ -97,6 +97,7 @@ function summarizeProposal(proposal: StoredProposal) {
     publisherName: proposal.publisherName,
     notificationStatus: proposal.notificationStatus,
     firstSeenAt: proposal.firstSeenAt,
+    lastSeenAt: proposal.lastSeenAt,
     updatedAt: proposal.updatedAt,
     sourceUrl: proposal.sourceUrl
   };
@@ -486,6 +487,10 @@ async function main(): Promise<void> {
         api,
         "/api/proposals?sort=firstSeenAt_desc&limit=10&offset=0"
       );
+      const sortedByLastSeen = await getJson<ProposalsResponse>(
+        api,
+        "/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
+      );
 
       return {
         byPublisher: byPublisher.proposals.length,
@@ -493,6 +498,10 @@ async function main(): Promise<void> {
         sortedNewestFirst: sorted.proposals.map((proposal) => ({
           id: proposal.id,
           firstSeenAt: proposal.firstSeenAt
+        })),
+        sortedLastSeenFirst: sortedByLastSeen.proposals.map((proposal) => ({
+          id: proposal.id,
+          lastSeenAt: proposal.lastSeenAt
         }))
       };
     },

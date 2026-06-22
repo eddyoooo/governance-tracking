@@ -139,7 +139,7 @@ describe("LidoForumClient", () => {
 
   it("falls back from display name to username, last poster, and unknown", async () => {
     const payload = {
-      users: [{ id: 1, username: "username-only", name: null }],
+      users: [{ id: 1, username: "username-only", name: "   " }],
       topic_list: {
         topics: [
           {

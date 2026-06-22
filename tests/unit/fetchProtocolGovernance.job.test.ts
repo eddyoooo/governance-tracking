@@ -9,15 +9,11 @@ import type {
   NotificationService
 } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
-import type {
-  FetchRecentOptions,
-  RawGovernanceItem
-} from "../../src/protocols/types.js";
+import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import {
   type FetchRun,
   type FetchRunRepository
 } from "../../src/storage/fetchRun.repository.js";
-import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createFakeProtocolAdapter,
@@ -72,8 +68,7 @@ function createJob(
   adapter = createFakeProtocolAdapter(),
   proposalRepository = new MemoryProposalRepository(),
   fetchRunRepository = new RecordingFetchRunRepository(),
-  notificationService?: NotificationService,
-  notifyOnNewProposal = false
+  notificationService?: NotificationService
 ) {
   const registry = new ProtocolRegistry();
   registry.register(adapter);
@@ -85,8 +80,7 @@ function createJob(
       fetchRunRepository,
       createSilentLogger(),
       {
-        notificationService,
-        notifyOnNewProposal
+        notificationService
       }
     ),
     proposalRepository,
@@ -214,6 +208,7 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(proposals[0]).toMatchObject({
       title: "Updated title",
       firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T06:00:00.000Z",
       createdAt: "2026-06-05T00:00:00.000Z"
     });
 
@@ -258,6 +253,7 @@ describe("FetchProtocolGovernanceJob", () => {
     });
     expect(secondStored).toMatchObject({
       fetchedAt: firstStored.fetchedAt,
+      lastSeenAt: firstStored.lastSeenAt,
       updatedAt: firstStored.updatedAt
     });
   });
@@ -281,8 +277,7 @@ describe("FetchProtocolGovernanceJob", () => {
       }),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
-      notificationService,
-      true
+      notificationService
     );
 
     const result = await job.run("lido");
@@ -306,14 +301,13 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(notificationService.messages).toHaveLength(1);
   });
 
-  it("does not queue or send new proposal notifications when notify-on-new is disabled", async () => {
-    const notificationService = new RecordingNotificationService();
+  it("does not queue or send new proposal notifications when notifications are disabled", async () => {
+    const notificationService = new RecordingNotificationService({ enabled: false });
     const { job, proposalRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
-      notificationService,
-      false
+      notificationService
     );
 
     const result = await job.run("lido");
@@ -335,8 +329,7 @@ describe("FetchProtocolGovernanceJob", () => {
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
-      notificationService,
-      true
+      notificationService
     );
 
     const first = await job.run("lido");
@@ -365,107 +358,7 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
-  it("does not stop pagination when an allowlisted page mixes known and new items", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const known = createRawGovernanceItem({
-      sourceId: "1001",
-      publisherName: "Allowed Publisher"
-    });
-    const newOnSamePage = createRawGovernanceItem({
-      sourceId: "1002",
-      publisherName: "Allowed Publisher"
-    });
-    const laterPage = createRawGovernanceItem({
-      sourceId: "1003",
-      publisherName: "Allowed Publisher"
-    });
-
-    await proposalRepository.upsert(normalizeLidoForumItem(known), {
-      notificationStatusForNew: "skipped"
-    });
-
-    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
-      const shouldStop = await options?.shouldStopAfterPage?.({
-        page: 0,
-        items: [known, newOnSamePage],
-        hasMore: true
-      });
-
-      return shouldStop ? [known, newOnSamePage] : [known, newOnSamePage, laterPage];
-    });
-    const { job } = createJob(
-      createFakeProtocolAdapter({
-        fetchRecent,
-        publisherAllowlist: ["Allowed Publisher"]
-      }),
-      proposalRepository
-    );
-
-    const result = await job.run("lido");
-
-    expect(result).toMatchObject({
-      fetchedCount: 3,
-      allowlistedCount: 3,
-      storedNewCount: 2,
-      updatedExistingCount: 0,
-      unchangedExistingCount: 1,
-      skippedCount: 0
-    });
-    await expect(
-      proposalRepository.findBySourceIdentity("lido", "forum", "1003")
-    ).resolves.toMatchObject({
-      sourceId: "1003"
-    });
-  });
-
-  it("passes an early-stop callback that stops after an already-known allowlisted page", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const known = createRawGovernanceItem({
-      sourceId: "1001",
-      publisherName: "Allowed Publisher"
-    });
-
-    await proposalRepository.upsert(normalizeLidoForumItem(known), {
-      notificationStatusForNew: "skipped"
-    });
-
-    const pageOne = createRawGovernanceItem({
-      sourceId: "1002",
-      publisherName: "Allowed Publisher"
-    });
-    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
-      const shouldStop = await options?.shouldStopAfterPage?.({
-        page: 0,
-        items: [known],
-        hasMore: true
-      });
-
-      return shouldStop ? [known] : [known, pageOne];
-    });
-    const { job } = createJob(
-      createFakeProtocolAdapter({
-        fetchRecent,
-        publisherAllowlist: ["Allowed Publisher"]
-      }),
-      proposalRepository
-    );
-
-    const result = await job.run("lido");
-
-    expect(fetchRecent).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({
-      fetchedCount: 1,
-      allowlistedCount: 1,
-      storedNewCount: 0,
-      updatedExistingCount: 0,
-      unchangedExistingCount: 1
-    });
-    await expect(
-      proposalRepository.findBySourceIdentity("lido", "forum", "1002")
-    ).resolves.toBeNull();
-  });
-
-  it("does not stop pagination on a page with only non-allowlisted items", async () => {
+  it("lets adapters run their full bounded pagination window", async () => {
     const skipped = createRawGovernanceItem({
       sourceId: "1001",
       publisherName: "Random Person"
@@ -474,15 +367,7 @@ describe("FetchProtocolGovernanceJob", () => {
       sourceId: "1002",
       publisherName: "Allowed Publisher"
     });
-    const fetchRecent = jest.fn(async (options?: FetchRecentOptions) => {
-      const shouldStop = await options?.shouldStopAfterPage?.({
-        page: 0,
-        items: [skipped],
-        hasMore: true
-      });
-
-      return shouldStop ? [skipped] : [skipped, allowed];
-    });
+    const fetchRecent = jest.fn(async () => [skipped, allowed]);
     const { job, proposalRepository } = createJob(
       createFakeProtocolAdapter({
         fetchRecent,
@@ -492,6 +377,7 @@ describe("FetchProtocolGovernanceJob", () => {
 
     const result = await job.run("lido");
 
+    expect(fetchRecent).toHaveBeenCalledWith();
     expect(result).toMatchObject({
       fetchedCount: 2,
       allowlistedCount: 1,
@@ -511,8 +397,7 @@ describe("FetchProtocolGovernanceJob", () => {
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
-      notificationService,
-      true
+      notificationService
     );
 
     const result = await job.run("lido");

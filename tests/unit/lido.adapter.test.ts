@@ -127,38 +127,6 @@ describe("LidoAdapter", () => {
     expect(items.map((item) => item.sourceId)).toEqual(["1001", "1002"]);
   });
 
-  it("stops pagination when the job-provided page stop callback returns true", async () => {
-    const client = {
-      fetchRecentTopicPage: jest.fn(async (options: { page: number }) => ({
-        page: options.page,
-        topics: [
-          {
-            sourceId: String(1000 + options.page),
-            title: `Page ${options.page}`,
-            slug: `page-${options.page}`,
-            publisherName: "Allowed Publisher",
-            sourceUrl: `https://research.lido.fi/t/page-${options.page}/${1000 + options.page}`,
-            publishedAt: "2026-05-01T10:00:00.000Z",
-            raw: { id: 1000 + options.page }
-          }
-        ],
-        hasMore: true
-      }))
-    };
-    const adapter = new LidoAdapter(
-      createAdapterOptions({
-        client: client as never
-      })
-    );
-
-    const items = await adapter.fetchRecent({
-      shouldStopAfterPage: ({ page }) => page === 0
-    });
-
-    expect(client.fetchRecentTopicPage).toHaveBeenCalledTimes(1);
-    expect(items.map((item) => item.sourceId)).toEqual(["1000"]);
-  });
-
   it("stops at the configured max page count and logs a warning", async () => {
     const logger = createSilentLogger();
     const client = {

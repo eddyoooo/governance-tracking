@@ -26,7 +26,6 @@ export interface FetchProtocolResult {
 
 export interface FetchProtocolGovernanceJobOptions {
   notificationService?: NotificationService;
-  notifyOnNewProposal?: boolean;
 }
 
 export class FetchAlreadyRunningError extends Error {
@@ -46,7 +45,6 @@ export class UnknownProtocolAdapterError extends Error {
 export class FetchProtocolGovernanceJob {
   private readonly runningProtocols = new Set<string>();
   private readonly notificationService: NotificationService;
-  private readonly notifyOnNewProposal: boolean;
 
   constructor(
     private readonly registry: ProtocolRegistry,
@@ -57,7 +55,6 @@ export class FetchProtocolGovernanceJob {
   ) {
     this.notificationService =
       options.notificationService ?? new NoopNotificationService();
-    this.notifyOnNewProposal = options.notifyOnNewProposal ?? false;
   }
 
   async run(protocol: string): Promise<FetchProtocolResult> {
@@ -104,51 +101,13 @@ export class FetchProtocolGovernanceJob {
 
     try {
       this.logger.info({ protocol, runId }, "Starting governance fetch");
-      const rawItems = await adapter.fetchRecent({
-        shouldStopAfterPage: async ({ page, items, hasMore }) => {
-          const allowedOnPage = filterByPublisherAllowlist(
-            items,
-            adapter.publisherAllowlist
-          ).allowed;
-
-          if (allowedOnPage.length === 0) {
-            return false;
-          }
-
-          const knownAllowedItems = await Promise.all(
-            allowedOnPage.map((item) =>
-              this.proposalRepository.findBySourceIdentity(
-                item.protocol,
-                item.sourceType,
-                item.sourceId
-              )
-            )
-          );
-          const shouldStop = knownAllowedItems.every(Boolean);
-
-          if (shouldStop && hasMore) {
-            this.logger.info(
-              {
-                protocol,
-                runId,
-                page,
-                allowlistedItemsOnPage: allowedOnPage.length
-              },
-              "Stopping pagination after reaching already-known allowlisted proposals"
-            );
-          }
-
-          return shouldStop;
-        }
-      });
+      const rawItems = await adapter.fetchRecent();
       fetchedCount = rawItems.length;
       const filtered = filterByPublisherAllowlist(rawItems, adapter.publisherAllowlist);
       allowlistedCount = filtered.allowed.length;
       skippedCount = filtered.skipped.length;
       const notificationStatusForNew =
-        this.notificationService.enabled && this.notifyOnNewProposal
-          ? "pending"
-          : "skipped";
+        this.notificationService.enabled ? "pending" : "skipped";
 
       for (const rawItem of filtered.allowed) {
         const normalizedItem = adapter.normalize(rawItem);

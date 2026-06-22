@@ -12,7 +12,7 @@ describe("env parsing", () => {
     expect(env.port).toBe(3000);
     expect(env.storageMode).toBe("firestore");
     expect(env.enableScheduler).toBe(true);
-    expect(env.fetchIntervalCron).toBe("*/15 * * * *");
+    expect(env.fetchIntervalCron).toBe("0 */6 * * *");
     expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
     expect(env.lidoFetchMaxPages).toBe(5);
     expect(env.aaveForumBaseUrl).toBe("https://governance.aave.com");
@@ -30,7 +30,6 @@ describe("env parsing", () => {
     expect(env.telegramAllowedUserIds).toEqual([]);
     expect(env.telegramE2EEnabled).toBe(false);
     expect(env.telegramTestSendDelayMs).toBe(3000);
-    expect(env.notifyOnNewProposal).toBe(true);
   });
 
   it("parses JSON array allowlists", () => {
@@ -103,7 +102,6 @@ describe("env parsing", () => {
       AAVE_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       TELEGRAM_E2E_ENABLED: "true",
-      NOTIFY_ON_NEW_PROPOSAL: "false",
       API_AUTH_ENABLED: "true"
     } as NodeJS.ProcessEnv);
 
@@ -114,7 +112,6 @@ describe("env parsing", () => {
     expect(env.aaveEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
     expect(env.telegramE2EEnabled).toBe(true);
-    expect(env.notifyOnNewProposal).toBe(false);
     expect(env.apiAuthEnabled).toBe(true);
   });
 
@@ -325,7 +322,7 @@ describe("env parsing", () => {
     expect(JSON.stringify(safeConfig)).not.toContain("telegram-token");
     expect(JSON.stringify(safeConfig)).not.toContain("123456789");
     expect(JSON.stringify(safeConfig)).not.toContain("987654321");
-    expect(safeConfig.fetchIntervalCron).toBe("*/15 * * * *");
+    expect(safeConfig.fetchIntervalCron).toBe("0 */6 * * *");
     expect(safeConfig.firebase.hasPrivateKey).toBe(true);
     expect(safeConfig.apiAuth.hasToken).toBe(true);
     expect(safeConfig.lido.fetchMaxPages).toBe(5);

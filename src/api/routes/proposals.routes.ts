@@ -18,7 +18,9 @@ const proposalSorts = new Set<ProposalSort>([
   "publishedAt_desc",
   "publishedAt_asc",
   "firstSeenAt_desc",
-  "firstSeenAt_asc"
+  "firstSeenAt_asc",
+  "lastSeenAt_desc",
+  "lastSeenAt_asc"
 ]);
 
 class QueryParameterError extends Error {}
@@ -122,7 +124,7 @@ function parseSort(value: unknown): ProposalSort | undefined {
 
   if (!proposalSorts.has(parsed as ProposalSort)) {
     throw new QueryParameterError(
-      "Query parameter sort must be one of: publishedAt_desc, publishedAt_asc, firstSeenAt_desc, firstSeenAt_asc."
+      "Query parameter sort must be one of: publishedAt_desc, publishedAt_asc, firstSeenAt_desc, firstSeenAt_asc, lastSeenAt_desc, lastSeenAt_asc."
     );
   }
 

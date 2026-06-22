@@ -13,7 +13,9 @@ const sortFields: Record<ProposalSort, keyof StoredProposal> = {
   publishedAt_desc: "publishedAt",
   publishedAt_asc: "publishedAt",
   firstSeenAt_desc: "firstSeenAt",
-  firstSeenAt_asc: "firstSeenAt"
+  firstSeenAt_asc: "firstSeenAt",
+  lastSeenAt_desc: "lastSeenAt",
+  lastSeenAt_asc: "lastSeenAt"
 };
 
 function sortDirection(sort: ProposalSort): "asc" | "desc" {
@@ -67,6 +69,7 @@ export class MemoryProposalRepository implements ProposalRepository {
       ...proposal,
       id: existing?.id ?? proposal.id,
       firstSeenAt: existing?.firstSeenAt ?? now,
+      lastSeenAt: now,
       notificationStatus:
         existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
       notificationError: existing?.notificationError,

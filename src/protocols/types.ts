@@ -35,22 +35,11 @@ export interface NormalizedGovernanceItem {
 
 export interface StoredProposal extends NormalizedGovernanceItem {
   firstSeenAt: string;
+  lastSeenAt: string;
   notificationStatus: NotificationStatus;
   notificationError?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface FetchRecentPageContext {
-  page: number;
-  items: RawGovernanceItem[];
-  hasMore: boolean;
-}
-
-export interface FetchRecentOptions {
-  shouldStopAfterPage?: (
-    context: FetchRecentPageContext
-  ) => boolean | Promise<boolean>;
 }
 
 export interface ProtocolAdapter {
@@ -58,6 +47,6 @@ export interface ProtocolAdapter {
   source: GovernanceSource;
   enabled: boolean;
   publisherAllowlist: string[];
-  fetchRecent(options?: FetchRecentOptions): Promise<RawGovernanceItem[]>;
+  fetchRecent(): Promise<RawGovernanceItem[]>;
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem;
 }

@@ -12,7 +12,7 @@ export interface TelegramNotificationServiceOptions {
 }
 
 interface TelegramRecipientFailure {
-  recipientUserId: string;
+  recipientIndex: number;
   status?: number;
   responseBody?: string;
   errorMessage?: string;
@@ -26,12 +26,12 @@ export class TelegramNotificationDeliveryError extends Error {
     const detail = failures
       .map((failure) => {
         if (failure.status) {
-          return `user ${failure.recipientUserId} failed with ${failure.status}${
+          return `recipient ${failure.recipientIndex} failed with ${failure.status}${
             failure.responseBody ? `: ${failure.responseBody}` : ""
           }`;
         }
 
-        return `user ${failure.recipientUserId} failed${
+        return `recipient ${failure.recipientIndex} failed${
           failure.errorMessage ? `: ${failure.errorMessage}` : ""
         }`;
       })
@@ -61,6 +61,18 @@ function escapeTelegramHtml(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function redactTelegramSensitiveValues(
+  value: string,
+  botToken: string,
+  allowedUserIds: string[]
+): string {
+  return [botToken, ...allowedUserIds].reduce(
+    (redacted, sensitiveValue) =>
+      redacted.split(sensitiveValue).join("[redacted]"),
+    value
+  );
+}
+
 export function formatTelegramGovernanceMessage(
   message: NotificationMessage
 ): string {
@@ -83,15 +95,26 @@ export class TelegramNotificationService implements NotificationService {
   private readonly logger?: Pick<Logger, "debug" | "error">;
 
   constructor(options: TelegramNotificationServiceOptions) {
+    const botToken = options.botToken.trim();
     const allowedUserIds = [
       ...new Set(options.allowedUserIds.map((id) => id.trim()))
     ].filter(Boolean);
+
+    if (!botToken) {
+      throw new Error("TelegramNotificationService requires a bot token.");
+    }
 
     if (allowedUserIds.length === 0) {
       throw new Error("TelegramNotificationService requires at least one allowed user id.");
     }
 
-    this.botToken = options.botToken;
+    if (!allowedUserIds.every((id) => /^[1-9]\d*$/.test(id))) {
+      throw new Error(
+        "TelegramNotificationService allowed user ids must be positive numeric Telegram user IDs."
+      );
+    }
+
+    this.botToken = botToken;
     this.allowedUserIds = allowedUserIds;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logger = options.logger;
@@ -111,7 +134,7 @@ export class TelegramNotificationService implements NotificationService {
 
     const failures: TelegramRecipientFailure[] = [];
 
-    for (const recipientUserId of this.allowedUserIds) {
+    for (const [recipientIndex, recipientUserId] of this.allowedUserIds.entries()) {
       try {
         const response = await this.fetchImpl(url, {
           method: "POST",
@@ -127,9 +150,13 @@ export class TelegramNotificationService implements NotificationService {
         });
 
         if (!response.ok) {
-          const responseBody = await response.text().catch(() => "");
+          const responseBody = redactTelegramSensitiveValues(
+            await response.text().catch(() => ""),
+            this.botToken,
+            this.allowedUserIds
+          );
           const failure = {
-            recipientUserId,
+            recipientIndex: recipientIndex + 1,
             status: response.status,
             responseBody
           };
@@ -138,7 +165,7 @@ export class TelegramNotificationService implements NotificationService {
           this.logger?.error(
             {
               notificationService: this.name,
-              recipientUserId,
+              recipientIndex: recipientIndex + 1,
               status: response.status,
               responseBody
             },
@@ -146,9 +173,13 @@ export class TelegramNotificationService implements NotificationService {
           );
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = redactTelegramSensitiveValues(
+          error instanceof Error ? error.message : String(error),
+          this.botToken,
+          this.allowedUserIds
+        );
         const failure = {
-          recipientUserId,
+          recipientIndex: recipientIndex + 1,
           errorMessage
         };
 
@@ -156,7 +187,7 @@ export class TelegramNotificationService implements NotificationService {
         this.logger?.error(
           {
             notificationService: this.name,
-            recipientUserId,
+            recipientIndex: recipientIndex + 1,
             error
           },
           "Telegram notification request failed for allowed recipient"

@@ -190,6 +190,42 @@ describe("AaveForumClient", () => {
     expect(page.topics).toHaveLength(4);
   });
 
+  it("trims blank display names and falls back to username or last poster", async () => {
+    const payload = {
+      users: [{ id: 1, username: "aave-username", name: "   " }],
+      topic_list: {
+        topics: [
+          {
+            id: 1,
+            title: "Username fallback",
+            slug: "username-fallback",
+            created_at: "2026-06-19T12:00:28.625Z",
+            posters: [{ user_id: 1, description: "Original Poster" }]
+          },
+          {
+            id: 2,
+            title: "Last poster fallback",
+            slug: "last-poster-fallback",
+            created_at: "2026-06-19T13:00:28.625Z",
+            last_poster_username: "last-poster"
+          }
+        ]
+      }
+    };
+    const client = new AaveForumClient({
+      baseUrl: "https://governance.aave.com",
+      apiBaseUrl: "https://governance.aave.com",
+      fetchImpl: jsonFetch(payload)
+    });
+
+    const topics = await client.fetchRecentTopics();
+
+    expect(topics.map((topic) => topic.publisherName)).toEqual([
+      "aave-username",
+      "last-poster"
+    ]);
+  });
+
   it("rejects malformed recent topic responses", async () => {
     const payload = await loadFixture("malformed-response.json");
     const client = new AaveForumClient({

@@ -160,6 +160,8 @@ describe("FirestoreProposalRepository", () => {
     expect(second.proposal).toMatchObject({
       title: "Updated proposal",
       createdAt: "2026-06-05T00:00:00.000Z",
+      firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T06:00:00.000Z",
       updatedAt: "2026-06-05T06:00:00.000Z"
     });
     await expect(repository.findById(proposal.id)).resolves.toMatchObject({
@@ -195,6 +197,7 @@ describe("FirestoreProposalRepository", () => {
     });
     expect(second.proposal).toMatchObject({
       fetchedAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T00:00:00.000Z",
       updatedAt: "2026-06-05T00:00:00.000Z"
     });
   });
@@ -243,7 +246,7 @@ describe("FirestoreProposalRepository", () => {
     expect(stored?.notificationError).toBeUndefined();
   });
 
-  it("strips obsolete proposal fields from older Firestore documents", async () => {
+  it("strips obsolete proposal fields while preserving lifecycle fields", async () => {
     const proposal = normalizeLidoForumItem(createRawGovernanceItem());
     const repository = new FirestoreProposalRepository(
       createFakeFirestore({
@@ -265,10 +268,32 @@ describe("FirestoreProposalRepository", () => {
 
     expect(stored).toMatchObject({
       id: proposal.id,
+      lastSeenAt: "2026-06-05T00:00:00.000Z",
       notificationStatus: "skipped"
     });
-    expect(stored).not.toHaveProperty("lastSeenAt");
     expect(stored).not.toHaveProperty("status");
+  });
+
+  it("backfills lastSeenAt from firstSeenAt when reading older Firestore documents", async () => {
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({
+        proposals: {
+          [proposal.id]: {
+            ...proposal,
+            firstSeenAt: "2026-06-05T00:00:00.000Z",
+            notificationStatus: "skipped",
+            createdAt: "2026-06-05T00:00:00.000Z",
+            updatedAt: "2026-06-05T00:00:00.000Z"
+          }
+        }
+      })
+    );
+
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      firstSeenAt: "2026-06-05T00:00:00.000Z",
+      lastSeenAt: "2026-06-05T00:00:00.000Z"
+    });
   });
 
   it("finds proposal documents by protocol, newest first, with limits", async () => {

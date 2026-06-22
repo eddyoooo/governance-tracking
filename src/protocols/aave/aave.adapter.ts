@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import type {
-  FetchRecentOptions,
   GovernanceSource,
   NormalizedGovernanceItem,
   ProtocolAdapter,
@@ -54,7 +53,7 @@ export class AaveAdapter implements ProtocolAdapter {
     this.logger = options.logger;
   }
 
-  async fetchRecent(options: FetchRecentOptions = {}): Promise<RawGovernanceItem[]> {
+  async fetchRecent(): Promise<RawGovernanceItem[]> {
     if (!this.enabled) {
       this.logger?.info({ protocol: this.protocol }, "Skipping disabled protocol adapter");
       return [];
@@ -68,7 +67,6 @@ export class AaveAdapter implements ProtocolAdapter {
       itemsBySourceId,
       maxPages: this.maxPages,
       fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
-      fetchOptions: options,
       paginationLimitMessage:
         "Reached Aave global latest pagination limit before exhausting pages"
     });
@@ -81,7 +79,6 @@ export class AaveAdapter implements ProtocolAdapter {
         itemsBySourceId,
         maxPages: this.categoryMaxPages,
         fetchPage: (page) => this.client.fetchCategoryTopicPage(category, { page }),
-        fetchOptions: options,
         logContext: {
           categoryId: category.id,
           categoryName: category.name,
@@ -104,7 +101,6 @@ export class AaveAdapter implements ProtocolAdapter {
     itemsBySourceId: Map<string, RawGovernanceItem>;
     maxPages: number;
     fetchPage: (page: number) => Promise<Pick<AaveForumTopicPage, "topics" | "hasMore">>;
-    fetchOptions: FetchRecentOptions;
     logContext?: Record<string, unknown>;
     paginationLimitMessage: string;
   }): Promise<void> {
@@ -130,15 +126,7 @@ export class AaveAdapter implements ProtocolAdapter {
         }
       }
 
-      const shouldStop =
-        pageItems.length === 0 ||
-        (await options.fetchOptions.shouldStopAfterPage?.({
-          page,
-          items: pageItems,
-          hasMore: topicPage.hasMore
-        }));
-
-      if (shouldStop || !topicPage.hasMore) {
+      if (pageItems.length === 0 || !topicPage.hasMore) {
         return;
       }
     }

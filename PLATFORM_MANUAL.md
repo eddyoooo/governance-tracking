@@ -213,6 +213,7 @@ Useful filters:
 curl -s "$API/api/proposals?publisherName=Allowed%20Publisher"
 curl -s "$API/api/proposals?notificationStatus=skipped"
 curl -s "$API/api/proposals?sort=firstSeenAt_desc&limit=10&offset=0"
+curl -s "$API/api/proposals?sort=lastSeenAt_desc&limit=10&offset=0"
 ```
 
 Expected result: filtered proposal lists.
@@ -428,7 +429,7 @@ NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=*/15 * * * *
+FETCH_INTERVAL_CRON=0 */6 * * *
 LIDO_FETCH_MAX_PAGES=5
 AAVE_FETCH_MAX_PAGES=10
 AAVE_CATEGORY_FETCH_MAX_PAGES=2
@@ -512,6 +513,8 @@ In demo/memory mode, adapters use fixtures. In normal Firestore mode, they call 
 `updatedExistingCount = 1`: an already-known proposal appeared again and had meaningful source changes, so the stored record was updated.
 
 `unchangedExistingCount = 1`: an already-known proposal appeared again with no meaningful source changes, so the stored record was not rewritten.
+
+`lastSeenAt`: updated when a proposal is first stored or meaningfully changed. Unchanged repeat sightings are counted in fetch runs without rewriting the proposal.
 
 `skippedCount > 0`: fetched items were ignored because their publisher was not allowlisted.
 

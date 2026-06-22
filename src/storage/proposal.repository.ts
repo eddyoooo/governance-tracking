@@ -9,7 +9,9 @@ export type ProposalSort =
   | "publishedAt_desc"
   | "publishedAt_asc"
   | "firstSeenAt_desc"
-  | "firstSeenAt_asc";
+  | "firstSeenAt_asc"
+  | "lastSeenAt_desc"
+  | "lastSeenAt_asc";
 
 export interface ProposalQuery {
   protocol?: string;

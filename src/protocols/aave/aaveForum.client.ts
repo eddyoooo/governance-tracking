@@ -212,7 +212,10 @@ export class AaveForumClient {
         ? usersById.get(originalPoster.user_id)
         : undefined;
       const publisherName =
-        user?.name || user?.username || topic.last_poster_username || "unknown";
+        user?.name?.trim() ||
+        user?.username.trim() ||
+        topic.last_poster_username?.trim() ||
+        "unknown";
 
       return {
         sourceId: String(topic.id),

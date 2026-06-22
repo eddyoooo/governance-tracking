@@ -1,4 +1,5 @@
-import { createProposalId, hashObject } from "../../utils/hash.js";
+import { createProposalId } from "../../utils/hash.js";
+import { hashSourceContent } from "../sourceContentHash.js";
 import type { NormalizedGovernanceItem, RawGovernanceItem } from "../types.js";
 
 export function normalizeLidoForumItem(
@@ -14,6 +15,6 @@ export function normalizeLidoForumItem(
     sourceUrl: item.sourceUrl,
     publishedAt: item.publishedAt,
     fetchedAt: item.fetchedAt,
-    rawHash: hashObject(item.raw)
+    rawHash: hashSourceContent(item)
   };
 }

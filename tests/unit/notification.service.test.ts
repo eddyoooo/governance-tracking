@@ -339,17 +339,18 @@ describe("notification services", () => {
       logger: createSilentLogger()
     });
 
-    await expect(
-      service.send({
+    const send = service.send({
         protocol: "lido",
         sourceType: "forum",
         publisherName: "Allowed Publisher",
         title: "Proposal",
         sourceUrl: "https://example.com"
-      })
-    ).rejects.toThrow(
-      "Telegram notification failed for 2 of 2 allowed recipients: user 111111111 failed with 429: rate limited; user 222222222 failed: network down"
+      });
+
+    await expect(send).rejects.toThrow(
+      "Telegram notification failed for 2 of 2 allowed recipients: recipient 1 failed with 429: rate limited; recipient 2 failed: network down"
     );
+    await expect(send).rejects.not.toThrow(/111111111|222222222/);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -377,7 +378,7 @@ describe("notification services", () => {
       name: "TelegramNotificationDeliveryError",
       failures: [
         {
-          recipientUserId: "222222222",
+          recipientIndex: 2,
           status: 403,
           responseBody: "blocked"
         }
@@ -385,6 +386,41 @@ describe("notification services", () => {
       attemptedRecipientCount: 2
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("redacts tokens and user ids from Telegram failure details", async () => {
+    const logger = createSilentLogger();
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () => new Response("token sensitive-token chat 111111111", { status: 400 })
+    );
+    const service = new TelegramNotificationService({
+      botToken: "sensitive-token",
+      allowedUserIds: ["111111111"],
+      fetchImpl,
+      logger
+    });
+
+    await expect(
+      service.send({
+        protocol: "lido",
+        sourceType: "forum",
+        publisherName: "Allowed Publisher",
+        title: "Proposal",
+        sourceUrl: "https://example.com"
+      })
+    ).rejects.toMatchObject({
+      message: expect.not.stringContaining("sensitive-token"),
+      failures: [
+        expect.objectContaining({
+          responseBody: "token [redacted] chat [redacted]"
+        })
+      ]
+    });
+
+    const serializedLogs = JSON.stringify((logger.error as jest.Mock).mock.calls);
+
+    expect(serializedLogs).not.toContain("sensitive-token");
+    expect(serializedLogs).not.toContain("111111111");
   });
 
   it("requires at least one allowed user id", () => {
@@ -397,5 +433,31 @@ describe("notification services", () => {
           logger: createSilentLogger()
         })
     ).toThrow("TelegramNotificationService requires at least one allowed user id.");
+  });
+
+  it("requires a non-empty Telegram bot token even when constructed directly", () => {
+    expect(
+      () =>
+        new TelegramNotificationService({
+          botToken: "   ",
+          allowedUserIds: ["111111111"],
+          fetchImpl: jest.fn<typeof fetch>(),
+          logger: createSilentLogger()
+        })
+    ).toThrow("TelegramNotificationService requires a bot token.");
+  });
+
+  it("rejects non-numeric Telegram user ids even when constructed directly", () => {
+    expect(
+      () =>
+        new TelegramNotificationService({
+          botToken: "token",
+          allowedUserIds: ["111111111", "@teammate"],
+          fetchImpl: jest.fn<typeof fetch>(),
+          logger: createSilentLogger()
+        })
+    ).toThrow(
+      "TelegramNotificationService allowed user ids must be positive numeric Telegram user IDs."
+    );
   });
 });

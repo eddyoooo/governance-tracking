@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 import { loadEnv, type Env } from "../../src/config/env.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import type {
-  FetchRecentOptions,
   GovernanceSource,
   NormalizedGovernanceItem,
   ProtocolAdapter,
@@ -57,7 +56,7 @@ export interface FakeProtocolAdapterOptions {
   source?: GovernanceSource;
   publisherAllowlist?: string[];
   items?: RawGovernanceItem[];
-  fetchRecent?: (options?: FetchRecentOptions) => Promise<RawGovernanceItem[]>;
+  fetchRecent?: () => Promise<RawGovernanceItem[]>;
   normalize?: (item: RawGovernanceItem) => NormalizedGovernanceItem;
 }
 

@@ -248,6 +248,46 @@ describe("API", () => {
     ).toEqual(["1002", "1003"]);
   });
 
+  it("sorts proposal API results by lastSeenAt", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1001" }));
+    const second = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1002" }));
+
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    await proposalRepository.upsert(first);
+
+    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
+    await proposalRepository.upsert(second);
+
+    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
+    await proposalRepository.upsert({
+      ...first,
+      title: "Updated first proposal"
+    });
+    jest.useRealTimers();
+
+    const { app } = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository,
+        fetchRunRepository: new MemoryFetchRunRepository()
+      }
+    });
+
+    const response = await request(app)
+      .get("/api/proposals?sort=lastSeenAt_desc")
+      .expect(200);
+
+    expect(
+      response.body.proposals.map((proposal: { sourceId: string }) => proposal.sourceId)
+    ).toEqual(["1001", "1002"]);
+    expect(response.body.proposals[0]).toMatchObject({
+      sourceId: "1001",
+      lastSeenAt: "2026-06-05T00:20:00.000Z"
+    });
+  });
+
   it("rejects invalid proposal list query parameters", async () => {
     const { app } = createApp({ env: testEnv() });
 
@@ -323,7 +363,7 @@ describe("API", () => {
     const serialized = JSON.stringify(response.body);
 
     expect(response.body).toMatchObject({
-      fetchIntervalCron: "*/15 * * * *",
+      fetchIntervalCron: "0 */6 * * *",
       firebase: {
         hasPrivateKey: true
       },

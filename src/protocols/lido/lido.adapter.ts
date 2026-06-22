@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import type {
-  FetchRecentOptions,
   GovernanceSource,
   NormalizedGovernanceItem,
   ProtocolAdapter,
@@ -48,7 +47,7 @@ export class LidoAdapter implements ProtocolAdapter {
     this.logger = options.logger;
   }
 
-  async fetchRecent(options: FetchRecentOptions = {}): Promise<RawGovernanceItem[]> {
+  async fetchRecent(): Promise<RawGovernanceItem[]> {
     if (!this.enabled) {
       this.logger?.info({ protocol: this.protocol }, "Skipping disabled protocol adapter");
       return [];
@@ -73,15 +72,7 @@ export class LidoAdapter implements ProtocolAdapter {
 
       items.push(...pageItems);
 
-      const shouldStop =
-        pageItems.length === 0 ||
-        (await options.shouldStopAfterPage?.({
-          page,
-          items: pageItems,
-          hasMore: topicPage.hasMore
-        }));
-
-      if (shouldStop || !topicPage.hasMore) {
+      if (pageItems.length === 0 || !topicPage.hasMore) {
         return items;
       }
     }
