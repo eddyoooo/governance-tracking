@@ -15,7 +15,6 @@ export function testEnv(overrides: NodeJS.ProcessEnv = {}): Env {
     STORAGE_MODE: "memory",
     DEMO_MODE: "true",
     ENABLE_SCHEDULER: "false",
-    ENABLE_DEBUG_ENDPOINTS: "false",
     LOG_LEVEL: "silent",
     ...overrides
   });

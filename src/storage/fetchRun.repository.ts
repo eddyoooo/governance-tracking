@@ -5,7 +5,6 @@ import {
 } from "firebase-admin/firestore";
 
 export type FetchRunStatus = "running" | "success" | "failed";
-export type FetchRunSort = "startedAt_desc" | "startedAt_asc";
 
 export interface FetchRun {
   id: string;
@@ -24,16 +23,10 @@ export interface FetchRun {
   errors: string[];
 }
 
-export interface FetchRunQuery {
-  limit?: number;
-  offset?: number;
-  sort?: FetchRunSort;
-}
-
 export interface FetchRunRepository {
   upsert(run: FetchRun): Promise<void>;
   findById(id: string): Promise<FetchRun | null>;
-  findAll(query?: FetchRunQuery): Promise<FetchRun[]>;
+  findAll(limit?: number): Promise<FetchRun[]>;
 }
 
 export class MemoryFetchRunRepository implements FetchRunRepository {
@@ -51,18 +44,14 @@ export class MemoryFetchRunRepository implements FetchRunRepository {
     return this.runs.get(id) ?? null;
   }
 
-  async findAll(query: FetchRunQuery = {}): Promise<FetchRun[]> {
-    const limit = query.limit ?? 100;
-    const offset = query.offset ?? 0;
-    const sort = query.sort ?? "startedAt_desc";
-
+  async findAll(limit = 100): Promise<FetchRun[]> {
     return [...this.runs.values()]
       .sort((left, right) => {
         const compared = left.startedAt.localeCompare(right.startedAt);
 
-        return sort === "startedAt_asc" ? compared : -compared;
+        return -compared;
       })
-      .slice(offset, offset + limit);
+      .slice(0, limit);
   }
 }
 
@@ -87,13 +76,10 @@ export class FirestoreFetchRunRepository implements FetchRunRepository {
     return snapshot.data() as FetchRun;
   }
 
-  async findAll(query: FetchRunQuery = {}): Promise<FetchRun[]> {
-    const sort = query.sort ?? "startedAt_desc";
-    const direction = sort === "startedAt_asc" ? "asc" : "desc";
+  async findAll(limit = 100): Promise<FetchRun[]> {
     const snapshot = await this.collection
-      .orderBy("startedAt", direction)
-      .offset(query.offset ?? 0)
-      .limit(query.limit ?? 100)
+      .orderBy("startedAt", "desc")
+      .limit(limit)
       .get();
 
     return snapshot.docs.map((doc) => doc.data() as FetchRun);

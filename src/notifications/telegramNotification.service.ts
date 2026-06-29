@@ -188,7 +188,7 @@ export class TelegramNotificationService implements NotificationService {
           {
             notificationService: this.name,
             recipientIndex: recipientIndex + 1,
-            error
+            errorMessage
           },
           "Telegram notification request failed for allowed recipient"
         );

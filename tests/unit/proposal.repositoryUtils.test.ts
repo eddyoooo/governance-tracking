@@ -3,35 +3,12 @@ import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer
 import {
   buildStoredProposal,
   hasMeaningfulProposalChange,
-  proposalIdFromSourceIdentity,
-  proposalSortDirection,
-  proposalSortFields,
-  proposalSortValues
+  proposalIdFromSourceIdentity
 } from "../../src/storage/proposal.repositoryUtils.js";
 import { createProposalId } from "../../src/utils/hash.js";
 import { createRawGovernanceItem } from "../helpers/builders.js";
 
 describe("proposal repository utilities", () => {
-  it("keeps accepted sort values aligned with repository sort fields", () => {
-    expect(new Set(proposalSortValues).size).toBe(proposalSortValues.length);
-    expect(proposalSortValues).toEqual(Object.keys(proposalSortFields));
-    expect(proposalSortValues).toEqual([
-      "publishedAt_desc",
-      "publishedAt_asc",
-      "firstSeenAt_desc",
-      "firstSeenAt_asc",
-      "lastSeenAt_desc",
-      "lastSeenAt_asc"
-    ]);
-  });
-
-  it("derives sort direction only from the sort suffix", () => {
-    expect(proposalSortDirection("publishedAt_asc")).toBe("asc");
-    expect(proposalSortDirection("publishedAt_desc")).toBe("desc");
-    expect(proposalSortDirection("firstSeenAt_asc")).toBe("asc");
-    expect(proposalSortDirection("lastSeenAt_desc")).toBe("desc");
-  });
-
   it("creates deterministic source identity ids using the shared hash utility", () => {
     expect(proposalIdFromSourceIdentity("lido", "forum", "topic/1001")).toBe(
       createProposalId("lido", "forum", "topic/1001")

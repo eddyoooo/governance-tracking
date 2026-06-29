@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 import type { Env } from "../../config/env.js";
 
@@ -15,10 +15,10 @@ function tokenFromHeader(value: string | undefined): string {
 }
 
 function tokensMatch(providedToken: string, expectedToken: string): boolean {
-  const provided = Buffer.from(providedToken);
-  const expected = Buffer.from(expectedToken);
+  const provided = createHash("sha256").update(providedToken).digest();
+  const expected = createHash("sha256").update(expectedToken).digest();
 
-  return provided.length === expected.length && timingSafeEqual(provided, expected);
+  return timingSafeEqual(provided, expected);
 }
 
 export function requireApiAuth(env: Env): RequestHandler {

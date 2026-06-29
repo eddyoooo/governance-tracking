@@ -1,23 +1,6 @@
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import { createProposalId } from "../utils/hash.js";
-import type { ProposalSort, UpsertProposalOptions } from "./proposal.repository.js";
-
-export const DEFAULT_PROPOSAL_LIMIT = 100;
-
-export const proposalSortFields: Record<ProposalSort, keyof StoredProposal> = {
-  publishedAt_desc: "publishedAt",
-  publishedAt_asc: "publishedAt",
-  firstSeenAt_desc: "firstSeenAt",
-  firstSeenAt_asc: "firstSeenAt",
-  lastSeenAt_desc: "lastSeenAt",
-  lastSeenAt_asc: "lastSeenAt"
-};
-
-export const proposalSortValues = Object.keys(proposalSortFields) as ProposalSort[];
-
-export function proposalSortDirection(sort: ProposalSort): "asc" | "desc" {
-  return sort.endsWith("_asc") ? "asc" : "desc";
-}
+import type { UpsertProposalOptions } from "./proposal.repository.js";
 
 export function proposalIdFromSourceIdentity(
   protocol: string,

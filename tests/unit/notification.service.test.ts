@@ -35,6 +35,20 @@ class RecordingNotificationService implements NotificationService {
   }
 }
 
+class FailFirstNotificationService implements NotificationService {
+  readonly name = "fail-first";
+  readonly enabled = true;
+  readonly messages: NotificationMessage[] = [];
+
+  async send(message: NotificationMessage): Promise<void> {
+    this.messages.push(message);
+
+    if (this.messages.length === 1) {
+      throw new Error("First Telegram send failed");
+    }
+  }
+}
+
 describe("notification services", () => {
   it("keeps Telegram test fixtures realistic and publisher-diverse", () => {
     const publisherNames = telegramTestNotificationFixtures.map(
@@ -327,6 +341,49 @@ describe("notification services", () => {
     });
   });
 
+  it("continues retrying pending notifications after one proposal fails", async () => {
+    const repository = new MemoryProposalRepository();
+    const first = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "1001", title: "First proposal" })
+    );
+    const second = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "1002", title: "Second proposal" })
+    );
+    const service = new FailFirstNotificationService();
+
+    await repository.upsert(first, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.upsert(second, {
+      notificationStatusForNew: "pending"
+    });
+
+    const result = await notifyPendingProposals(
+      repository,
+      service,
+      createSilentLogger()
+    );
+
+    expect(result).toEqual({
+      pendingCount: 2,
+      sentCount: 1,
+      failedCount: 1,
+      skippedCount: 0,
+      errors: ["First Telegram send failed"]
+    });
+    expect(service.messages.map((message) => message.title)).toEqual([
+      "First proposal",
+      "Second proposal"
+    ]);
+    await expect(repository.findById(first.id)).resolves.toMatchObject({
+      notificationStatus: "failed",
+      notificationError: "First Telegram send failed"
+    });
+    await expect(repository.findById(second.id)).resolves.toMatchObject({
+      notificationStatus: "sent"
+    });
+  });
+
   it("throws after attempting every allowed recipient when Telegram delivery fails", async () => {
     const fetchImpl = jest
       .fn<typeof fetch>()
@@ -340,12 +397,12 @@ describe("notification services", () => {
     });
 
     const send = service.send({
-        protocol: "lido",
-        sourceType: "forum",
-        publisherName: "Allowed Publisher",
-        title: "Proposal",
-        sourceUrl: "https://example.com"
-      });
+      protocol: "lido",
+      sourceType: "forum",
+      publisherName: "Allowed Publisher",
+      title: "Proposal",
+      sourceUrl: "https://example.com"
+    });
 
     await expect(send).rejects.toThrow(
       "Telegram notification failed for 2 of 2 allowed recipients: recipient 1 failed with 429: rate limited; recipient 2 failed: network down"
@@ -421,6 +478,35 @@ describe("notification services", () => {
 
     expect(serializedLogs).not.toContain("sensitive-token");
     expect(serializedLogs).not.toContain("111111111");
+  });
+
+  it("redacts tokens and user ids from Telegram request error logs", async () => {
+    const logger = createSilentLogger();
+    const fetchImpl = jest.fn<typeof fetch>(async () => {
+      throw new Error("failed token sensitive-token user 111111111");
+    });
+    const service = new TelegramNotificationService({
+      botToken: "sensitive-token",
+      allowedUserIds: ["111111111"],
+      fetchImpl,
+      logger
+    });
+
+    await expect(
+      service.send({
+        protocol: "lido",
+        sourceType: "forum",
+        publisherName: "Allowed Publisher",
+        title: "Proposal",
+        sourceUrl: "https://example.com"
+      })
+    ).rejects.toThrow("failed token [redacted] user [redacted]");
+
+    const serializedLogs = JSON.stringify((logger.error as jest.Mock).mock.calls);
+
+    expect(serializedLogs).not.toContain("sensitive-token");
+    expect(serializedLogs).not.toContain("111111111");
+    expect(serializedLogs).toContain("failed token [redacted] user [redacted]");
   });
 
   it("requires at least one allowed user id", () => {

@@ -29,6 +29,15 @@ describe("hash utilities", () => {
     expect(id).toBe(createProposalId("lido", "forum", "topic/1001?draft=true"));
   });
 
+  it("keeps ids unique when different source ids sanitize to the same prefix", () => {
+    const slashId = createProposalId("lido", "forum", "topic/1001");
+    const questionId = createProposalId("lido", "forum", "topic?1001");
+
+    expect(slashId).toMatch(/^lido_forum_topic_1001_[a-f0-9]{10}$/);
+    expect(questionId).toMatch(/^lido_forum_topic_1001_[a-f0-9]{10}$/);
+    expect(slashId).not.toBe(questionId);
+  });
+
   it("hashes objects deterministically regardless of key order", () => {
     expect(hashObject({ b: 2, a: 1 })).toBe(hashObject({ a: 1, b: 2 }));
   });

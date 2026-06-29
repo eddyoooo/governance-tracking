@@ -1,32 +1,35 @@
 import {
   type CollectionReference,
   type DocumentData,
-  type Firestore,
-  type Query
+  type Firestore
 } from "firebase-admin/firestore";
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
-  ProposalQuery,
   ProposalRepository,
   UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
 import {
   buildStoredProposal,
-  DEFAULT_PROPOSAL_LIMIT,
   hasMeaningfulProposalChange,
-  proposalIdFromSourceIdentity,
-  proposalSortDirection,
-  proposalSortFields
+  proposalIdFromSourceIdentity
 } from "./proposal.repositoryUtils.js";
 
 function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
-  const lastSeenAt =
-    proposal.lastSeenAt ??
+  const firstSeenAt =
     proposal.firstSeenAt ??
+    proposal.lastSeenAt ??
     proposal.fetchedAt ??
     proposal.createdAt ??
     proposal.updatedAt;
+  const lastSeenAt =
+    proposal.lastSeenAt ??
+    firstSeenAt ??
+    proposal.fetchedAt ??
+    proposal.createdAt ??
+    proposal.updatedAt;
+  const createdAt = proposal.createdAt ?? firstSeenAt ?? proposal.fetchedAt;
+  const updatedAt = proposal.updatedAt ?? lastSeenAt ?? createdAt;
   const cleaned: StoredProposal = {
     id: proposal.id,
     protocol: proposal.protocol,
@@ -38,11 +41,11 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
     publishedAt: proposal.publishedAt,
     fetchedAt: proposal.fetchedAt,
     rawHash: proposal.rawHash,
-    firstSeenAt: proposal.firstSeenAt,
+    firstSeenAt,
     lastSeenAt,
-    notificationStatus: proposal.notificationStatus,
-    createdAt: proposal.createdAt,
-    updatedAt: proposal.updatedAt
+    notificationStatus: proposal.notificationStatus ?? "skipped",
+    createdAt,
+    updatedAt
   };
 
   if (proposal.notificationError) {
@@ -102,37 +105,8 @@ export class FirestoreProposalRepository implements ProposalRepository {
     return results;
   }
 
-  async findAll(query: ProposalQuery = {}): Promise<StoredProposal[]> {
-    let firestoreQuery: Query<DocumentData> = this.collection;
-
-    if (query.protocol) {
-      firestoreQuery = firestoreQuery.where("protocol", "==", query.protocol);
-    }
-
-    if (query.publisherName) {
-      firestoreQuery = firestoreQuery.where("publisherName", "==", query.publisherName);
-    }
-
-    if (query.sourceType) {
-      firestoreQuery = firestoreQuery.where("sourceType", "==", query.sourceType);
-    }
-
-    if (query.notificationStatus) {
-      firestoreQuery = firestoreQuery.where(
-        "notificationStatus",
-        "==",
-        query.notificationStatus
-      );
-    }
-
-    const sort = query.sort ?? "publishedAt_desc";
-
-    firestoreQuery = firestoreQuery
-      .orderBy(proposalSortFields[sort], proposalSortDirection(sort))
-      .offset(query.offset ?? 0)
-      .limit(query.limit ?? DEFAULT_PROPOSAL_LIMIT);
-
-    const snapshot = await firestoreQuery.get();
+  async findAll(): Promise<StoredProposal[]> {
+    const snapshot = await this.collection.limit(100).get();
 
     return snapshot.docs.map((doc) => cleanStoredProposal(doc.data() as StoredProposal));
   }
@@ -175,12 +149,15 @@ export class FirestoreProposalRepository implements ProposalRepository {
 
   async findByNotificationStatus(
     status: StoredProposal["notificationStatus"],
-    query: ProposalQuery = {}
+    limit = 100
   ): Promise<StoredProposal[]> {
-    return this.findAll({
-      ...query,
-      notificationStatus: status
-    });
+    const snapshot = await this.collection
+      .where("notificationStatus", "==", status)
+      .orderBy("firstSeenAt", "asc")
+      .limit(limit)
+      .get();
+
+    return snapshot.docs.map((doc) => cleanStoredProposal(doc.data() as StoredProposal));
   }
 
   async updateNotificationStatus(

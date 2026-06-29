@@ -166,6 +166,34 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(await proposalRepository.findAll()).toEqual([]);
   });
 
+  it("filters non-allowlisted publishers before normalization", async () => {
+    const normalize = jest.fn(() => {
+      throw new Error("Skipped items must not be normalized");
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        items: [
+          createRawGovernanceItem({
+            sourceId: "1002",
+            publisherName: "Random Person"
+          })
+        ],
+        publisherAllowlist: ["Allowed Publisher"],
+        normalize: normalize as never
+      })
+    );
+
+    await expect(job.run("lido")).resolves.toMatchObject({
+      fetchedCount: 1,
+      allowlistedCount: 0,
+      storedNewCount: 0,
+      skippedCount: 1,
+      errors: []
+    });
+    expect(normalize).not.toHaveBeenCalled();
+    await expect(proposalRepository.findAll()).resolves.toEqual([]);
+  });
+
   it("updates existing proposals instead of inserting duplicates", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));

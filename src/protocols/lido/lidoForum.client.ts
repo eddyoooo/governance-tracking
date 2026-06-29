@@ -1,70 +1,17 @@
-import { z } from "zod";
 import type { Logger } from "pino";
+import {
+  discourseRecentTopicsResponseSchema,
+  fetchDiscourseJson,
+  toDiscourseTopicPage,
+  type DiscourseForumTopic,
+  type DiscourseForumTopicPage,
+  type DiscourseRecentTopicsResponse
+} from "../discourse/discourseForum.client.js";
 
-const discourseUserSchema = z
-  .object({
-    id: z.number(),
-    username: z.string(),
-    name: z.string().nullable().optional()
-  })
-  .passthrough();
-
-const discoursePosterSchema = z
-  .object({
-    user_id: z.number().optional(),
-    description: z.string().nullable().optional(),
-    extras: z.string().nullable().optional()
-  })
-  .passthrough();
-
-const discourseTopicSchema = z
-  .object({
-    id: z.number(),
-    title: z.string(),
-    slug: z.string(),
-    created_at: z.string().datetime({ offset: true }),
-    last_posted_at: z.string().nullable().optional(),
-    posts_count: z.number().optional(),
-    reply_count: z.number().optional(),
-    views: z.number().optional(),
-    like_count: z.number().optional(),
-    category_id: z.number().optional(),
-    last_poster_username: z.string().optional(),
-    posters: z.array(discoursePosterSchema).optional()
-  })
-  .passthrough();
-
-export const lidoRecentTopicsResponseSchema = z
-  .object({
-    users: z.array(discourseUserSchema).optional().default([]),
-    topic_list: z
-      .object({
-        topics: z.array(discourseTopicSchema).default([]),
-        more_topics_url: z.string().nullable().optional(),
-        per_page: z.number().optional()
-      })
-      .passthrough()
-  })
-  .passthrough();
-
-export type LidoRecentTopicsResponse = z.infer<typeof lidoRecentTopicsResponseSchema>;
-
-export interface LidoForumTopic {
-  sourceId: string;
-  title: string;
-  slug: string;
-  publisherName: string;
-  sourceUrl: string;
-  publishedAt: string;
-  raw: unknown;
-}
-
-export interface LidoForumTopicPage {
-  page: number;
-  topics: LidoForumTopic[];
-  hasMore: boolean;
-  moreTopicsUrl?: string;
-}
+export const lidoRecentTopicsResponseSchema = discourseRecentTopicsResponseSchema;
+export type LidoRecentTopicsResponse = DiscourseRecentTopicsResponse;
+export type LidoForumTopic = DiscourseForumTopic;
+export type LidoForumTopicPage = DiscourseForumTopicPage;
 
 export interface LidoForumClientOptions {
   baseUrl: string;
@@ -107,62 +54,16 @@ export class LidoForumClient {
       throw new Error("Invalid Lido recent topics response.");
     }
 
-    return {
-      page,
-      topics: this.mapRecentTopics(parsed.data),
-      hasMore: Boolean(parsed.data.topic_list.more_topics_url),
-      moreTopicsUrl: parsed.data.topic_list.more_topics_url ?? undefined
-    };
+    return toDiscourseTopicPage(page, parsed.data, this.baseUrl);
   }
 
   private async fetchJson(pathname: string): Promise<unknown> {
-    const url = new URL(pathname, this.apiBaseUrl);
-    this.logger?.debug({ url: url.toString() }, "Fetching Lido forum JSON");
-
-    const response = await this.fetchImpl(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "governance-tracking/0.1"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Lido forum request failed with ${response.status}: ${url}`);
-    }
-
-    return response.json();
-  }
-
-  private mapRecentTopics(payload: LidoRecentTopicsResponse): LidoForumTopic[] {
-    const usersById = new Map(payload.users.map((user) => [user.id, user]));
-
-    return payload.topic_list.topics.map((topic) => {
-      const originalPoster =
-        topic.posters?.find((poster) =>
-          poster.description?.toLowerCase().includes("original poster")
-        ) ?? topic.posters?.[0];
-      const user = originalPoster?.user_id
-        ? usersById.get(originalPoster.user_id)
-        : undefined;
-      const publisherName =
-        user?.name?.trim() ||
-        user?.username.trim() ||
-        topic.last_poster_username?.trim() ||
-        "unknown";
-
-      return {
-        sourceId: String(topic.id),
-        title: topic.title,
-        slug: topic.slug,
-        publisherName,
-        sourceUrl: `${this.baseUrl}/t/${topic.slug}/${topic.id}`,
-        publishedAt: topic.created_at,
-        raw: {
-          topic,
-          publisher: user
-        }
-      };
+    return fetchDiscourseJson({
+      apiBaseUrl: this.apiBaseUrl,
+      pathname,
+      forumLabel: "Lido forum",
+      fetchImpl: this.fetchImpl,
+      logger: this.logger
     });
   }
-
 }

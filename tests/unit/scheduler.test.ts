@@ -87,6 +87,27 @@ describe("scheduler", () => {
     );
   });
 
+  it("does not start when no protocol adapters are enabled", () => {
+    const context = createContext();
+    context.protocolRegistry.list.mockReturnValueOnce([
+      {
+        protocol: "lido",
+        enabled: false
+      },
+      {
+        protocol: "aave",
+        enabled: false
+      }
+    ]);
+    validateMock.mockReturnValue(true);
+
+    expect(startScheduler(context as never)).toBeNull();
+    expect(scheduleMock).not.toHaveBeenCalled();
+    expect(context.logger.warn).toHaveBeenCalledWith(
+      "Scheduler not started because no protocol adapters are enabled"
+    );
+  });
+
   it("runs every enabled protocol fetch job when the scheduled callback fires", async () => {
     let scheduledCallback: (() => void) | undefined;
     const context = createContext();

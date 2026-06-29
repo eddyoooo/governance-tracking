@@ -74,10 +74,7 @@ export async function notifyPendingProposals(
   notificationService: NotificationService,
   logger: Pick<Logger, "error" | "info">
 ): Promise<NotifyPendingResult> {
-  const pending = await proposalRepository.findByNotificationStatus("pending", {
-    limit: 100,
-    sort: "firstSeenAt_asc"
-  });
+  const pending = await proposalRepository.findByNotificationStatus("pending", 100);
   const result: NotifyPendingResult = {
     pendingCount: pending.length,
     sentCount: 0,

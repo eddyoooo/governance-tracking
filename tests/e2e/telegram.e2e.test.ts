@@ -5,7 +5,9 @@ import {
   createNotificationService,
   notifyPendingProposals
 } from "../../src/notifications/index.js";
+import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
+import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createRawGovernanceItem,
@@ -20,7 +22,8 @@ const telegramE2EEnv = loadEnv({
   ENABLE_SCHEDULER: "false",
   LOG_LEVEL: "silent"
 });
-const describeTelegramE2E = telegramE2EEnv.telegramE2EEnabled
+const describeTelegramE2E =
+  telegramE2EEnv.telegramE2EEnabled && process.env.RUN_TELEGRAM_E2E === "true"
   ? describe
   : describe.skip;
 
@@ -48,27 +51,29 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
 
       expect(uniquePublisherCount).toBeGreaterThan(1);
 
-      const proposals = telegramTestNotificationFixtures.map((fixture) =>
-        normalizeLidoForumItem(
-          createRawGovernanceItem({
-            sourceId: `telegram-e2e-${fixture.sourceId}-${Date.now()}`,
-            protocol: fixture.protocol,
-            sourceType: fixture.sourceType as "forum",
+      const proposals = telegramTestNotificationFixtures.map((fixture) => {
+        const rawItem = createRawGovernanceItem({
+          sourceId: `telegram-e2e-${fixture.sourceId}-${Date.now()}`,
+          protocol: fixture.protocol,
+          sourceType: fixture.sourceType as "forum",
+          publisherName: fixture.publisherName,
+          title: fixture.title,
+          sourceUrl: fixture.sourceUrl,
+          publishedAt: fixture.publishedAt,
+          raw: {
+            kind: "telegram-e2e",
+            sourceId: fixture.sourceId,
             publisherName: fixture.publisherName,
             title: fixture.title,
             sourceUrl: fixture.sourceUrl,
-            publishedAt: fixture.publishedAt,
-            raw: {
-              kind: "telegram-e2e",
-              sourceId: fixture.sourceId,
-              publisherName: fixture.publisherName,
-              title: fixture.title,
-              sourceUrl: fixture.sourceUrl,
-              publishedAt: fixture.publishedAt
-            }
-          })
-        )
-      );
+            publishedAt: fixture.publishedAt
+          }
+        }) as RawGovernanceItem;
+
+        return fixture.protocol === "aave"
+          ? normalizeAaveForumItem(rawItem)
+          : normalizeLidoForumItem(rawItem);
+      });
 
       for (const proposal of proposals) {
         await repository.upsert(proposal, {

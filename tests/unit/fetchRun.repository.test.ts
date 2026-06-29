@@ -58,7 +58,7 @@ describe("MemoryFetchRunRepository", () => {
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
 
-  it("lists fetch runs newest first with limits and offsets", async () => {
+  it("lists latest fetch runs newest first with a limit", async () => {
     const repository = new MemoryFetchRunRepository();
 
     await repository.upsert(
@@ -78,9 +78,7 @@ describe("MemoryFetchRunRepository", () => {
       { id: "newer" },
       { id: "older" }
     ]);
-    await expect(
-      repository.findAll({ sort: "startedAt_asc", limit: 1, offset: 1 })
-    ).resolves.toMatchObject([{ id: "newer" }]);
+    await expect(repository.findAll(1)).resolves.toMatchObject([{ id: "newer" }]);
   });
 
   it("clears in-memory fetch run state for repeatable demo runs", async () => {

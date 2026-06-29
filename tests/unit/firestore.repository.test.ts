@@ -39,7 +39,6 @@ class FakeQuery {
     protected readonly documents: Map<string, StoredDocument>,
     private readonly filters: Array<{ field: string; value: string }> = [],
     private readonly limitCount?: number,
-    private readonly offsetCount = 0,
     private readonly orderField = "publishedAt",
     private readonly orderDirection: "asc" | "desc" = "desc"
   ) {}
@@ -49,7 +48,6 @@ class FakeQuery {
       this.documents,
       [...this.filters, { field, value }],
       this.limitCount,
-      this.offsetCount,
       this.orderField,
       this.orderDirection
     );
@@ -60,7 +58,6 @@ class FakeQuery {
       this.documents,
       this.filters,
       this.limitCount,
-      this.offsetCount,
       field,
       direction
     );
@@ -71,18 +68,6 @@ class FakeQuery {
       this.documents,
       this.filters,
       limitCount,
-      this.offsetCount,
-      this.orderField,
-      this.orderDirection
-    );
-  }
-
-  offset(offsetCount: number): FakeQuery {
-    return new FakeQuery(
-      this.documents,
-      this.filters,
-      this.limitCount,
-      offsetCount,
       this.orderField,
       this.orderDirection
     );
@@ -100,7 +85,7 @@ class FakeQuery {
 
         return this.orderDirection === "asc" ? compared : -compared;
       })
-      .slice(this.offsetCount, this.offsetCount + (this.limitCount ?? 100))
+      .slice(0, this.limitCount ?? 100)
       .map((document) => ({
         data: () => document
       }));
@@ -362,7 +347,32 @@ describe("FirestoreProposalRepository", () => {
     });
   });
 
-  it("finds proposal documents by protocol, newest first, with limits", async () => {
+  it("backfills missing lifecycle and notification fields from older Firestore documents", async () => {
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        fetchedAt: "2026-06-05T12:00:00.000Z"
+      })
+    );
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({
+        proposals: {
+          [proposal.id]: {
+            ...proposal
+          }
+        }
+      })
+    );
+
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      firstSeenAt: "2026-06-05T12:00:00.000Z",
+      lastSeenAt: "2026-06-05T12:00:00.000Z",
+      notificationStatus: "skipped",
+      createdAt: "2026-06-05T12:00:00.000Z",
+      updatedAt: "2026-06-05T12:00:00.000Z"
+    });
+  });
+
+  it("lists proposal documents for internal monitor audit without dashboard filters", async () => {
     const repository = new FirestoreProposalRepository(createFakeFirestore());
     const lidoOlder = normalizeLidoForumItem(
       createRawGovernanceItem({
@@ -388,12 +398,25 @@ describe("FirestoreProposalRepository", () => {
 
     await repository.upsertMany([lidoOlder, lidoNewer, aave]);
 
-    await expect(repository.findAll({ protocol: "lido", limit: 1 })).resolves.toMatchObject([
-      {
-        protocol: "lido",
-        sourceId: "1002"
-      }
-    ]);
+    const stored = await repository.findAll();
+
+    expect(stored).toHaveLength(3);
+    expect(stored).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "lido",
+          sourceId: "1001"
+        }),
+        expect.objectContaining({
+          protocol: "lido",
+          sourceId: "1002"
+        }),
+        expect.objectContaining({
+          protocol: "aave",
+          sourceId: "1003"
+        })
+      ])
+    );
     await expect(
       repository.findBySourceIdentity("lido", "forum", "1001")
     ).resolves.toMatchObject({
@@ -406,9 +429,9 @@ describe("FirestoreProposalRepository", () => {
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
 
-  it("filters Firestore proposal documents by dashboard query fields", async () => {
+  it("finds notification-pending Firestore proposals in oldest-first order", async () => {
     const repository = new FirestoreProposalRepository(createFakeFirestore());
-    const lidoOlder = normalizeLidoForumItem(
+    const olderPending = normalizeLidoForumItem(
       createRawGovernanceItem({
         protocol: "lido",
         sourceId: "1001",
@@ -416,7 +439,7 @@ describe("FirestoreProposalRepository", () => {
         publishedAt: "2026-05-01T10:00:00.000Z"
       })
     );
-    const lidoNewer = normalizeLidoForumItem(
+    const newerPending = normalizeLidoForumItem(
       createRawGovernanceItem({
         protocol: "lido",
         sourceId: "1002",
@@ -424,7 +447,7 @@ describe("FirestoreProposalRepository", () => {
         publishedAt: "2026-05-03T10:00:00.000Z"
       })
     );
-    const aave = normalizeLidoForumItem(
+    const skipped = normalizeLidoForumItem(
       createRawGovernanceItem({
         protocol: "aave",
         sourceId: "1003",
@@ -433,37 +456,40 @@ describe("FirestoreProposalRepository", () => {
       })
     );
 
-    await repository.upsertMany([lidoOlder, lidoNewer, aave]);
-    await repository.updateNotificationStatus(lidoNewer.id, "sent");
-    await repository.updateNotificationStatus(aave.id, "sent");
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
+    await repository.upsert(olderPending, {
+      notificationStatusForNew: "pending"
+    });
+
+    jest.setSystemTime(new Date("2026-06-05T01:00:00.000Z"));
+    await repository.upsert(skipped, {
+      notificationStatusForNew: "skipped"
+    });
+
+    jest.setSystemTime(new Date("2026-06-05T02:00:00.000Z"));
+    await repository.upsert(newerPending, {
+      notificationStatusForNew: "pending"
+    });
 
     await expect(
-      repository.findAll({
-        protocol: "lido",
-        publisherName: "DAO Ops",
-        sourceType: "forum",
-        notificationStatus: "sent",
-        sort: "publishedAt_asc",
-        limit: 10,
-        offset: 0
-      })
+      repository.findByNotificationStatus("pending")
     ).resolves.toMatchObject([
       {
-        id: lidoNewer.id,
-        protocol: "lido",
-        publisherName: "DAO Ops",
-        notificationStatus: "sent"
+        id: olderPending.id,
+        notificationStatus: "pending",
+        firstSeenAt: "2026-06-05T00:00:00.000Z"
+      },
+      {
+        id: newerPending.id,
+        notificationStatus: "pending",
+        firstSeenAt: "2026-06-05T02:00:00.000Z"
       }
     ]);
 
     await expect(
-      repository.findAll({
-        notificationStatus: "sent",
-        sort: "publishedAt_asc",
-        limit: 1,
-        offset: 1
-      })
-    ).resolves.toMatchObject([{ id: lidoNewer.id }]);
+      repository.findByNotificationStatus("pending", 1)
+    ).resolves.toMatchObject([{ id: olderPending.id }]);
   });
 
   it("returns null when updating notification status for an unknown Firestore proposal", async () => {
@@ -512,7 +538,7 @@ describe("FirestoreFetchRunRepository", () => {
     await expect(repository.findAll()).resolves.toEqual([finished]);
   });
 
-  it("lists Firestore fetch runs by startedAt with limits, offsets, and ascending sort", async () => {
+  it("lists latest Firestore fetch runs by startedAt with a limit", async () => {
     const repository = new FirestoreFetchRunRepository(createFakeFirestore());
     const older: FetchRun = {
       id: "older",
@@ -542,8 +568,6 @@ describe("FirestoreFetchRunRepository", () => {
       { id: "newer" },
       { id: "older" }
     ]);
-    await expect(
-      repository.findAll({ sort: "startedAt_asc", limit: 1, offset: 1 })
-    ).resolves.toMatchObject([{ id: "newer" }]);
+    await expect(repository.findAll(1)).resolves.toMatchObject([{ id: "newer" }]);
   });
 });

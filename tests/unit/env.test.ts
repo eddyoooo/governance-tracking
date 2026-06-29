@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import { isMemoryMode, loadEnv, toSafeConfig } from "../../src/config/env.js";
+import { isMemoryMode, loadEnv } from "../../src/config/env.js";
 
 describe("env parsing", () => {
   it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
@@ -97,7 +97,6 @@ describe("env parsing", () => {
     const env = loadEnv({
       DEMO_MODE: "TRUE",
       ENABLE_SCHEDULER: "false",
-      ENABLE_DEBUG_ENDPOINTS: " true ",
       LIDO_ENABLED: "FALSE",
       AAVE_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
@@ -107,7 +106,6 @@ describe("env parsing", () => {
 
     expect(env.demoMode).toBe(true);
     expect(env.enableScheduler).toBe(false);
-    expect(env.enableDebugEndpoints).toBe(true);
     expect(env.lidoEnabled).toBe(false);
     expect(env.aaveEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
@@ -152,6 +150,11 @@ describe("env parsing", () => {
     expect(() =>
       loadEnv({
         TELEGRAM_TEST_SEND_DELAY_MS: "abc"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+    expect(() =>
+      loadEnv({
+        TELEGRAM_TEST_SEND_DELAY_MS: "1.5"
       } as NodeJS.ProcessEnv)
     ).toThrow();
   });
@@ -300,37 +303,18 @@ describe("env parsing", () => {
         PORT: "0"
       } as NodeJS.ProcessEnv)
     ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        PORT: "70000"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        LOG_LEVEL: "verbose"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
   });
 
-  it("does not expose secrets in safe config", () => {
-    const env = loadEnv({
-      FIREBASE_PROJECT_ID: "project",
-      FIREBASE_CLIENT_EMAIL: "service@example.com",
-      FIREBASE_PRIVATE_KEY: "private-key",
-      API_AUTH_ENABLED: "true",
-      API_AUTH_TOKEN: "secret-token",
-      ENABLE_TELEGRAM_NOTIFICATIONS: "true",
-      TELEGRAM_BOT_TOKEN: "telegram-token",
-      TELEGRAM_ALLOWED_USER_IDS: JSON.stringify([123456789, "987654321"]),
-      TELEGRAM_E2E_ENABLED: "true",
-      TELEGRAM_TEST_SEND_DELAY_MS: "3000"
-    } as NodeJS.ProcessEnv);
-    const safeConfig = toSafeConfig(env);
-
-    expect(JSON.stringify(safeConfig)).not.toContain("private-key");
-    expect(JSON.stringify(safeConfig)).not.toContain("secret-token");
-    expect(JSON.stringify(safeConfig)).not.toContain("telegram-token");
-    expect(JSON.stringify(safeConfig)).not.toContain("123456789");
-    expect(JSON.stringify(safeConfig)).not.toContain("987654321");
-    expect(safeConfig.fetchIntervalCron).toBe("0 */6 * * *");
-    expect(safeConfig.firebase.hasPrivateKey).toBe(true);
-    expect(safeConfig.apiAuth.hasToken).toBe(true);
-    expect(safeConfig.lido.fetchMaxPages).toBe(5);
-    expect(safeConfig.aave.fetchMaxPages).toBe(10);
-    expect(safeConfig.aave.categoryFetchMaxPages).toBe(2);
-    expect(safeConfig.notifications.hasTelegramBotToken).toBe(true);
-    expect(safeConfig.notifications.telegramAllowedUserCount).toBe(2);
-    expect(safeConfig.notifications.telegramE2EEnabled).toBe(true);
-    expect(safeConfig.notifications.telegramTestSendDelayMs).toBe(3000);
-  });
 });

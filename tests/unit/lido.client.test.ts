@@ -321,6 +321,36 @@ describe("LidoForumClient", () => {
     );
   });
 
+  it("throws a clear error when the Lido endpoint returns invalid JSON", async () => {
+    const logger = {
+      debug: jest.fn(),
+      error: jest.fn()
+    };
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: (async () =>
+        new Response("<html>temporarily unavailable</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        })) as typeof fetch,
+      logger
+    });
+
+    await expect(client.fetchRecentTopics()).rejects.toThrow(
+      "Invalid JSON response from Lido forum: https://research.lido.fi/c/proposals/9/l/latest.json?page=0"
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://research.lido.fi/c/proposals/9/l/latest.json?page=0",
+        error: expect.objectContaining({
+          name: "SyntaxError"
+        })
+      }),
+      "Failed to parse Lido forum JSON response"
+    );
+  });
+
   it("handles empty recent topic responses", async () => {
     const payload = await loadFixture("empty-response.json");
     const client = new LidoForumClient({

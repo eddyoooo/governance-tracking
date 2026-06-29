@@ -33,7 +33,7 @@ const delayMsFromEnv = z.preprocess((value) => {
   }
 
   return value;
-}, z.coerce.number().nonnegative().optional()).transform((value) => value ?? 3000);
+}, z.coerce.number().int().nonnegative().optional()).transform((value) => value ?? 3000);
 
 function stringListFromEnv(variableName: string) {
   return z.preprocess(
@@ -128,7 +128,7 @@ const telegramUserIdListFromEnv = z.preprocess((value) => {
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    PORT: z.coerce.number().int().positive().default(3000),
+    PORT: z.coerce.number().int().positive().max(65_535).default(3000),
     STORAGE_MODE: z.enum(["firestore", "memory"]).default("firestore"),
     DEMO_MODE: booleanFromEnv.default(false),
     FIREBASE_PROJECT_ID: z.string().default(""),
@@ -136,7 +136,6 @@ const rawEnvSchema = z
     FIREBASE_PRIVATE_KEY: z.string().default(""),
     ENABLE_SCHEDULER: booleanFromEnv.optional(),
     FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
-    ENABLE_DEBUG_ENDPOINTS: booleanFromEnv.default(false),
     LIDO_FORUM_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_FORUM_API_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_ENABLED: booleanFromEnv.default(true),
@@ -163,8 +162,9 @@ const rawEnvSchema = z
     TELEGRAM_TEST_SEND_DELAY_MS: delayMsFromEnv,
     API_AUTH_ENABLED: booleanFromEnv.default(false),
     API_AUTH_TOKEN: z.string().default(""),
-    LOG_LEVEL: z.string().default("info"),
-    CORS_ORIGIN: z.string().default("http://localhost:4200")
+    LOG_LEVEL: z
+      .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
+      .default("info")
   })
   .transform((value) => ({
     nodeEnv: value.NODE_ENV,
@@ -178,7 +178,6 @@ const rawEnvSchema = z
       value.ENABLE_SCHEDULER ??
       !(value.DEMO_MODE || value.STORAGE_MODE === "memory"),
     fetchIntervalCron: value.FETCH_INTERVAL_CRON,
-    enableDebugEndpoints: value.ENABLE_DEBUG_ENDPOINTS,
     lidoForumBaseUrl: value.LIDO_FORUM_BASE_URL,
     lidoForumApiBaseUrl: value.LIDO_FORUM_API_BASE_URL,
     lidoEnabled: value.LIDO_ENABLED,
@@ -197,8 +196,7 @@ const rawEnvSchema = z
     telegramTestSendDelayMs: value.TELEGRAM_TEST_SEND_DELAY_MS,
     apiAuthEnabled: value.API_AUTH_ENABLED,
     apiAuthToken: value.API_AUTH_TOKEN,
-    logLevel: value.LOG_LEVEL,
-    corsOrigin: value.CORS_ORIGIN
+    logLevel: value.LOG_LEVEL
   }));
 
 export type Env = z.infer<typeof rawEnvSchema>;
@@ -209,53 +207,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 
 export function isMemoryMode(env: Env): boolean {
   return env.storageMode === "memory" || env.demoMode;
-}
-
-export function toSafeConfig(env: Env) {
-  return {
-    nodeEnv: env.nodeEnv,
-    port: env.port,
-    storageMode: env.storageMode,
-    demoMode: env.demoMode,
-    enableScheduler: env.enableScheduler,
-    fetchIntervalCron: env.fetchIntervalCron,
-    enableDebugEndpoints: env.enableDebugEndpoints,
-    corsOrigin: env.corsOrigin,
-    firebase: {
-      hasProjectId: Boolean(env.firebaseProjectId),
-      hasClientEmail: Boolean(env.firebaseClientEmail),
-      hasPrivateKey: Boolean(env.firebasePrivateKey)
-    },
-    lido: {
-      enabled: env.lidoEnabled,
-      forumBaseUrl: env.lidoForumBaseUrl,
-      forumApiBaseUrl: env.lidoForumApiBaseUrl,
-      allowedPublisherCount: env.lidoAllowedPublishers.length,
-      fetchMaxPages: env.lidoFetchMaxPages
-    },
-    aave: {
-      enabled: env.aaveEnabled,
-      forumBaseUrl: env.aaveForumBaseUrl,
-      forumApiBaseUrl: env.aaveForumApiBaseUrl,
-      allowedPublisherCount: env.aaveAllowedPublishers.length,
-      fetchMaxPages: env.aaveFetchMaxPages,
-      categoryFetchMaxPages: env.aaveCategoryFetchMaxPages
-    },
-    notifications: {
-      telegramEnabled: env.enableTelegramNotifications,
-      hasTelegramBotToken: Boolean(env.telegramBotToken),
-      telegramAllowedUserCount: env.telegramAllowedUserIds.length,
-      telegramE2EEnabled: env.telegramE2EEnabled,
-      telegramTestSendDelayMs: env.telegramTestSendDelayMs
-    },
-    apiAuth: {
-      enabled: env.apiAuthEnabled,
-      hasToken: Boolean(env.apiAuthToken)
-    },
-    logging: {
-      level: env.logLevel
-    }
-  };
 }
 
 export const env = loadEnv();

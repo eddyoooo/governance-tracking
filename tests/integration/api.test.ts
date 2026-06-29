@@ -2,8 +2,7 @@ import request from "supertest";
 import { describe, expect, it, jest } from "@jest/globals";
 import {
   FetchAlreadyRunningError,
-  FetchProtocolGovernanceJob,
-  UnknownProtocolAdapterError
+  FetchProtocolGovernanceJob
 } from "../../src/jobs/fetchProtocolGovernance.job.js";
 import type {
   NotificationMessage,
@@ -14,6 +13,7 @@ import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createApp } from "../../src/server.js";
 import { MemoryFetchRunRepository } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
+import { createLogger } from "../../src/utils/logger.js";
 import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
@@ -31,42 +31,50 @@ class RecordingNotificationService implements NotificationService {
   }
 }
 
-describe("API", () => {
-  it("returns root service information", async () => {
+function createLogCapture() {
+  const lines: string[] = [];
+
+  return {
+    lines,
+    stream: {
+      write(line: string) {
+        lines.push(line);
+      }
+    }
+  };
+}
+
+describe("monitor API", () => {
+  it("returns root service information for the monitor surface", async () => {
     const { app } = createApp({ env: testEnv() });
 
     const response = await request(app).get("/").expect(200);
 
     expect(response.body).toMatchObject({
       name: "governance-tracking",
-      routes: expect.arrayContaining([
+      mode: "monitor",
+      routes: [
         "GET /health",
-        "GET /api/proposals",
         "POST /api/admin/fetch/:protocol",
         "POST /api/admin/notify-pending",
         "GET /api/admin/fetch-runs"
-      ])
+      ]
     });
   });
 
-  it("pretty prints JSON responses outside production", async () => {
-    const { app } = createApp({ env: testEnv() });
-
-    const response = await request(app).get("/").expect(200);
-
-    expect(response.text).toContain('\n  "name": "governance-tracking"');
-  });
-
-  it("keeps production JSON responses compact", async () => {
-    const { app } = createApp({
+  it("pretty prints JSON responses outside production and keeps production compact", async () => {
+    const dev = createApp({ env: testEnv() }).app;
+    const production = createApp({
       env: testEnv({
         NODE_ENV: "production"
       })
-    });
+    }).app;
 
-    const response = await request(app).get("/").expect(200);
+    const devResponse = await request(dev).get("/").expect(200);
+    const productionResponse = await request(production).get("/").expect(200);
 
-    expect(response.text).not.toContain('\n  "name": "governance-tracking"');
+    expect(devResponse.text).toContain('\n  "name": "governance-tracking"');
+    expect(productionResponse.text).not.toContain('\n  "name": "governance-tracking"');
   });
 
   it("returns health status", async () => {
@@ -81,563 +89,28 @@ describe("API", () => {
     });
   });
 
-  it("lists registered protocols", async () => {
-    const { app } = createApp({
-      env: testEnv({
-        LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher", "DAO Ops"])
-      })
-    });
-
-    const response = await request(app).get("/api/protocols").expect(200);
-
-    expect(response.body.protocols).toHaveLength(2);
-    expect(response.body.protocols).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          protocol: "lido",
-          enabled: true,
-          allowedPublisherCount: 2,
-          source: expect.objectContaining({
-            protocol: "lido",
-            type: "forum",
-            name: "Lido Research Forum",
-            baseUrl: "https://research.lido.fi"
-          })
-        }),
-        expect.objectContaining({
-          protocol: "aave",
-          enabled: true,
-          allowedPublisherCount: 0,
-          source: expect.objectContaining({
-            protocol: "aave",
-            type: "forum",
-            name: "Aave Governance Forum",
-            baseUrl: "https://governance.aave.com"
-          })
-        })
-      ])
-    );
-  });
-
-  it("lists, filters, limits, and reads stored proposals", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const lidoOlder = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        protocol: "lido",
-        sourceId: "1001",
-        publishedAt: "2026-05-01T10:00:00.000Z"
-      })
-    );
-    const lidoNewer = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        protocol: "lido",
-        sourceId: "1002",
-        publishedAt: "2026-05-03T10:00:00.000Z"
-      })
-    );
-    const aave = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        protocol: "aave",
-        sourceId: "1003",
-        publishedAt: "2026-05-02T10:00:00.000Z"
-      })
-    );
-
-    await proposalRepository.upsertMany([lidoOlder, lidoNewer, aave]);
-    await proposalRepository.updateNotificationStatus(lidoNewer.id, "sent");
-
-    const { app } = createApp({
-      env: testEnv(),
-      repositories: {
-        proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository()
-      }
-    });
-
-    const list = await request(app)
-      .get("/api/proposals?protocol=lido&sourceType=forum&limit=1")
-      .expect(200);
-    expect(list.body.proposals).toHaveLength(1);
-    expect(list.body.proposals[0]).toMatchObject({
-      id: lidoNewer.id,
-      protocol: "lido",
-      sourceId: "1002"
-    });
-
-    const detail = await request(app).get(`/api/proposals/${lidoNewer.id}`).expect(200);
-    expect(detail.body.proposal).toMatchObject({
-      id: lidoNewer.id,
-      title: lidoNewer.title
-    });
-
-    const sourceDetail = await request(app)
-      .get(`/api/proposals/source/lido/forum/${lidoNewer.sourceId}`)
-      .expect(200);
-    expect(sourceDetail.body.proposal).toMatchObject({
-      id: lidoNewer.id,
-      sourceId: lidoNewer.sourceId
-    });
-
-    const filtered = await request(app)
-      .get(
-        "/api/proposals?publisherName=Allowed%20Publisher&notificationStatus=sent&sort=publishedAt_asc&offset=0&limit=10"
-      )
-      .expect(200);
-    expect(filtered.body.proposals).toHaveLength(1);
-    expect(filtered.body.proposals[0]).toMatchObject({
-      id: lidoNewer.id,
-      notificationStatus: "sent"
-    });
-
-    const blankFilter = await request(app)
-      .get("/api/proposals?publisherName=%20%20&limit=10")
-      .expect(200);
-    expect(blankFilter.body.proposals).toHaveLength(3);
-  });
-
-  it("sorts proposal API results by firstSeenAt with stable offsets", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const first = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        sourceId: "1001",
-        publishedAt: "2026-05-03T10:00:00.000Z"
-      })
-    );
-    const second = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        sourceId: "1002",
-        publishedAt: "2026-05-01T10:00:00.000Z"
-      })
-    );
-    const third = normalizeLidoForumItem(
-      createRawGovernanceItem({
-        sourceId: "1003",
-        publishedAt: "2026-05-02T10:00:00.000Z"
-      })
-    );
-
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
-    await proposalRepository.upsert(first);
-
-    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
-    await proposalRepository.upsert(second);
-
-    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
-    await proposalRepository.upsert(third);
-    jest.useRealTimers();
-
-    const { app } = createApp({
-      env: testEnv(),
-      repositories: {
-        proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository()
-      }
-    });
-
-    const descending = await request(app)
-      .get("/api/proposals?sort=firstSeenAt_desc&limit=2&offset=0")
-      .expect(200);
-    expect(
-      descending.body.proposals.map(
-        (proposal: { sourceId: string }) => proposal.sourceId
-      )
-    ).toEqual(["1003", "1002"]);
-
-    const ascendingOffset = await request(app)
-      .get("/api/proposals?sort=firstSeenAt_asc&limit=2&offset=1")
-      .expect(200);
-    expect(
-      ascendingOffset.body.proposals.map(
-        (proposal: { sourceId: string }) => proposal.sourceId
-      )
-    ).toEqual(["1002", "1003"]);
-  });
-
-  it("sorts proposal API results by lastSeenAt", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const first = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1001" }));
-    const second = normalizeLidoForumItem(createRawGovernanceItem({ sourceId: "1002" }));
-
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
-    await proposalRepository.upsert(first);
-
-    jest.setSystemTime(new Date("2026-06-05T00:10:00.000Z"));
-    await proposalRepository.upsert(second);
-
-    jest.setSystemTime(new Date("2026-06-05T00:20:00.000Z"));
-    await proposalRepository.upsert({
-      ...first,
-      title: "Updated first proposal"
-    });
-    jest.useRealTimers();
-
-    const { app } = createApp({
-      env: testEnv(),
-      repositories: {
-        proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository()
-      }
-    });
-
-    const response = await request(app)
-      .get("/api/proposals?sort=lastSeenAt_desc")
-      .expect(200);
-
-    expect(
-      response.body.proposals.map((proposal: { sourceId: string }) => proposal.sourceId)
-    ).toEqual(["1001", "1002"]);
-    expect(response.body.proposals[0]).toMatchObject({
-      sourceId: "1001",
-      lastSeenAt: "2026-06-05T00:20:00.000Z"
-    });
-  });
-
-  it("rejects invalid proposal list query parameters", async () => {
+  it("does not expose the Express x-powered-by header", async () => {
     const { app } = createApp({ env: testEnv() });
 
-    await request(app)
-      .get("/api/proposals?limit=abc")
-      .expect(400)
-      .expect((response) => {
-        expect(response.body.error).toBe(
-          "Query parameter limit must be an integer between 1 and 100."
-        );
-      });
+    const response = await request(app).get("/health").expect(200);
 
-    await request(app).get("/api/proposals?limit=0").expect(400);
-    await request(app).get("/api/proposals?limit=101").expect(400);
-    await request(app).get("/api/proposals?offset=-1").expect(400);
-    await request(app).get("/api/proposals?sourceType=discord").expect(400);
-    await request(app)
-      .get("/api/proposals?notificationStatus=queued")
-      .expect(400);
-    await request(app).get("/api/proposals?sort=createdAt_desc").expect(400);
-    await request(app).get("/api/proposals?protocol=lido&protocol=aave").expect(400);
-    await request(app)
-      .get("/api/proposals?sourceType=forum&sourceType=snapshot")
-      .expect(400);
-    await request(app)
-      .get("/api/proposals?notificationStatus=sent&notificationStatus=failed")
-      .expect(400);
+    expect(response.headers["x-powered-by"]).toBeUndefined();
   });
 
-  it("returns 404 for missing proposals", async () => {
+  it("does not expose removed dashboard/debug routes", async () => {
     const { app } = createApp({ env: testEnv() });
 
-    const response = await request(app).get("/api/proposals/missing").expect(404);
-
-    expect(response.body.error).toBe("Proposal not found.");
-  });
-
-  it("returns 404 when source identity lookup does not find a stored proposal", async () => {
-    const { app } = createApp({ env: testEnv() });
-
-    const response = await request(app)
-      .get("/api/proposals/source/lido/forum/missing")
-      .expect(404);
-
-    expect(response.body.error).toBe("Proposal not found.");
-  });
-
-  it("rejects invalid source identity source types", async () => {
-    const { app } = createApp({ env: testEnv() });
-
-    const response = await request(app)
-      .get("/api/proposals/source/lido/discord/1001")
-      .expect(400);
-
-    expect(response.body.error).toBe(
-      "sourceType must be one of: forum, snapshot, onchain."
-    );
-  });
-
-  it("keeps debug endpoints disabled by default", async () => {
-    const { app } = createApp({ env: testEnv() });
-
-    const response = await request(app).get("/api/debug/config-safe").expect(404);
-
-    expect(response.body.error).toBe("Debug endpoints are disabled.");
-  });
-
-  it("returns safe debug config without exposing secrets", async () => {
-    const { app } = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true",
-        API_AUTH_TOKEN: "secret-token",
-        FIREBASE_PRIVATE_KEY: "private-key",
-        TELEGRAM_ALLOWED_USER_IDS: JSON.stringify(["111111111", "222222222"])
-      })
-    });
-
-    const response = await request(app).get("/api/debug/config-safe").expect(200);
-    const serialized = JSON.stringify(response.body);
-
-    expect(response.body).toMatchObject({
-      fetchIntervalCron: "0 */6 * * *",
-      firebase: {
-        hasPrivateKey: true
-      },
-      lido: {
-        fetchMaxPages: 5
-      },
-      aave: {
-        fetchMaxPages: 10,
-        categoryFetchMaxPages: 2
-      },
-      apiAuth: {
-        hasToken: true
-      },
-      notifications: {
-        telegramAllowedUserCount: 2
-      }
-    });
-    expect(serialized).not.toContain("secret-token");
-    expect(serialized).not.toContain("private-key");
-    expect(serialized).not.toContain("111111111");
-    expect(serialized).not.toContain("222222222");
-  });
-
-  it("fetches debug recent items through the registered adapter", async () => {
-    const registry = new ProtocolRegistry();
-    registry.register(
-      createFakeProtocolAdapter({
-        items: [createRawGovernanceItem({ sourceId: "1001" })]
-      })
-    );
-    registry.register(
-      createFakeProtocolAdapter({
-        protocol: "aave",
-        publisherAllowlist: ["AaveLabs"],
-        items: [
-          createRawGovernanceItem({
-            protocol: "aave",
-            sourceId: "25170",
-            publisherName: "AaveLabs",
-            sourceUrl: "https://governance.aave.com/t/arfc-deploy-aave-v4-on-arc/25170"
-          })
-        ]
-      })
-    );
-    const { app } = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      protocolRegistry: registry
-    });
-
-    const response = await request(app).get("/api/debug/lido/recent").expect(200);
-
-    expect(response.body).toMatchObject({
-      count: 1,
-      items: [
-        {
-          protocol: "lido",
-          sourceId: "1001"
-        }
-      ]
-    });
-
-    const aaveResponse = await request(app).get("/api/debug/aave/recent").expect(200);
-
-    expect(aaveResponse.body).toMatchObject({
-      count: 1,
-      items: [
-        {
-          protocol: "aave",
-          sourceId: "25170",
-          publisherName: "AaveLabs"
-        }
-      ]
-    });
-  });
-
-  it("returns 404 from debug protocol recent when the adapter is missing", async () => {
-    const { app } = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      protocolRegistry: new ProtocolRegistry()
-    });
-
-    const response = await request(app).get("/api/debug/lido/recent").expect(404);
-
-    expect(response.body.error).toBe("Protocol adapter not found.");
-  });
-
-  it("runs the debug fetch-once endpoint", async () => {
-    const fetchJob = {
-      run: jest.fn(async () => ({
-        run: {
-          id: "fetchRun_lido_test",
-          protocol: "lido",
-          startedAt: "2026-06-05T00:00:00.000Z",
-          status: "success",
-          fetchedCount: 1,
-          allowlistedCount: 1,
-          storedNewCount: 1,
-          updatedExistingCount: 0,
-          unchangedExistingCount: 0,
-          skippedCount: 0,
-          notificationSentCount: 0,
-          notificationFailedCount: 0,
-          errors: []
-        },
-        fetchedCount: 1,
-        allowlistedCount: 1,
-        storedNewCount: 1,
-        updatedExistingCount: 0,
-        unchangedExistingCount: 0,
-        skippedCount: 0,
-        notificationSentCount: 0,
-        notificationFailedCount: 0,
-        errors: []
-      }))
-    };
-    const { app } = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      fetchJob: fetchJob as never
-    });
-
-    const response = await request(app).post("/api/debug/lido/fetch-once").expect(200);
-
-    expect(fetchJob.run).toHaveBeenCalledWith("lido");
-    expect(response.body).toMatchObject({
-      fetchedCount: 1,
-      storedNewCount: 1,
-      skippedCount: 0
-    });
-  });
-
-  it("maps debug fetch-once job errors to stable HTTP statuses", async () => {
-    const missingFetchJob = {
-      run: jest.fn(async () => {
-        throw new UnknownProtocolAdapterError("missing");
-      })
-    };
-    const runningFetchJob = {
-      run: jest.fn(async () => {
-        throw new FetchAlreadyRunningError("lido");
-      })
-    };
-    const missingApp = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      fetchJob: missingFetchJob as never
-    }).app;
-    const runningApp = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      fetchJob: runningFetchJob as never
-    }).app;
-
-    const missingResponse = await request(missingApp)
-      .post("/api/debug/missing/fetch-once")
-      .expect(404);
-    expect(missingResponse.body.error).toBe("Unknown protocol adapter: missing");
-
-    const runningResponse = await request(runningApp)
-      .post("/api/debug/lido/fetch-once")
-      .expect(409);
-    expect(runningResponse.body.error).toBe("Fetch already running for protocol: lido");
-  });
-
-  it("returns demo fixtures and resets demo state only in memory mode", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
-
-    await proposalRepository.upsert(proposal);
-
-    const { app } = createApp({
-      env: testEnv({
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      repositories: {
-        proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository()
-      }
-    });
-
-    const fixtures = await request(app).get("/api/debug/demo-fixtures").expect(200);
-    expect(fixtures.body.aaveSite.categories).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 10,
-          slug: "new-market",
-          parent_category_id: 4
-        }),
-        expect.objectContaining({
-          id: 17,
-          slug: "oracles",
-          parent_category_id: 7
-        })
-      ])
-    );
-    expect(fixtures.body.aaveRecentTopics.topic_list.topics).toHaveLength(4);
-    expect(fixtures.body.aaveRecentTopics.topic_list.topics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 25170,
-          title: "[ARFC] Deploy Aave V4 on Arc"
-        }),
-        expect.objectContaining({
-          id: 25168,
-          title: "Risk Stewards: Supply Cap Increases on Aave V3 / 2026.06.18"
-        })
-      ])
-    );
-    expect(fixtures.body.lidoRecentTopics.topic_list.topics).toHaveLength(2);
-    expect(fixtures.body.telegramTestNotifications).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          protocol: "lido",
-          sourceType: "forum",
-          publisherName: "Lido Labs Foundation - Operations Team"
-        }),
-        expect.objectContaining({
-          protocol: "lido",
-          sourceType: "forum",
-          publisherName: "Lido | Finance Team"
-        })
-      ])
-    );
-
-    await request(app)
-      .post("/api/debug/reset-demo-state")
-      .expect(200)
-      .expect((response) => {
-        expect(response.body.reset).toBe(true);
-      });
-    await expect(proposalRepository.findAll()).resolves.toEqual([]);
-
-    const firestoreLike = createApp({
-      env: testEnv({
-        STORAGE_MODE: "firestore",
-        DEMO_MODE: "false",
-        ENABLE_DEBUG_ENDPOINTS: "true"
-      }),
-      repositories: {
-        proposalRepository: new MemoryProposalRepository(),
-        fetchRunRepository: new MemoryFetchRunRepository()
-      }
-    });
-
-    await request(firestoreLike.app)
-      .post("/api/debug/reset-demo-state")
-      .expect(403);
+    await request(app).get("/api/proposals").expect(404);
+    await request(app).get("/api/protocols").expect(404);
+    await request(app).get("/api/debug/config-safe").expect(404);
   });
 
   it("runs protocol admin fetch endpoints", async () => {
     const fetchJob = {
-      run: jest.fn(async () => ({
+      run: jest.fn(async (protocol: string) => ({
         run: {
-          id: "fetchRun_lido_test",
-          protocol: "lido",
+          id: `fetchRun_${protocol}_test`,
+          protocol,
           startedAt: "2026-06-05T00:00:00.000Z",
           status: "success",
           fetchedCount: 2,
@@ -650,6 +123,7 @@ describe("API", () => {
           notificationFailedCount: 0,
           errors: []
         },
+        protocol,
         fetchedCount: 2,
         allowlistedCount: 1,
         storedNewCount: 1,
@@ -658,6 +132,8 @@ describe("API", () => {
         skippedCount: 1,
         notificationSentCount: 0,
         notificationFailedCount: 0,
+        startedAt: "2026-06-05T00:00:00.000Z",
+        finishedAt: "2026-06-05T00:01:00.000Z",
         errors: []
       }))
     };
@@ -666,47 +142,61 @@ describe("API", () => {
       fetchJob: fetchJob as never
     });
 
-    const response = await request(app).post("/api/admin/fetch/lido").expect(200);
+    const lido = await request(app).post("/api/admin/fetch/LIDO").expect(200);
+    const aave = await request(app).post("/api/admin/fetch/aave").expect(200);
 
-    expect(fetchJob.run).toHaveBeenCalledWith("lido");
-    expect(response.body).toMatchObject({
+    expect(fetchJob.run).toHaveBeenNthCalledWith(1, "lido");
+    expect(fetchJob.run).toHaveBeenNthCalledWith(2, "aave");
+    expect(lido.body).toMatchObject({
+      protocol: "lido",
       fetchedCount: 2,
       storedNewCount: 1,
       skippedCount: 1
     });
-
-    await request(app).post("/api/admin/fetch/aave").expect(200);
-    expect(fetchJob.run).toHaveBeenCalledWith("aave");
+    expect(aave.body).toMatchObject({
+      protocol: "aave",
+      fetchedCount: 2,
+      storedNewCount: 1,
+      skippedCount: 1
+    });
   });
 
-  it("returns 404 for unknown protocol admin fetches", async () => {
+  it("maps admin fetch errors to stable HTTP statuses", async () => {
     const { app } = createApp({ env: testEnv() });
-
-    const response = await request(app).post("/api/admin/fetch/missing").expect(404);
-
-    expect(response.body.error).toBe("Unknown protocol adapter: missing");
-  });
-
-  it("returns 409 when an admin fetch is already running", async () => {
-    const fetchJob = {
+    const runningFetchJob = {
       run: jest.fn(async () => {
         throw new FetchAlreadyRunningError("lido");
       })
     };
-    const { app } = createApp({
+    const failedFetchJob = {
+      run: jest.fn(async () => {
+        throw new Error("Fetch failed");
+      })
+    };
+    const runningApp = createApp({
       env: testEnv(),
-      fetchJob: fetchJob as never
+      fetchJob: runningFetchJob as never
+    }).app;
+    const failedApp = createApp({
+      env: testEnv(),
+      fetchJob: failedFetchJob as never
+    }).app;
+
+    await request(app).post("/api/admin/fetch/missing").expect(404).expect((response) => {
+      expect(response.body.error).toBe("Unknown protocol adapter: missing");
     });
-
-    const response = await request(app).post("/api/admin/fetch/lido").expect(409);
-
-    expect(response.body.error).toBe("Fetch already running for protocol: lido");
+    await request(runningApp).post("/api/admin/fetch/lido").expect(409).expect((response) => {
+      expect(response.body.error).toBe("Fetch already running for protocol: lido");
+    });
+    await request(failedApp).post("/api/admin/fetch/lido").expect(500).expect((response) => {
+      expect(response.body.error).toBe("Fetch failed");
+    });
   });
 
-  it("lists fetch runs from the admin endpoint", async () => {
+  it("lists fetch-run audit records from the admin endpoint", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     await fetchRunRepository.upsert({
-      id: "fetchRun_lido_test",
+      id: "fetchRun_lido_older",
       protocol: "lido",
       startedAt: "2026-06-05T00:00:00.000Z",
       finishedAt: "2026-06-05T00:01:00.000Z",
@@ -721,6 +211,22 @@ describe("API", () => {
       notificationFailedCount: 0,
       errors: []
     });
+    await fetchRunRepository.upsert({
+      id: "fetchRun_aave_newer",
+      protocol: "aave",
+      startedAt: "2026-06-06T00:00:00.000Z",
+      finishedAt: "2026-06-06T00:01:00.000Z",
+      status: "success",
+      fetchedCount: 3,
+      allowlistedCount: 2,
+      storedNewCount: 2,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 0,
+      skippedCount: 1,
+      notificationSentCount: 2,
+      notificationFailedCount: 0,
+      errors: []
+    });
 
     const { app } = createApp({
       env: testEnv(),
@@ -732,20 +238,48 @@ describe("API", () => {
 
     const response = await request(app).get("/api/admin/fetch-runs").expect(200);
 
-    expect(response.body.fetchRuns).toHaveLength(1);
-    expect(response.body.fetchRuns[0]).toMatchObject({
-      id: "fetchRun_lido_test",
-      storedNewCount: 1
+    expect(response.body.fetchRuns).toHaveLength(2);
+    expect(response.body.fetchRuns).toMatchObject([
+      {
+        id: "fetchRun_aave_newer",
+        protocol: "aave",
+        storedNewCount: 2
+      },
+      {
+        id: "fetchRun_lido_older",
+        protocol: "lido",
+        storedNewCount: 1
+      }
+    ]);
+  });
+
+  it("returns a clear 400 for malformed JSON request bodies", async () => {
+    const { app } = createApp({ env: testEnv() });
+
+    const response = await request(app)
+      .post("/api/admin/notify-pending")
+      .set("content-type", "application/json")
+      .send("{not-json")
+      .expect(400);
+
+    expect(response.body.error).toBe("Malformed JSON request body.");
+  });
+
+  it("checks API auth before parsing request bodies when auth is enabled", async () => {
+    const { app } = createApp({
+      env: testEnv({
+        API_AUTH_ENABLED: "true",
+        API_AUTH_TOKEN: "test-token"
+      })
     });
 
-    await request(app).get("/api/admin/fetch-runs?limit=bad").expect(400);
-    await request(app).get("/api/admin/fetch-runs?limit=0").expect(400);
-    await request(app).get("/api/admin/fetch-runs?limit=101").expect(400);
-    await request(app).get("/api/admin/fetch-runs?offset=-1").expect(400);
-    await request(app).get("/api/admin/fetch-runs?sort=finishedAt_desc").expect(400);
-    await request(app)
-      .get("/api/admin/fetch-runs?sort=startedAt_desc&sort=startedAt_asc")
-      .expect(400);
+    const response = await request(app)
+      .post("/api/admin/notify-pending")
+      .set("content-type", "application/json")
+      .send("{not-json")
+      .expect(401);
+
+    expect(response.body.error).toBe("Missing API auth token.");
   });
 
   it("notifies pending proposals through the admin endpoint", async () => {
@@ -771,9 +305,7 @@ describe("API", () => {
     expect(response.body).toMatchObject({
       pendingCount: 1,
       sentCount: 1,
-      failedCount: 0,
-      skippedCount: 0,
-      errors: []
+      failedCount: 0
     });
     expect(notificationService.messages).toHaveLength(1);
     await expect(proposalRepository.findById(proposal.id)).resolves.toMatchObject({
@@ -781,42 +313,22 @@ describe("API", () => {
     });
   });
 
-  it("returns server errors from failed admin fetches", async () => {
-    const fetchJob = {
-      run: jest.fn(async () => {
-        throw new Error("Fetch failed");
-      })
-    };
-    const { app } = createApp({
-      env: testEnv(),
-      fetchJob: fetchJob as never
-    });
-
-    const response = await request(app).post("/api/admin/fetch/lido").expect(500);
-
-    expect(response.body.error).toBe("Fetch failed");
-  });
-
-  it("protects all routes when API auth is enabled", async () => {
+  it("protects all monitor routes when API auth is enabled", async () => {
     const { app } = createApp({
       env: testEnv({
         API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: "test-token",
-        ENABLE_DEBUG_ENDPOINTS: "true"
+        API_AUTH_TOKEN: "test-token"
       })
     });
 
     await request(app).get("/").expect(401);
     await request(app).get("/health").expect(401);
-    await request(app).get("/api/proposals").expect(401);
-    await request(app).get("/api/protocols").expect(401);
-    await request(app).get("/api/debug/config-safe").expect(401);
     await request(app).post("/api/admin/fetch/lido").expect(401);
     await request(app).post("/api/admin/notify-pending").expect(401);
     await request(app).get("/api/admin/fetch-runs").expect(401);
   });
 
-  it("rejects invalid auth tokens and accepts bearer tokens", async () => {
+  it("accepts bearer, raw Authorization, and x-api-token auth headers", async () => {
     const { app } = createApp({
       env: testEnv({
         API_AUTH_ENABLED: "true",
@@ -825,57 +337,58 @@ describe("API", () => {
     });
 
     await request(app)
-      .get("/health")
-      .set("Authorization", "Bearer wrong-token")
-      .expect(403);
-
-    await request(app)
-      .get("/health")
-      .set("Authorization", "Bearer test-tokeN")
-      .expect(403);
-
-    const response = await request(app)
       .get("/health")
       .set("Authorization", "Bearer test-token")
       .expect(200);
-
-    expect(response.body.ok).toBe(true);
-  });
-
-  it("accepts a raw Authorization token but does not fall back to x-api-token after a bad Authorization header", async () => {
-    const { app } = createApp({
-      env: testEnv({
-        API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: "test-token"
-      })
-    });
-
     await request(app)
       .get("/health")
-      .set("Authorization", "test-token")
+      .set("Authorization", "bearer   test-token  ")
       .expect(200);
-
     await request(app)
       .get("/health")
-      .set("Authorization", "Bearer wrong-token")
+      .set("Authorization", "BEARER test-token")
+      .expect(200);
+    await request(app).get("/health").set("Authorization", "test-token").expect(200);
+    await request(app).get("/health").set("x-api-token", "test-token").expect(200);
+    await request(app)
+      .get("/health")
+      .set("Authorization", "wrong")
       .set("x-api-token", "test-token")
+      .expect(403);
+    await request(app).get("/health").set("Authorization", "x").expect(403);
+    await request(app)
+      .get("/health")
+      .set("Authorization", "wrong-token-with-a-different-length")
       .expect(403);
   });
 
-  it("accepts x-api-token auth headers", async () => {
+  it("redacts API auth headers from request logs", async () => {
+    const capture = createLogCapture();
+    const logger = createLogger(
+      {
+        logLevel: "info",
+        nodeEnv: "test"
+      },
+      capture.stream
+    );
     const { app } = createApp({
       env: testEnv({
         API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: "test-token"
-      })
+        API_AUTH_TOKEN: "super-secret-api-value"
+      }),
+      logger
     });
 
-    const response = await request(app)
+    await request(app)
       .get("/health")
-      .set("x-api-token", "test-token")
+      .set("Authorization", "Bearer super-secret-api-value")
+      .set("x-api-token", "super-secret-api-value")
       .expect(200);
 
-    expect(response.body.ok).toBe(true);
+    const serializedLogs = capture.lines.join("");
+
+    expect(serializedLogs).not.toContain("super-secret-api-value");
+    expect(serializedLogs).toContain("[redacted]");
   });
 
   it("fails closed when API auth is enabled without a configured token", async () => {
@@ -893,27 +406,12 @@ describe("API", () => {
     );
   });
 
-  it("applies debug disabled behavior after successful auth", async () => {
-    const { app } = createApp({
-      env: testEnv({
-        API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: "test-token",
-        ENABLE_DEBUG_ENDPOINTS: "false"
-      })
-    });
-
-    const response = await request(app)
-      .get("/api/debug/config-safe")
-      .set("Authorization", "Bearer test-token")
-      .expect(404);
-
-    expect(response.body.error).toBe("Debug endpoints are disabled.");
-  });
-
   it("can execute the real fetch job through the admin route with a fake adapter", async () => {
     const proposalRepository = new MemoryProposalRepository();
     const fetchRunRepository = new MemoryFetchRunRepository();
+    const notificationService = new RecordingNotificationService();
     const registry = new ProtocolRegistry();
+
     registry.register(
       createFakeProtocolAdapter({
         items: [
@@ -929,11 +427,15 @@ describe("API", () => {
         publisherAllowlist: ["Allowed Publisher"]
       })
     );
+
     const fetchJob = new FetchProtocolGovernanceJob(
       registry,
       proposalRepository,
       fetchRunRepository,
-      createSilentLogger()
+      createSilentLogger(),
+      {
+        notificationService
+      }
     );
     const { app } = createApp({
       env: testEnv(),
@@ -942,28 +444,28 @@ describe("API", () => {
         fetchRunRepository
       },
       protocolRegistry: registry,
+      notificationService,
       fetchJob
     });
 
-    await request(app)
-      .post("/api/admin/fetch/lido")
-      .expect(200)
-      .expect((response) => {
-        expect(response.body).toMatchObject({
-          fetchedCount: 2,
-          allowlistedCount: 1,
-          storedNewCount: 1,
-          updatedExistingCount: 0,
-          unchangedExistingCount: 0,
-          skippedCount: 1
-        });
-      });
+    const response = await request(app).post("/api/admin/fetch/lido").expect(200);
 
-    const proposals = await request(app).get("/api/proposals").expect(200);
-    expect(proposals.body.proposals).toHaveLength(1);
-    expect(proposals.body.proposals[0]).toMatchObject({
-      sourceId: "1001",
-      publisherName: "Allowed Publisher"
+    expect(response.body).toMatchObject({
+      fetchedCount: 2,
+      allowlistedCount: 1,
+      storedNewCount: 1,
+      skippedCount: 1,
+      notificationSentCount: 1
     });
+    await expect(
+      proposalRepository.findBySourceIdentity("lido", "forum", "1001")
+    ).resolves.toMatchObject({
+      sourceId: "1001",
+      notificationStatus: "sent"
+    });
+    await expect(
+      proposalRepository.findBySourceIdentity("lido", "forum", "1002")
+    ).resolves.toBeNull();
+    await expect(fetchRunRepository.findAll()).resolves.toHaveLength(1);
   });
 });

@@ -1,170 +1,154 @@
 # Governance Tracking
 
-Backend MVP for tracking governance activity. The current system tracks Lido and Aave forum activity, keeps only items from trusted publishers, deduplicates them, stores normalized proposal records, records fetch runs, and can optionally notify Telegram when a new trusted proposal appears.
+Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
 
-For exact commands and expected terminal/API results, use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md).
+The current tracked protocols are Lido and Aave. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
 
-## What It Does
+For operator commands and expected results, use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md).
 
-The platform fetches recent governance topics from Discourse-based protocol forums, validates the JSON response, extracts each topic's `publisherName`, and compares that publisher against the protocol's allowlist. Only allowlisted topics are stored as governance proposals.
+## Quick Start
 
-For Lido, the backend intentionally calls the category-specific Discourse endpoint:
+Run the monitor locally without Firebase or Telegram:
 
-```text
-GET /c/proposals/9/l/latest.json?page=<page>
+```bash
+npm install
+npm run dev
 ```
 
-`proposals` is the category slug and `9` is the Lido forum category id for proposal topics. This is used instead of the forum-wide `GET /latest.json` endpoint because the product goal is to track governance proposals, not every latest forum discussion.
+In another terminal:
 
-The endpoint currently returns 30 proposal-category topics per page. The backend paginates up to `LIDO_FETCH_MAX_PAGES` pages on each run. It intentionally does not stop early based only on known allowlisted publishers, because non-allowlisted activity and pinned topics can otherwise hide a newer trusted-publisher post on a later page.
-
-The Lido proposal category also exposes an RSS feed at `/c/proposals/9.rss`; the current implementation still uses the JSON polling path because it gives us structured pagination and topic metadata.
-
-For Aave, the verified forum is:
-
-```text
-https://governance.aave.com
+```bash
+API=http://localhost:3000
+curl -s "$API/health"
+curl -s -X POST "$API/api/admin/fetch/lido"
+curl -s -X POST "$API/api/admin/fetch/aave"
+curl -s "$API/api/admin/fetch-runs"
 ```
 
-It is Discourse-based. Aave does not have one equivalent proposal-only category like Lido. Proposal-like activity appears across Governance, Governance subcategories, Risk, Risk subcategories, Development, Finance, and other operational categories.
+Run the end-to-end terminal walkthrough:
 
-For Aave, the adapter uses two coverage layers:
-
-```text
-GET /latest.json?page=<page>
-GET /site.json
-GET /c/<category-path>/<category-id>/l/latest.json?page=<page>
+```bash
+DEMO_STEP_DELAY_MS=750 npm run demo
 ```
 
-The global latest feed gives broad forum coverage. The site/category pass discovers all public top-level categories and subcategories, then polls category-specific latest pages as a safety net. This means an allowlisted Aave publisher should be seen even if the topic is posted outside the Governance parent category. The Aave allowlist keeps stored records focused on trusted publishers. The initial test allowlist is `AaveLabs`, `TokenLogic`, and `LlamaRisk`.
+Run the full local safety check:
 
-Stored proposals are deduplicated by:
-
-```text
-protocol + sourceType + sourceId
+```bash
+npm run check
 ```
 
-For Lido, that means:
+## Current Scope
 
-```text
-lido + forum + <discourse-topic-id>
-```
-
-For Aave, that means:
-
-```text
-aave + forum + <discourse-topic-id>
-```
-
-If the same proposal appears again in a later fetch, the backend does not create a duplicate. If source content changed, it updates the existing record. If the source content is identical except for fetch timestamps, it skips rewriting the proposal and records that repeat sighting in the fetch-run `unchangedExistingCount`.
-
-## Current Capabilities
-
-- Fetch Lido and Aave forum governance topics.
-- Paginate Lido proposal-category pages for better notification coverage.
-- Paginate Aave forum latest pages for broad trusted-publisher coverage.
-- Poll Aave public category and subcategory latest pages as an extra coverage layer.
-- Use bounded pagination instead of early stopping so trusted-publisher posts are less likely to be missed behind non-allowlisted activity.
-- Validate external Discourse responses with Zod.
-- Filter proposals by trusted publisher allowlist.
-- Store normalized proposal records in Firestore or memory mode.
-- Deduplicate proposals across repeated fetches.
-- Skip unnecessary proposal writes when a repeat poll only changes fetch timestamps.
-- Track `firstSeenAt`, `lastSeenAt`, `createdAt`, and `updatedAt` on stored proposal records.
-- Track proposal notification state: `pending`, `sent`, `skipped`, or `failed`.
-- Record fetch-run metadata with fetched, allowlisted, stored, updated, unchanged, skipped, and notification counts.
-- Optionally send Telegram notifications for new allowlisted proposals.
-- Expose Express API endpoints for proposals, protocols, fetch runs, admin fetches, and debug/demo utilities.
-- Run a guided terminal demo in memory mode with scripted Lido proposal discovery.
-- Run scheduled polling for every enabled protocol every six hours in normal mode.
-- Run with Docker and docker-compose.
-- Run deterministic Jest/Supertest tests without live network dependency.
+- Fetch recent proposal/forum activity for Lido and Aave.
+- Validate Discourse JSON responses with Zod.
+- Filter fetched items by protocol-specific trusted publisher allowlists.
+- Normalize allowlisted items into a common stored proposal shape.
+- Deduplicate by `protocol + sourceType + sourceId`.
+- Store proposals and fetch runs in Firestore or memory mode.
+- Avoid rewriting unchanged proposals on every poll.
+- Send direct Telegram notifications for newly discovered allowlisted proposals.
+- Avoid duplicate notifications for already-known proposals.
+- Run scheduled polling every six hours by default.
+- Provide a small operational API for health, manual fetches, notification retries, and fetch-run audit.
+- Run deterministic unit/integration tests without live forum calls.
+- Run optional real Telegram E2E tests only when explicitly enabled.
 
 ## Out Of Scope
 
-This step intentionally does not include AI summaries, agents, classification, category tagging, urgency scoring, recommended actions, portfolio impact logic, Snapshot ingestion, on-chain governance ingestion, or an Angular dashboard.
+- No Angular dashboard.
+- No public proposal listing/detail API.
+- No CORS/browser-facing API support.
+- No debug endpoints.
+- No AI agent, AI summary, classification, category tagging, urgency score, recommendation, or portfolio-impact logic.
+- No Snapshot or on-chain governance ingestion yet.
+- No raw payload archive.
 
-Firebase Storage is not used. Firestore is the structured database in normal operation.
-
-## Architecture
+## How It Works
 
 ```text
-Protocol Discourse JSON or demo fixture
-  -> protocol forum client
-  -> protocol adapter
+Scheduler or admin fetch request
+  -> protocol registry
+  -> Lido or Aave adapter
+  -> Discourse client
+  -> Zod response validation
   -> publisher allowlist filter
   -> normalizer
-  -> fetch job
-  -> proposal + fetch-run repositories
-  -> Firestore or memory storage
-  -> Express API
+  -> proposal repository upsert
+  -> notification service
+  -> fetch-run repository audit record
 ```
 
-Important folders:
+Lido uses the proposal-category Discourse endpoint:
 
-- `src/protocols`: protocol interfaces, registry, allowlist logic, Lido and Aave adapters/clients/normalizers.
-- `src/jobs`: fetch/filter/normalize/upsert/notify business logic.
-- `src/storage`: Firestore and memory repositories.
-- `src/notifications`: Noop and Telegram notification services.
-- `src/api/routes`: health, proposal, protocol, admin, and debug routes.
-- `tests`: unit, fixture, and integration coverage.
+```text
+GET https://research.lido.fi/c/proposals/9/l/latest.json?page=<page>
+```
+
+`9` is the Lido forum proposal category id. This keeps Lido polling focused on proposal-category topics instead of all latest forum discussion.
+
+Aave uses broader forum coverage because Aave proposal-like activity can appear across multiple public categories and subcategories:
+
+```text
+GET https://governance.aave.com/latest.json?page=<page>
+GET https://governance.aave.com/site.json
+GET https://governance.aave.com/c/<category-path>/<category-id>/l/latest.json?page=<page>
+```
+
+The Aave adapter combines global latest pages with discovered public category/subcategory feeds, then deduplicates by Discourse topic id.
 
 ## Stored Data
 
-Proposal records include source data and platform tracking metadata:
+Proposals are stored under `proposals/{proposalId}` in Firestore production mode. Memory mode stores the same shape in-process for demos and tests.
+
+Example proposal:
 
 ```json
 {
-  "id": "lido_forum_11415_abc123def0",
+  "id": "lido_forum_11624_445bfbca21",
   "protocol": "lido",
   "sourceType": "forum",
-  "sourceId": "11415",
-  "title": "Example Lido Proposal",
-  "publisherName": "Example Publisher",
-  "sourceUrl": "https://research.lido.fi/t/example/11415",
-  "publishedAt": "2026-06-05T09:00:00.000Z",
-  "firstSeenAt": "2026-06-05T10:00:00.000Z",
-  "lastSeenAt": "2026-06-05T10:00:00.000Z",
-  "fetchedAt": "2026-06-05T10:00:00.000Z",
+  "sourceId": "11624",
+  "title": "Lido Labs proposes Nemo as a new director",
+  "publisherName": "Lido Labs Foundation - Operations Team",
+  "sourceUrl": "https://research.lido.fi/t/lido-labs-proposes-nemo-as-a-new-director/11624",
+  "publishedAt": "2026-06-17T06:59:06.620Z",
+  "firstSeenAt": "2026-06-17T07:00:00.000Z",
+  "lastSeenAt": "2026-06-17T07:00:00.000Z",
+  "fetchedAt": "2026-06-17T07:00:00.000Z",
   "rawHash": "64-character-sha256-hash",
-  "notificationStatus": "skipped",
-  "createdAt": "2026-06-05T10:00:00.000Z",
-  "updatedAt": "2026-06-05T10:00:00.000Z"
+  "notificationStatus": "sent",
+  "createdAt": "2026-06-17T07:00:00.000Z",
+  "updatedAt": "2026-06-17T07:00:00.000Z"
 }
 ```
 
-Fetch-run records explain what happened during each fetch:
+`firstSeenAt` is set when the proposal is first stored. `lastSeenAt`, `fetchedAt`, and `updatedAt` advance when a new proposal is inserted or an existing proposal has meaningful source changes. If a repeated poll sees the same proposal with no meaningful changes, the service counts it as `unchangedExistingCount` and does not rewrite the proposal document.
+
+Fetch runs are stored under `fetchRuns/{runId}`:
 
 ```json
 {
-  "protocol": "lido",
+  "protocol": "aave",
   "status": "success",
-  "fetchedCount": 30,
+  "fetchedCount": 120,
   "allowlistedCount": 4,
-  "storedNewCount": 2,
-  "updatedExistingCount": 1,
-  "unchangedExistingCount": 1,
-  "skippedCount": 26,
-  "notificationSentCount": 2,
+  "storedNewCount": 1,
+  "updatedExistingCount": 0,
+  "unchangedExistingCount": 3,
+  "skippedCount": 116,
+  "notificationSentCount": 1,
   "notificationFailedCount": 0,
   "errors": []
 }
 ```
 
-`updatedExistingCount` means an already-stored proposal changed in a meaningful source field such as title, publisher, URL, published time, or raw payload hash. `unchangedExistingCount` means the proposal was seen again but the stored record was identical, so the backend skipped the write.
+`storedNewCount` means a proposal was first discovered. `updatedExistingCount` means an already-stored proposal changed in a meaningful source field. `unchangedExistingCount` means the item was seen again but not rewritten. `skippedCount` means the publisher did not match the allowlist.
 
-`lastSeenAt` is updated when a proposal is first stored or when source content changes. Unchanged repeat sightings are tracked in fetch-run counts instead of rewriting proposal documents on every poll. `rawHash` is a stable source-content hash; volatile Discourse counters such as views or reply counts are intentionally ignored so they do not create noisy updates.
+## Configuration
 
-Firestore collections:
+Create a local `.env` file manually. It is ignored by git.
 
-- `proposals/{proposalId}`
-- `fetchRuns/{runId}`
-
-## Configuration Summary
-
-Create a local `.env` file directly. It is ignored by git.
-
-Core local/demo values:
+Common development values:
 
 ```bash
 NODE_ENV=development
@@ -172,34 +156,50 @@ PORT=3000
 STORAGE_MODE=memory
 DEMO_MODE=true
 ENABLE_SCHEDULER=false
-ENABLE_DEBUG_ENDPOINTS=true
 API_AUTH_ENABLED=false
+LOG_LEVEL=info
 ```
 
-Core production-like values:
+Production-like values:
 
 ```bash
 NODE_ENV=production
+PORT=3000
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 */6 * * *
-ENABLE_DEBUG_ENDPOINTS=false
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
+LOG_LEVEL=info
 ```
 
-Firestore mode requires:
+Allowed values:
+
+- `NODE_ENV`: `development`, `test`, or `production`.
+- `PORT`: integer from `1` to `65535`.
+- `STORAGE_MODE`: `firestore` or `memory`.
+- `DEMO_MODE`: `true` or `false`.
+- `ENABLE_SCHEDULER`: `true` or `false`.
+- `API_AUTH_ENABLED`: `true` or `false`.
+- `ENABLE_TELEGRAM_NOTIFICATIONS`: `true` or `false`.
+- `TELEGRAM_E2E_ENABLED`: `true` or `false`.
+- `LOG_LEVEL`: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.
+
+Firestore mode requires Firebase service account values:
 
 ```bash
 FIREBASE_PROJECT_ID=replace-with-firebase-project-id
 FIREBASE_CLIENT_EMAIL=replace-with-service-account-client-email
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-service-account-private-key\n-----END PRIVATE KEY-----\n"
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-private-key\n-----END PRIVATE KEY-----\n"
 ```
 
-Lido allowlist should use JSON array format:
+Lido configuration:
 
 ```bash
+LIDO_FORUM_BASE_URL=https://research.lido.fi
+LIDO_FORUM_API_BASE_URL=https://research.lido.fi
+LIDO_ENABLED=true
 LIDO_ALLOWED_PUBLISHERS='[
   "Lido Labs Foundation - Operations Team",
   "Lido | Finance Team",
@@ -208,7 +208,7 @@ LIDO_ALLOWED_PUBLISHERS='[
 LIDO_FETCH_MAX_PAGES=5
 ```
 
-Aave allowlist should also use JSON array format:
+Aave configuration:
 
 ```bash
 AAVE_FORUM_BASE_URL=https://governance.aave.com
@@ -223,9 +223,7 @@ AAVE_FETCH_MAX_PAGES=10
 AAVE_CATEGORY_FETCH_MAX_PAGES=2
 ```
 
-Telegram is optional and sends direct messages only to explicitly allowlisted
-Telegram user IDs. Each user must open the bot and send `/start` once before
-Telegram allows the bot to message them.
+Telegram direct-user notifications:
 
 ```bash
 ENABLE_TELEGRAM_NOTIFICATIONS=false
@@ -234,50 +232,132 @@ TELEGRAM_ALLOWED_USER_IDS='[
   123456789,
   987654321
 ]'
-TELEGRAM_E2E_ENABLED=true
+TELEGRAM_E2E_ENABLED=false
 TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
 
-## Development
+Telegram recipients must open the bot and send `/start` once before Telegram allows the bot to message them. The service only sends to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
 
-Common commands:
+## Commands
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Run the API locally:
+
+```bash
 npm run dev
+```
+
+Run the terminal demo:
+
+```bash
 npm run demo
-npm run telegram:test-send
+```
+
+Run all normal tests:
+
+```bash
 npm test
-npm run typecheck:strict
-npm run test:e2e:telegram
+```
+
+Run full verification:
+
+```bash
 npm run check
 ```
 
-`npm run check` runs the production TypeScript build, the stricter unused-symbol typecheck, and the full Jest/Supertest test suite.
+`npm run check` runs the production TypeScript build, strict unused-symbol typecheck, and the full Jest/Supertest test suite.
 
-`npm run demo` runs a terminal walkthrough using scripted Lido proposal fixtures, Aave forum fixtures, and in-memory storage. It reveals three new allowlisted Lido proposals one by one, runs the normal fetch/store/notify logic after each reveal, then demonstrates Aave preview/fetch/store/dedupe using the global latest plus public category/subcategory coverage path. The fixture set also includes one real non-allowlisted Lido proposal, shown as `skippedPublisherFixture`, to prove the platform fetches it but does not store or notify it. Speed it up with `DEMO_STEP_DELAY_MS=0 npm run demo`. If Telegram is enabled in `.env`, this complete demo sends proposal notifications through Telegram.
-
-Aave can be tested through the same API surface:
+Run real Telegram test-send:
 
 ```bash
-curl -s -X POST http://localhost:3000/api/admin/fetch/aave
-curl -s "http://localhost:3000/api/proposals?protocol=aave&limit=5"
-curl -s http://localhost:3000/api/debug/aave/recent
+npm run telegram:test-send
 ```
 
-In memory/demo mode these use Aave fixtures. In normal Firestore mode they call the live Aave forum, including the global latest feed plus all public category/subcategory feeds discovered from `/site.json`.
+Run real Telegram E2E test:
 
-`npm run telegram:test-send` sends real Lido and Aave governance test alerts from
-different publishers to the configured `TELEGRAM_ALLOWED_USER_IDS`. `npm run test:e2e:telegram`
-runs the real Telegram E2E test and sends the same fixture-backed proposal set
-through the pending-notification flow. Both commands use
-`src/demoFixtures/telegramNotification.fixture.ts`. The manual test-send command
-waits `3000ms` between proposal messages by default; use
-`TELEGRAM_TEST_SEND_DELAY_MS=0 npm run telegram:test-send` for a fast run. Telegram
-messages start with a bold all-caps `NEW GOVERNANCE ITEM TRACKED` header.
+```bash
+npm run test:e2e:telegram
+```
 
-Use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md) for the full capability checklist, curl commands, Docker commands, expected results, demo walkthrough, and explanation of common fetch counts such as `skippedCount` and `unchangedExistingCount`.
+The Telegram commands send real messages only when the required Telegram env values are configured. Normal `npm test` and `npm run check` do not send Telegram messages, even if `.env` has `TELEGRAM_E2E_ENABLED=true`; the real E2E test requires the dedicated script.
 
-## Adding Another Protocol Later
+## Operational API
 
-Add a new adapter under `src/protocols/<protocol>/` with a source client, Zod response schemas, normalizer, adapter, fixtures, and tests. Register it in `src/protocols/registry.ts`. The shared fetch job and repositories should remain protocol-agnostic.
+If `API_AUTH_ENABLED=true`, every endpoint requires the configured token. Use HTTPS in production so the token is not exposed in transit.
+
+Security notes:
+
+- Keep `.env` and `.env.*` files out of git and Docker images.
+- Use a long random `API_AUTH_TOKEN` when the API is reachable outside your machine.
+- Request logs redact `Authorization`, `x-api-token`, Telegram, Firebase, and API token fields.
+
+| Endpoint | Calls forums? | Purpose |
+| --- | --- | --- |
+| `GET /health` | No | Confirms service health and storage/scheduler mode. |
+| `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/notify-pending` | No | Retries proposals currently marked `pending`. |
+| `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
+
+With auth enabled, include a token:
+
+```bash
+curl -s http://localhost:3000/health \
+  -H "Authorization: Bearer $API_AUTH_TOKEN"
+```
+
+You can also use `x-api-token: $API_AUTH_TOKEN`.
+
+## Demo Mode
+
+`npm run demo` runs a credential-free terminal walkthrough using memory storage and locally saved governance payload samples. It exercises the same fetch, allowlist, dedupe, storage, fetch-run, and notification code paths as normal operation.
+
+Demo mode shows:
+
+- New allowlisted Lido items being discovered over multiple fetches.
+- Non-allowlisted Lido items being skipped.
+- Aave global latest plus category/subcategory coverage.
+- Repeat fetches updating counts without duplicating proposals.
+- Stored proposals printed from the repository.
+- Fetch-run audit records printed from the repository.
+- Pending notification retry behavior.
+
+Speed it up:
+
+```bash
+DEMO_STEP_DELAY_MS=0 npm run demo
+```
+
+If Telegram is enabled in `.env`, the demo can send real direct-user Telegram notifications during the new-proposal fetches.
+
+## Docker
+
+Development compose:
+
+```bash
+docker compose up --build
+```
+
+Credential-free demo API container:
+
+```bash
+docker compose -f docker-compose.demo.yml up --build
+```
+
+Production image:
+
+```bash
+docker build -t governance-tracking-backend .
+docker run --env-file .env -p 3000:3000 governance-tracking-backend
+```
+
+Secrets are injected through environment variables and are not baked into the Docker image.
+
+## Adding Another Protocol
+
+Add a protocol adapter under `src/protocols/<protocol>/`, including a forum/source client, Zod schemas, normalizer, fixtures, and tests. Register the adapter in `src/protocols/registry.ts`. The shared fetch job, repositories, notification service, scheduler, and admin fetch endpoint are protocol-agnostic.

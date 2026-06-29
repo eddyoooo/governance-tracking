@@ -1,27 +1,8 @@
 import type {
-  GovernanceSourceType,
   NormalizedGovernanceItem,
   NotificationStatus,
   StoredProposal
 } from "../protocols/types.js";
-
-export type ProposalSort =
-  | "publishedAt_desc"
-  | "publishedAt_asc"
-  | "firstSeenAt_desc"
-  | "firstSeenAt_asc"
-  | "lastSeenAt_desc"
-  | "lastSeenAt_asc";
-
-export interface ProposalQuery {
-  protocol?: string;
-  publisherName?: string;
-  sourceType?: GovernanceSourceType;
-  notificationStatus?: NotificationStatus;
-  limit?: number;
-  offset?: number;
-  sort?: ProposalSort;
-}
 
 export interface UpsertProposalOptions {
   notificationStatusForNew?: NotificationStatus;
@@ -42,7 +23,7 @@ export interface ProposalRepository {
     proposals: NormalizedGovernanceItem[],
     options?: UpsertProposalOptions
   ): Promise<UpsertResult[]>;
-  findAll(query?: ProposalQuery): Promise<StoredProposal[]>;
+  findAll(): Promise<StoredProposal[]>;
   findById(id: string): Promise<StoredProposal | null>;
   findBySourceIdentity(
     protocol: string,
@@ -51,7 +32,7 @@ export interface ProposalRepository {
   ): Promise<StoredProposal | null>;
   findByNotificationStatus(
     status: NotificationStatus,
-    query?: ProposalQuery
+    limit?: number
   ): Promise<StoredProposal[]>;
   updateNotificationStatus(
     id: string,

@@ -1,8 +1,38 @@
-import pino, { type Logger } from "pino";
+import pino, { type DestinationStream, type Logger } from "pino";
 import type { Env } from "../config/env.js";
 
-export function createLogger(env: Pick<Env, "logLevel" | "nodeEnv">): Logger {
-  return pino({
-    level: env.logLevel
-  });
+const REDACTED_LOG_PATHS = [
+  "req.headers.authorization",
+  "req.headers.Authorization",
+  'req.headers["x-api-token"]',
+  'req.headers["X-API-Token"]',
+  "headers.authorization",
+  "headers.Authorization",
+  'headers["x-api-token"]',
+  'headers["X-API-Token"]',
+  "apiAuthToken",
+  "API_AUTH_TOKEN",
+  "telegramBotToken",
+  "TELEGRAM_BOT_TOKEN",
+  "telegramAllowedUserIds",
+  "allowedUserIds",
+  "firebasePrivateKey",
+  "FIREBASE_PRIVATE_KEY",
+  "privateKey",
+  "botToken"
+];
+
+export function createLogger(
+  env: Pick<Env, "logLevel" | "nodeEnv">,
+  destination?: DestinationStream
+): Logger {
+  const options = {
+    level: env.logLevel,
+    redact: {
+      paths: REDACTED_LOG_PATHS,
+      censor: "[redacted]"
+    }
+  };
+
+  return destination ? pino(options, destination) : pino(options);
 }

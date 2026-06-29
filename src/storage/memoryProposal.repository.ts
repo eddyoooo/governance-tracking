@@ -1,17 +1,13 @@
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
-  ProposalQuery,
   ProposalRepository,
   UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
 import {
   buildStoredProposal,
-  DEFAULT_PROPOSAL_LIMIT,
   hasMeaningfulProposalChange,
-  proposalIdFromSourceIdentity,
-  proposalSortDirection,
-  proposalSortFields
+  proposalIdFromSourceIdentity
 } from "./proposal.repositoryUtils.js";
 
 export class MemoryProposalRepository implements ProposalRepository {
@@ -63,31 +59,8 @@ export class MemoryProposalRepository implements ProposalRepository {
     return results;
   }
 
-  async findAll(query: ProposalQuery = {}): Promise<StoredProposal[]> {
-    const limit = query.limit ?? DEFAULT_PROPOSAL_LIMIT;
-    const offset = query.offset ?? 0;
-    const sort = query.sort ?? "publishedAt_desc";
-    const sortField = proposalSortFields[sort];
-    const direction = proposalSortDirection(sort);
-
-    return [...this.proposals.values()]
-      .filter((proposal) => !query.protocol || proposal.protocol === query.protocol)
-      .filter(
-        (proposal) =>
-          !query.publisherName || proposal.publisherName === query.publisherName
-      )
-      .filter((proposal) => !query.sourceType || proposal.sourceType === query.sourceType)
-      .filter(
-        (proposal) =>
-          !query.notificationStatus ||
-          proposal.notificationStatus === query.notificationStatus
-      )
-      .sort((left, right) => {
-        const compared = String(left[sortField]).localeCompare(String(right[sortField]));
-
-        return direction === "asc" ? compared : -compared;
-      })
-      .slice(offset, offset + limit);
+  async findAll(): Promise<StoredProposal[]> {
+    return [...this.proposals.values()];
   }
 
   async findById(id: string): Promise<StoredProposal | null> {
@@ -107,12 +80,12 @@ export class MemoryProposalRepository implements ProposalRepository {
 
   async findByNotificationStatus(
     status: StoredProposal["notificationStatus"],
-    query: ProposalQuery = {}
+    limit = 100
   ): Promise<StoredProposal[]> {
-    return this.findAll({
-      ...query,
-      notificationStatus: status
-    });
+    return [...this.proposals.values()]
+      .filter((proposal) => proposal.notificationStatus === status)
+      .sort((left, right) => left.firstSeenAt.localeCompare(right.firstSeenAt))
+      .slice(0, limit);
   }
 
   async updateNotificationStatus(

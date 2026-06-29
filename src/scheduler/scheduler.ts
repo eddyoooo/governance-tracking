@@ -18,6 +18,11 @@ export function startScheduler(context: AppContext): ScheduledTask | null {
     .filter((adapter) => adapter.enabled)
     .map((adapter) => adapter.protocol);
 
+  if (scheduledProtocols.length === 0) {
+    logger.warn("Scheduler not started because no protocol adapters are enabled");
+    return null;
+  }
+
   logger.info(
     { cron: env.fetchIntervalCron, protocols: scheduledProtocols },
     "Starting governance fetch scheduler"
