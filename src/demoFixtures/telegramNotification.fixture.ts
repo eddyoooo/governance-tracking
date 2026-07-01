@@ -85,33 +85,75 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
   {
     protocol: "uniswap",
     sourceType: "forum",
+    sourceId: "26035",
+    publisherName: "Hayden Adams",
+    title:
+      "[Temp Check] Protocol Fee Expansion: Eight More Chains and Remaining Mainnet v3 Pools",
+    sourceUrl:
+      "https://gov.uniswap.org/t/temp-check-protocol-fee-expansion-eight-more-chains-and-remaining-mainnet-v3-pools/26035",
+    publishedAt: "2026-02-18T20:35:27.579Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
     sourceId: "26127",
     publisherName: "eek637",
     title:
-      "[RFC] - Update Crosschain Governance Parameters for Avalanche, MegaETH, Soneium, and X Layer",
+      "[Temp Check] - Update Crosschain Governance Parameters for Avalanche, MegaETH, Soneium, and X Layer",
     sourceUrl:
-      "https://gov.uniswap.org/t/rfc-update-crosschain-governance-parameters-for-avalanche-megaeth-soneium-and-x-layer/26127",
+      "https://gov.uniswap.org/t/temp-check-update-crosschain-governance-parameters-for-avalanche-megaeth-soneium-and-x-layer/26127",
     publishedAt: "2026-06-19T17:04:30.632Z"
   },
   {
     protocol: "uniswap",
     sourceType: "forum",
-    sourceId: "26123",
-    publisherName: "Squidward Jalapeno",
+    sourceId: "25250",
+    publisherName: "Devin",
     title:
-      '[RFC] Introduction and Advice: "Seeds & Bones" Web3 Survival MOBA on Unichain & Ecosystem Grant Inquiry / General Guidance',
+      "[Governance Proposal] Uniswap Unleashed: Unichain and Uniswap v4 Liquidity Incentives",
     sourceUrl:
-      "https://gov.uniswap.org/t/rfc-introduction-and-advice-seeds-bones-web3-survival-moba-on-unichain-ecosystem-grant-inquiry-general-guidance/26123",
-    publishedAt: "2026-06-14T03:00:12.974Z"
+      "https://gov.uniswap.org/t/governance-proposal-uniswap-unleashed-unichain-and-uniswap-v4-liquidity-incentives/25250",
+    publishedAt: "2025-02-14T02:58:56.949Z"
   },
   {
     protocol: "uniswap",
     sourceType: "forum",
-    sourceId: "26036",
-    publisherName: "Rika_Axia Network",
-    title: "Axia Network Delegate Platform",
-    sourceUrl: "https://gov.uniswap.org/t/axia-network-delegate-platform/26036",
-    publishedAt: "2026-02-20T21:49:40.384Z"
+    sourceId: "20242",
+    publisherName: "Ken Ng",
+    title: "[RFC] Uniswap Optimism Protocol Delegation Program",
+    sourceUrl:
+      "https://gov.uniswap.org/t/rfc-uniswap-optimism-protocol-delegation-program/20242",
+    publishedAt: "2023-02-01T22:01:21.997Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "26068",
+    publisherName: "Natalia",
+    title: "Uniswap Foundation: Summary FY'2025 Financials",
+    sourceUrl:
+      "https://gov.uniswap.org/t/uniswap-foundation-summary-fy-2025-financials/26068",
+    publishedAt: "2026-03-31T20:28:49.806Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "26150",
+    publisherName: "GFX Labs",
+    title: "[RFC] Four for V4",
+    sourceUrl: "https://gov.uniswap.org/t/rfc-four-for-v4/26150",
+    publishedAt: "2026-06-29T16:08:35.640Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "25770",
+    publisherName: "UniswapFoundation",
+    title:
+      '[GOVERNANCE PROPOSAL] - Establish Uniswap Governance as "DUNI," a Wyoming DUNA',
+    sourceUrl:
+      "https://gov.uniswap.org/t/governance-proposal-establish-uniswap-governance-as-duni-a-wyoming-duna/25770",
+    publishedAt: "2025-08-11T16:02:05.415Z"
   }
 ];
 

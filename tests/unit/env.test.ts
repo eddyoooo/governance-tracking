@@ -10,6 +10,15 @@ const aaveAllowedPublishers = [
   "AaveLabs",
   "stani"
 ];
+const uniswapAllowedPublishers = [
+  "haydenadams",
+  "eek637",
+  "devinwalsh",
+  "kenneth",
+  "nataliara",
+  "GFXlabs",
+  "UniswapFoundation"
+];
 
 describe("env parsing", () => {
   it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
@@ -17,7 +26,8 @@ describe("env parsing", () => {
       LIDO_ALLOWED_PUBLISHERS: " Allowed Publisher,DAO Ops ",
       AAVE_ALLOWED_PUBLISHERS:
         " LlamaRisk, TokenLogic, Certora, kpk, karpatkey_TokenLogic, AaveLabs, stani ",
-      UNISWAP_ALLOWED_PUBLISHERS: " eek637, Squidward Jalapeno, Rika_Axia Network ",
+      UNISWAP_ALLOWED_PUBLISHERS:
+        " haydenadams, eek637, devinwalsh, kenneth, nataliara, GFXlabs, UniswapFoundation ",
       FIREBASE_PRIVATE_KEY: "line1\\nline2"
     } as NodeJS.ProcessEnv);
 
@@ -36,11 +46,7 @@ describe("env parsing", () => {
     expect(env.uniswapForumBaseUrl).toBe("https://gov.uniswap.org");
     expect(env.uniswapForumApiBaseUrl).toBe("https://gov.uniswap.org");
     expect(env.uniswapEnabled).toBe(true);
-    expect(env.uniswapAllowedPublishers).toEqual([
-      "eek637",
-      "Squidward Jalapeno",
-      "Rika_Axia Network"
-    ]);
+    expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
     expect(env.uniswapFetchMaxPages).toBe(10);
     expect(env.uniswapCategoryFetchMaxPages).toBe(2);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
@@ -58,11 +64,7 @@ describe("env parsing", () => {
         "Lido Ecosystem Foundation - Operations Team"
       ]),
       AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
-      UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
-        "eek637",
-        "Squidward Jalapeno",
-        "Rika_Axia Network"
-      ])
+      UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoAllowedPublishers).toEqual([
@@ -71,11 +73,7 @@ describe("env parsing", () => {
       "Lido Ecosystem Foundation - Operations Team"
     ]);
     expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
-    expect(env.uniswapAllowedPublishers).toEqual([
-      "eek637",
-      "Squidward Jalapeno",
-      "Rika_Axia Network"
-    ]);
+    expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
   });
 
   it("parses multiline JSON array allowlists", () => {

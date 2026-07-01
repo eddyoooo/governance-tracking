@@ -69,9 +69,13 @@ describe("notification services", () => {
         "TokenLogic",
         "Certora",
         "kpk",
+        "Hayden Adams",
         "eek637",
-        "Squidward Jalapeno",
-        "Rika_Axia Network"
+        "Devin",
+        "Ken Ng",
+        "Natalia",
+        "GFX Labs",
+        "UniswapFoundation"
       ])
     );
 

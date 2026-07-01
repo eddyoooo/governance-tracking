@@ -72,6 +72,26 @@ export function matchesPublisherAllowlist(
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function extractRawPublisherAliases(raw: unknown): string[] {
+  if (!isRecord(raw) || !isRecord(raw.publisher)) {
+    return [];
+  }
+
+  return [raw.publisher.name, raw.publisher.username].filter(
+    (value): value is string => typeof value === "string"
+  );
+}
+
+export function getPublisherAliases(item: RawGovernanceItem): string[] {
+  return Array.from(
+    new Set([item.publisherName, ...extractRawPublisherAliases(item.raw)])
+  );
+}
+
 export function filterByPublisherAllowlist<TItem extends RawGovernanceItem>(
   items: TItem[],
   allowlist: string[]
@@ -80,7 +100,11 @@ export function filterByPublisherAllowlist<TItem extends RawGovernanceItem>(
   const skipped: TItem[] = [];
 
   for (const item of items) {
-    if (matchesPublisherAllowlist(item.publisherName, allowlist)) {
+    if (
+      getPublisherAliases(item).some((publisherAlias) =>
+        matchesPublisherAllowlist(publisherAlias, allowlist)
+      )
+    ) {
       allowed.push(item);
     } else {
       skipped.push(item);

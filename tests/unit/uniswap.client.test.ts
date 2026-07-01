@@ -41,20 +41,24 @@ describe("UniswapForumClient", () => {
 
     const topics = await client.fetchRecentTopics();
 
-    expect(topics).toHaveLength(4);
+    expect(topics).toHaveLength(8);
     expect(topics[0]).toMatchObject({
-      sourceId: "26127",
+      sourceId: "26035",
       title:
-        "[RFC] - Update Crosschain Governance Parameters for Avalanche, MegaETH, Soneium, and X Layer",
-      publisherName: "eek637",
+        "[Temp Check] Protocol Fee Expansion: Eight More Chains and Remaining Mainnet v3 Pools",
+      publisherName: "Hayden Adams",
       sourceUrl:
-        "https://gov.uniswap.org/t/rfc-update-crosschain-governance-parameters-for-avalanche-megaeth-soneium-and-x-layer/26127",
-      publishedAt: "2026-06-19T17:04:30.632Z"
+        "https://gov.uniswap.org/t/temp-check-protocol-fee-expansion-eight-more-chains-and-remaining-mainnet-v3-pools/26035",
+      publishedAt: "2026-02-18T20:35:27.579Z"
     });
     expect(topics.map((topic) => topic.publisherName)).toEqual([
+      "Hayden Adams",
       "eek637",
-      "Squidward Jalapeno",
-      "Rika_Axia Network",
+      "Devin",
+      "Ken Ng",
+      "Natalia",
+      "GFX Labs",
+      "UniswapFoundation",
       "Sergei"
     ]);
   });
@@ -148,7 +152,7 @@ describe("UniswapForumClient", () => {
       { page: 2 }
     );
 
-    expect(page.topics).toHaveLength(4);
+    expect(page.topics).toHaveLength(8);
     const [url, init] = fetchImpl.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe(
       "https://gov.uniswap.org/c/proposal-discussion/5/l/latest.json?page=2"

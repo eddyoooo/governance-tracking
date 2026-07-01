@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "@jest/globals";
 import {
   filterByPublisherAllowlist,
+  getPublisherAliases,
   matchesPublisherAllowlist,
   normalizePublisherName
 } from "../../src/protocols/allowlist.js";
@@ -67,6 +68,31 @@ describe("publisher allowlist", () => {
     expect(matchesPublisherAllowlist("kp", aaveAllowlist)).toBe(false);
     expect(matchesPublisherAllowlist("karpatkey", aaveAllowlist)).toBe(false);
     expect(matchesPublisherAllowlist("Aave Grants DAO", aaveAllowlist)).toBe(false);
+  });
+
+  it("extracts stable Discourse username aliases from raw publisher payloads", () => {
+    const item: RawGovernanceItem = {
+      protocol: "uniswap",
+      sourceType: "forum",
+      sourceId: "25250",
+      title: "Uniswap Unleashed",
+      publisherName: "Devin",
+      sourceUrl: "https://gov.uniswap.org/t/example/25250",
+      publishedAt: "2025-02-14T02:58:56.949Z",
+      fetchedAt: "2026-07-01T00:00:00.000Z",
+      raw: {
+        publisher: {
+          username: "devinwalsh",
+          name: "Devin"
+        }
+      }
+    };
+
+    expect(getPublisherAliases(item)).toEqual(["Devin", "devinwalsh"]);
+    expect(filterByPublisherAllowlist([item], ["devinwalsh"]).allowed).toEqual([
+      item
+    ]);
+    expect(filterByPublisherAllowlist([item], ["random"]).skipped).toEqual([item]);
   });
 
   it("allows small publisher typos", () => {

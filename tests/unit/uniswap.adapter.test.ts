@@ -2,6 +2,16 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { UniswapAdapter } from "../../src/protocols/uniswap/uniswap.adapter.js";
 import { createSilentLogger } from "../helpers/builders.js";
 
+const uniswapAllowedPublishers = [
+  "haydenadams",
+  "eek637",
+  "devinwalsh",
+  "kenneth",
+  "nataliara",
+  "GFXlabs",
+  "UniswapFoundation"
+];
+
 function createAdapterOptions(
   overrides: Partial<ConstructorParameters<typeof UniswapAdapter>[0]> = {}
 ) {
@@ -9,7 +19,7 @@ function createAdapterOptions(
     enabled: true,
     forumBaseUrl: "https://gov.uniswap.org",
     forumApiBaseUrl: "https://gov.uniswap.org",
-    allowedPublishers: ["eek637", "Squidward Jalapeno", "Rika_Axia Network"],
+    allowedPublishers: uniswapAllowedPublishers,
     maxPages: 5,
     categoryMaxPages: 2,
     logger: createSilentLogger(),
@@ -31,6 +41,12 @@ function createAdapterOptions(
 }
 
 describe("UniswapAdapter", () => {
+  it("keeps the real Uniswap publisher allowlist on the adapter", () => {
+    const adapter = new UniswapAdapter(createAdapterOptions());
+
+    expect(adapter.publisherAllowlist).toEqual(uniswapAllowedPublishers);
+  });
+
   it("returns no items and does not fetch when disabled", async () => {
     const client = {
       fetchRecentTopicPage: jest.fn(async () => {
@@ -143,8 +159,7 @@ describe("UniswapAdapter", () => {
             sourceId: category.id === 5 ? "26123" : "26036",
             title: category.id === 5 ? "RFC topic" : "Delegate platform",
             slug: category.id === 5 ? "rfc-topic" : "delegate-platform",
-            publisherName:
-              category.id === 5 ? "Squidward Jalapeno" : "Rika_Axia Network",
+            publisherName: category.id === 5 ? "Devin" : "GFX Labs",
             sourceUrl: `https://gov.uniswap.org/t/category-topic/${category.id}`,
             publishedAt: "2026-06-14T03:00:12.974Z",
             raw: { id: category.id }

@@ -241,13 +241,19 @@ UNISWAP_FORUM_BASE_URL=https://gov.uniswap.org
 UNISWAP_FORUM_API_BASE_URL=https://gov.uniswap.org
 UNISWAP_ENABLED=true
 UNISWAP_ALLOWED_PUBLISHERS='[
+  "haydenadams",
   "eek637",
-  "Squidward Jalapeno",
-  "Rika_Axia Network"
+  "devinwalsh",
+  "kenneth",
+  "nataliara",
+  "GFXlabs",
+  "UniswapFoundation"
 ]'
 UNISWAP_FETCH_MAX_PAGES=10
 UNISWAP_CATEGORY_FETCH_MAX_PAGES=2
 ```
+
+Uniswap allowlist entries should use stable Discourse profile usernames. The monitor also checks the raw Discourse username behind a displayed publisher name, so profiles like `devinwalsh` can be tracked even when the stored proposal publisher displays as `Devin`.
 
 Telegram direct-user notifications:
 

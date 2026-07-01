@@ -79,6 +79,7 @@ What it demonstrates:
 - Aave fetches from locally saved global latest and category/subcategory payload samples.
 - Aave allowlist matching uses real Discourse usernames: `LlamaRisk`, `TokenLogic`, `Certora`, `kpk`, `karpatkey_TokenLogic`, `AaveLabs`, and `stani`.
 - Uniswap fetches from locally saved global latest and public category/subcategory payload samples.
+- Uniswap allowlist matching uses stable profile usernames such as `haydenadams`, `devinwalsh`, `kenneth`, `nataliara`, `GFXlabs`, and `UniswapFoundation`, while stored proposal output may show display names such as `Hayden Adams`, `Devin`, `Ken Ng`, or `GFX Labs`.
 - Allowlisted publishers are stored.
 - Non-allowlisted publishers are skipped.
 - New proposals trigger notification handling.

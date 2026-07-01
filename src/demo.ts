@@ -29,9 +29,13 @@ const DEMO_AAVE_ALLOWED_PUBLISHERS = [
   "stani"
 ];
 const DEMO_UNISWAP_ALLOWED_PUBLISHERS = [
+  "haydenadams",
   "eek637",
-  "Squidward Jalapeno",
-  "Rika_Axia Network"
+  "devinwalsh",
+  "kenneth",
+  "nataliara",
+  "GFXlabs",
+  "UniswapFoundation"
 ];
 
 function readStepDelayMs(): number {

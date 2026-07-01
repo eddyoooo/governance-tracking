@@ -11,6 +11,15 @@ const aaveAllowedPublishers = [
   "AaveLabs",
   "stani"
 ];
+const uniswapAllowedPublishers = [
+  "haydenadams",
+  "eek637",
+  "devinwalsh",
+  "kenneth",
+  "nataliara",
+  "GFXlabs",
+  "UniswapFoundation"
+];
 
 describe("ProtocolRegistry", () => {
   it("registers, retrieves, and lists protocol adapters", () => {
@@ -62,11 +71,7 @@ describe("ProtocolRegistry", () => {
         UNISWAP_ENABLED: "false",
         UNISWAP_FORUM_BASE_URL: "https://gov.uniswap.org",
         UNISWAP_FORUM_API_BASE_URL: "https://gov.uniswap.org",
-        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
-          "eek637",
-          "Squidward Jalapeno",
-          "Rika_Axia Network"
-        ])
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
       }),
       createSilentLogger()
     );
@@ -103,7 +108,7 @@ describe("ProtocolRegistry", () => {
     expect(uniswap).toMatchObject({
       protocol: "uniswap",
       enabled: false,
-      publisherAllowlist: ["eek637", "Squidward Jalapeno", "Rika_Axia Network"],
+      publisherAllowlist: uniswapAllowedPublishers,
       source: {
         protocol: "uniswap",
         type: "forum",
@@ -120,11 +125,7 @@ describe("ProtocolRegistry", () => {
         DEMO_MODE: "true",
         LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher"]),
         AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
-        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
-          "eek637",
-          "Squidward Jalapeno",
-          "Rika_Axia Network"
-        ])
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
       }),
       createSilentLogger()
     );
@@ -191,9 +192,15 @@ describe("ProtocolRegistry", () => {
     );
     const uniswapItems = await uniswap?.fetchRecent();
 
-    expect(uniswapItems).toHaveLength(4);
+    expect(uniswapItems).toHaveLength(8);
     expect(uniswapItems).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26035",
+          publisherName: "Hayden Adams"
+        }),
         expect.objectContaining({
           protocol: "uniswap",
           sourceType: "forum",
@@ -203,14 +210,32 @@ describe("ProtocolRegistry", () => {
         expect.objectContaining({
           protocol: "uniswap",
           sourceType: "forum",
-          sourceId: "26123",
-          publisherName: "Squidward Jalapeno"
+          sourceId: "25250",
+          publisherName: "Devin"
         }),
         expect.objectContaining({
           protocol: "uniswap",
           sourceType: "forum",
-          sourceId: "26036",
-          publisherName: "Rika_Axia Network"
+          sourceId: "20242",
+          publisherName: "Ken Ng"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26068",
+          publisherName: "Natalia"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26150",
+          publisherName: "GFX Labs"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "25770",
+          publisherName: "UniswapFoundation"
         }),
         expect.objectContaining({
           protocol: "uniswap",

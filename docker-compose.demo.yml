@@ -17,7 +17,7 @@ services:
       AAVE_ALLOWED_PUBLISHERS: '["LlamaRisk","TokenLogic","Certora","kpk","karpatkey_TokenLogic","AaveLabs","stani"]'
       AAVE_FETCH_MAX_PAGES: 10
       AAVE_CATEGORY_FETCH_MAX_PAGES: 2
-      UNISWAP_ALLOWED_PUBLISHERS: '["eek637","Squidward Jalapeno","Rika_Axia Network"]'
+      UNISWAP_ALLOWED_PUBLISHERS: '["haydenadams","eek637","devinwalsh","kenneth","nataliara","GFXlabs","UniswapFoundation"]'
       UNISWAP_FETCH_MAX_PAGES: 10
       UNISWAP_CATEGORY_FETCH_MAX_PAGES: 2
       LOG_LEVEL: info
