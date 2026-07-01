@@ -125,6 +125,25 @@ const telegramUserIdListFromEnv = z.preprocess((value) => {
   return [...userIds];
 }));
 
+const optionalTelegramUserIdFromEnv = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const trimmed = value.trim();
+
+    return trimmed ? trimmed : undefined;
+  },
+  z
+    .string()
+    .regex(
+      /^[1-9]\d*$/,
+      "TELEGRAM_ADMIN_USER_ID must be a positive numeric Telegram user ID."
+    )
+    .optional()
+);
+
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -174,6 +193,9 @@ const rawEnvSchema = z
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
+    ENABLE_ADMIN_STATUS_REPORTS: booleanFromEnv.default(false),
+    TELEGRAM_ADMIN_USER_ID: optionalTelegramUserIdFromEnv.default("1549323073"),
+    ADMIN_STATUS_CRON: z.string().default("0 9 * * *"),
     TELEGRAM_E2E_ENABLED: booleanFromEnv.default(false),
     TELEGRAM_TEST_SEND_DELAY_MS: delayMsFromEnv,
     API_AUTH_ENABLED: booleanFromEnv.default(false),
@@ -214,6 +236,9 @@ const rawEnvSchema = z
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,
+    enableAdminStatusReports: value.ENABLE_ADMIN_STATUS_REPORTS,
+    telegramAdminUserId: value.TELEGRAM_ADMIN_USER_ID,
+    adminStatusCron: value.ADMIN_STATUS_CRON,
     telegramE2EEnabled: value.TELEGRAM_E2E_ENABLED,
     telegramTestSendDelayMs: value.TELEGRAM_TEST_SEND_DELAY_MS,
     apiAuthEnabled: value.API_AUTH_ENABLED,

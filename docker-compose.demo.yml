@@ -12,6 +12,7 @@ services:
       DEMO_MODE: "true"
       ENABLE_SCHEDULER: "false"
       ENABLE_TELEGRAM_NOTIFICATIONS: "false"
+      ENABLE_ADMIN_STATUS_REPORTS: "false"
       LIDO_ALLOWED_PUBLISHERS: '["Allowed Publisher"]'
       LIDO_FETCH_MAX_PAGES: 5
       AAVE_ALLOWED_PUBLISHERS: '["LlamaRisk","TokenLogic","Certora","kpk","karpatkey_TokenLogic","AaveLabs","stani"]'

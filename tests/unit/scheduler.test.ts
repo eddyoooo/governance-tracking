@@ -26,6 +26,14 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
     fetchJob: {
       run: jest.fn(async () => undefined)
     },
+    adminStatusReporter: {
+      enabled: false,
+      sendDailyStatusReport: jest.fn(async () => ({
+        healthy: true,
+        message: "",
+        problems: []
+      }))
+    },
     proposalRepository: {},
     fetchRunRepository: {},
     protocolRegistry: {
@@ -82,13 +90,17 @@ describe("scheduler", () => {
     validateMock.mockReturnValue(true);
     scheduleMock.mockReturnValue(task);
 
-    expect(startScheduler(context as never)).toBe(task);
+    const handle = startScheduler(context as never);
+
+    expect(handle).not.toBeNull();
     expect(validateMock).toHaveBeenCalledWith("0 */6 * * *");
     expect(scheduleMock).toHaveBeenCalledWith("0 */6 * * *", expect.any(Function));
     expect(context.logger.info).toHaveBeenCalledWith(
       { cron: "0 */6 * * *", protocols: ["lido", "aave", "uniswap"] },
       "Starting governance fetch scheduler"
     );
+    handle?.stop();
+    expect(task.stop).toHaveBeenCalledTimes(1);
   });
 
   it("does not start when no protocol adapters are enabled", () => {
@@ -112,7 +124,98 @@ describe("scheduler", () => {
     expect(startScheduler(context as never)).toBeNull();
     expect(scheduleMock).not.toHaveBeenCalled();
     expect(context.logger.warn).toHaveBeenCalledWith(
-      "Scheduler not started because no protocol adapters are enabled"
+      "No enabled protocol adapters found for governance fetch scheduler"
+    );
+    expect(context.logger.warn).toHaveBeenCalledWith(
+      "Scheduler not started because no scheduled jobs are enabled"
+    );
+  });
+
+  it("throws before scheduling when the admin status cron expression is invalid", () => {
+    const context = createContext({
+      ADMIN_STATUS_CRON: "not-a-cron",
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
+      TELEGRAM_BOT_TOKEN: "token"
+    });
+
+    context.adminStatusReporter.enabled = true;
+    validateMock.mockImplementation((cron: string) => cron !== "not-a-cron");
+
+    expect(() => startScheduler(context as never)).toThrow(
+      "Invalid ADMIN_STATUS_CRON: not-a-cron"
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("schedules daily admin status reports when enabled", async () => {
+    let adminCallback: (() => void) | undefined;
+    const context = createContext({
+      ADMIN_STATUS_CRON: "0 9 * * *",
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
+      TELEGRAM_BOT_TOKEN: "token"
+    });
+    const fetchTask = { stop: jest.fn() };
+    const adminTask = { stop: jest.fn() };
+
+    context.adminStatusReporter.enabled = true;
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === "0 9 * * *") {
+        adminCallback = callback;
+        return adminTask;
+      }
+
+      return fetchTask;
+    });
+
+    const handle = startScheduler(context as never);
+
+    expect(scheduleMock).toHaveBeenCalledWith("0 */6 * * *", expect.any(Function));
+    expect(scheduleMock).toHaveBeenCalledWith("0 9 * * *", expect.any(Function));
+    expect(context.logger.info).toHaveBeenCalledWith(
+      { cron: "0 9 * * *" },
+      "Starting admin status report scheduler"
+    );
+
+    adminCallback?.();
+    await Promise.resolve();
+
+    expect(context.adminStatusReporter.sendDailyStatusReport).toHaveBeenCalledTimes(1);
+    handle?.stop();
+    expect(fetchTask.stop).toHaveBeenCalledTimes(1);
+    expect(adminTask.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs scheduled admin status failures without throwing from the callback", async () => {
+    let adminCallback: (() => void) | undefined;
+    const context = createContext({
+      ADMIN_STATUS_CRON: "0 9 * * *",
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
+      TELEGRAM_BOT_TOKEN: "token"
+    });
+    const error = new Error("admin status failed");
+
+    context.adminStatusReporter.enabled = true;
+    context.adminStatusReporter.sendDailyStatusReport.mockRejectedValueOnce(
+      error as never
+    );
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === "0 9 * * *") {
+        adminCallback = callback;
+      }
+
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    adminCallback?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(context.logger.error).toHaveBeenCalledWith(
+      { error },
+      "Scheduled admin status report failed"
     );
   });
 

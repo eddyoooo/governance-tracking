@@ -157,6 +157,7 @@ async function main(): Promise<void> {
     UNISWAP_FETCH_MAX_PAGES: "10",
     UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
     API_AUTH_ENABLED: "false",
+    ENABLE_ADMIN_STATUS_REPORTS: "false",
     LOG_LEVEL: "silent"
   });
   const lidoAdapter = new ScriptedLidoDemoAdapter({

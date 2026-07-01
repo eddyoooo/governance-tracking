@@ -52,6 +52,9 @@ describe("env parsing", () => {
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
+    expect(env.enableAdminStatusReports).toBe(false);
+    expect(env.telegramAdminUserId).toBe("1549323073");
+    expect(env.adminStatusCron).toBe("0 9 * * *");
     expect(env.telegramE2EEnabled).toBe(false);
     expect(env.telegramTestSendDelayMs).toBe(3000);
   });
@@ -129,6 +132,7 @@ describe("env parsing", () => {
       AAVE_ENABLED: "FALSE",
       UNISWAP_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
       TELEGRAM_E2E_ENABLED: "true",
       API_AUTH_ENABLED: "true"
     } as NodeJS.ProcessEnv);
@@ -139,6 +143,7 @@ describe("env parsing", () => {
     expect(env.aaveEnabled).toBe(false);
     expect(env.uniswapEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
+    expect(env.enableAdminStatusReports).toBe(true);
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.apiAuthEnabled).toBe(true);
   });
@@ -187,6 +192,30 @@ describe("env parsing", () => {
         TELEGRAM_TEST_SEND_DELAY_MS: "1.5"
       } as NodeJS.ProcessEnv)
     ).toThrow();
+  });
+
+  it("parses and validates admin status Telegram configuration", () => {
+    const env = loadEnv({
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
+      TELEGRAM_ADMIN_USER_ID: " 1549323073 ",
+      ADMIN_STATUS_CRON: "30 8 * * *"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.enableAdminStatusReports).toBe(true);
+    expect(env.telegramAdminUserId).toBe("1549323073");
+    expect(env.adminStatusCron).toBe("30 8 * * *");
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ADMIN_USER_ID: "@admin"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("TELEGRAM_ADMIN_USER_ID must be a positive numeric Telegram user ID.");
+
+    expect(() =>
+      loadEnv({
+        TELEGRAM_ADMIN_USER_ID: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("TELEGRAM_ADMIN_USER_ID must be a positive numeric Telegram user ID.");
   });
 
   it("rejects invalid Telegram allowed user ids", () => {

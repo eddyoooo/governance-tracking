@@ -59,6 +59,7 @@ DEMO_MODE=true
 ENABLE_SCHEDULER=false
 API_AUTH_ENABLED=false
 ENABLE_TELEGRAM_NOTIFICATIONS=false
+ENABLE_ADMIN_STATUS_REPORTS=false
 ```
 
 Expected result: the API starts on port `3000`, stores data in memory, does not require Firebase, and does not run the scheduler.
@@ -269,7 +270,22 @@ Expected result: pending proposals are seeded in memory, sent through the real T
 
 Normal `npm test` and `npm run check` do not send Telegram messages. The live E2E path only runs through this dedicated command.
 
-## 9. Tests
+## 9. Daily Admin Status
+
+The admin status report is a separate daily Telegram message for the operator. It uses the same bot token as proposal notifications, but sends only to `TELEGRAM_ADMIN_USER_ID`.
+
+Set:
+
+```bash
+ENABLE_ADMIN_STATUS_REPORTS=true
+TELEGRAM_ADMIN_USER_ID=1549323073
+ADMIN_STATUS_CRON=0 9 * * *
+ENABLE_SCHEDULER=true
+```
+
+Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, pending/failed notification counts, enabled protocols, and any detected problems.
+
+## 10. Tests
 
 Run all normal tests:
 
@@ -291,7 +307,7 @@ Watch mode:
 npm run test:watch
 ```
 
-## 10. Firestore Run
+## 11. Firestore Run
 
 Set:
 
@@ -317,7 +333,7 @@ npm run start
 
 Expected result: proposals are stored in Firestore `proposals`, fetch runs are stored in Firestore `fetchRuns`, and the scheduler polls enabled protocols every six hours.
 
-## 11. Docker
+## 12. Docker
 
 Development compose:
 
@@ -338,7 +354,7 @@ docker build -t governance-tracking-backend .
 docker run --env-file .env -p 3000:3000 governance-tracking-backend
 ```
 
-## 12. What No Longer Exists
+## 13. What No Longer Exists
 
 The platform no longer exposes dashboard-oriented endpoints:
 

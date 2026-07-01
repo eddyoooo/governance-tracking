@@ -174,6 +174,9 @@ STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 */6 * * *
+ENABLE_ADMIN_STATUS_REPORTS=true
+TELEGRAM_ADMIN_USER_ID=1549323073
+ADMIN_STATUS_CRON=0 9 * * *
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
 LOG_LEVEL=info
@@ -188,6 +191,7 @@ Allowed values:
 - `ENABLE_SCHEDULER`: `true` or `false`.
 - `API_AUTH_ENABLED`: `true` or `false`.
 - `ENABLE_TELEGRAM_NOTIFICATIONS`: `true` or `false`.
+- `ENABLE_ADMIN_STATUS_REPORTS`: `true` or `false`.
 - `TELEGRAM_E2E_ENABLED`: `true` or `false`.
 - `LOG_LEVEL`: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.
 
@@ -269,6 +273,16 @@ TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
 
 Telegram recipients must open the bot and send `/start` once before Telegram allows the bot to message them. The service only sends to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
+
+Telegram admin status reports:
+
+```bash
+ENABLE_ADMIN_STATUS_REPORTS=true
+TELEGRAM_ADMIN_USER_ID=1549323073
+ADMIN_STATUS_CRON=0 9 * * *
+```
+
+Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, the admin receives one daily status message at `09:00` server time by default. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, pending/failed notification counts, and recent problems.
 
 ## Commands
 

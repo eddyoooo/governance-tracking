@@ -3,6 +3,10 @@ import type { Logger } from "pino";
 import { pinoHttp } from "pino-http";
 import { env as defaultEnv, type Env } from "./config/env.js";
 import {
+  createAdminStatusReporter,
+  type AdminStatusReporter
+} from "./adminStatus/adminStatus.service.js";
+import {
   FetchAlreadyRunningError,
   FetchProtocolGovernanceJob,
   UnknownProtocolAdapterError
@@ -30,6 +34,7 @@ export interface AppContext {
   fetchRunRepository: FetchRunRepository;
   protocolRegistry: ProtocolRegistry;
   notificationService: NotificationService;
+  adminStatusReporter: AdminStatusReporter;
   fetchJob: FetchProtocolGovernanceJob;
 }
 
@@ -39,6 +44,7 @@ export interface CreateAppOptions {
   repositories?: Repositories;
   protocolRegistry?: ProtocolRegistry;
   notificationService?: NotificationService;
+  adminStatusReporter?: AdminStatusReporter;
   fetchJob?: FetchProtocolGovernanceJob;
 }
 
@@ -65,6 +71,15 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
   const notificationService =
     options.notificationService ?? createNotificationService(runtimeEnv, logger);
+  const adminStatusReporter =
+    options.adminStatusReporter ??
+    createAdminStatusReporter({
+      env: runtimeEnv,
+      protocolRegistry,
+      fetchRunRepository: repositories.fetchRunRepository,
+      proposalRepository: repositories.proposalRepository,
+      logger
+    });
   const fetchJob =
     options.fetchJob ??
     new FetchProtocolGovernanceJob(
@@ -83,6 +98,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     fetchRunRepository: repositories.fetchRunRepository,
     protocolRegistry,
     notificationService,
+    adminStatusReporter,
     fetchJob
   };
   const app = express();
