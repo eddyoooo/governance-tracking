@@ -2,6 +2,16 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { AaveAdapter } from "../../src/protocols/aave/aave.adapter.js";
 import { createSilentLogger } from "../helpers/builders.js";
 
+const aaveAllowedPublishers = [
+  "LlamaRisk",
+  "TokenLogic",
+  "Certora",
+  "kpk",
+  "karpatkey_TokenLogic",
+  "AaveLabs",
+  "stani"
+];
+
 function createAdapterOptions(
   overrides: Partial<ConstructorParameters<typeof AaveAdapter>[0]> = {}
 ) {
@@ -9,7 +19,7 @@ function createAdapterOptions(
     enabled: true,
     forumBaseUrl: "https://governance.aave.com",
     forumApiBaseUrl: "https://governance.aave.com",
-    allowedPublishers: ["AaveLabs", "TokenLogic", "LlamaRisk"],
+    allowedPublishers: aaveAllowedPublishers,
     maxPages: 5,
     categoryMaxPages: 2,
     logger: createSilentLogger(),
@@ -31,6 +41,12 @@ function createAdapterOptions(
 }
 
 describe("AaveAdapter", () => {
+  it("keeps the real Aave publisher allowlist on the adapter", () => {
+    const adapter = new AaveAdapter(createAdapterOptions());
+
+    expect(adapter.publisherAllowlist).toEqual(aaveAllowedPublishers);
+  });
+
   it("returns no items and does not fetch when disabled", async () => {
     const client = {
       fetchRecentTopicPage: jest.fn(async () => {

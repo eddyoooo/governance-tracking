@@ -5,6 +5,8 @@ import { AaveAdapter } from "./aave/aave.adapter.js";
 import { createAaveDemoClient } from "./aave/aave.demoClient.js";
 import { LidoAdapter } from "./lido/lido.adapter.js";
 import { createLidoDemoClient } from "./lido/lido.demoClient.js";
+import { UniswapAdapter } from "./uniswap/uniswap.adapter.js";
+import { createUniswapDemoClient } from "./uniswap/uniswap.demoClient.js";
 import type { ProtocolAdapter } from "./types.js";
 
 export class ProtocolRegistry {
@@ -39,6 +41,13 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
         logger
       })
     : undefined;
+  const uniswapClient = isMemoryMode(env)
+    ? createUniswapDemoClient({
+        forumBaseUrl: env.uniswapForumBaseUrl,
+        forumApiBaseUrl: env.uniswapForumApiBaseUrl,
+        logger
+      })
+    : undefined;
 
   registry.register(
     new LidoAdapter({
@@ -61,6 +70,18 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       categoryMaxPages: env.aaveCategoryFetchMaxPages,
       logger,
       client: aaveClient
+    })
+  );
+  registry.register(
+    new UniswapAdapter({
+      enabled: env.uniswapEnabled,
+      forumBaseUrl: env.uniswapForumBaseUrl,
+      forumApiBaseUrl: env.uniswapForumApiBaseUrl,
+      allowedPublishers: env.uniswapAllowedPublishers,
+      maxPages: env.uniswapFetchMaxPages,
+      categoryMaxPages: env.uniswapCategoryFetchMaxPages,
+      logger,
+      client: uniswapClient
     })
   );
 

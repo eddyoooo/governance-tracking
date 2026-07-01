@@ -43,6 +43,32 @@ describe("publisher allowlist", () => {
     ).toBe(true);
   });
 
+  it("matches real Aave publisher usernames without broadening short handles", () => {
+    const aaveAllowlist = [
+      "LlamaRisk",
+      "TokenLogic",
+      "Certora",
+      "kpk",
+      "karpatkey_TokenLogic",
+      "AaveLabs",
+      "stani"
+    ];
+
+    expect(matchesPublisherAllowlist("llamarisk", aaveAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("TokenLogic", aaveAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("Certora", aaveAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("KPK", aaveAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("karpatkey_TokenLogic", aaveAllowlist)).toBe(
+      true
+    );
+    expect(matchesPublisherAllowlist("AaveLabs", aaveAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("stani", aaveAllowlist)).toBe(true);
+
+    expect(matchesPublisherAllowlist("kp", aaveAllowlist)).toBe(false);
+    expect(matchesPublisherAllowlist("karpatkey", aaveAllowlist)).toBe(false);
+    expect(matchesPublisherAllowlist("Aave Grants DAO", aaveAllowlist)).toBe(false);
+  });
+
   it("allows small publisher typos", () => {
     expect(matchesPublisherAllowlist("Allowd Publisher", ["Allowed Publisher"])).toBe(
       true

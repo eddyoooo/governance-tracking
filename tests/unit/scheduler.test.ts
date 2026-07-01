@@ -37,6 +37,10 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
         {
           protocol: "aave",
           enabled: true
+        },
+        {
+          protocol: "uniswap",
+          enabled: true
         }
       ])
     }
@@ -82,7 +86,7 @@ describe("scheduler", () => {
     expect(validateMock).toHaveBeenCalledWith("0 */6 * * *");
     expect(scheduleMock).toHaveBeenCalledWith("0 */6 * * *", expect.any(Function));
     expect(context.logger.info).toHaveBeenCalledWith(
-      { cron: "0 */6 * * *", protocols: ["lido", "aave"] },
+      { cron: "0 */6 * * *", protocols: ["lido", "aave", "uniswap"] },
       "Starting governance fetch scheduler"
     );
   });
@@ -96,6 +100,10 @@ describe("scheduler", () => {
       },
       {
         protocol: "aave",
+        enabled: false
+      },
+      {
+        protocol: "uniswap",
         enabled: false
       }
     ]);
@@ -123,7 +131,8 @@ describe("scheduler", () => {
 
     expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
     expect(context.fetchJob.run).toHaveBeenCalledWith("aave");
-    expect(context.fetchJob.run).toHaveBeenCalledTimes(2);
+    expect(context.fetchJob.run).toHaveBeenCalledWith("uniswap");
+    expect(context.fetchJob.run).toHaveBeenCalledTimes(3);
   });
 
   it("does not run disabled protocol adapters from the scheduler", async () => {
@@ -137,6 +146,10 @@ describe("scheduler", () => {
       {
         protocol: "aave",
         enabled: false
+      },
+      {
+        protocol: "uniswap",
+        enabled: true
       }
     ]);
     validateMock.mockReturnValue(true);
@@ -151,6 +164,7 @@ describe("scheduler", () => {
 
     expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
     expect(context.fetchJob.run).not.toHaveBeenCalledWith("aave");
+    expect(context.fetchJob.run).toHaveBeenCalledWith("uniswap");
   });
 
   it("logs scheduled fetch failures without throwing from the callback", async () => {

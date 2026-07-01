@@ -13,6 +13,14 @@ export const aaveRecentTopicsFixture = {
       username: "TokenLogic"
     },
     {
+      id: 10643,
+      username: "Certora"
+    },
+    {
+      id: 6833,
+      username: "kpk"
+    },
+    {
       id: 14891,
       username: "Gepetto"
     }
@@ -99,6 +107,50 @@ export const aaveRecentTopicsFixture = {
             extras: "latest",
             description: "Original Poster, Most Recent Poster",
             user_id: 14891
+          }
+        ]
+      },
+      {
+        id: 24713,
+        title:
+          "[ARFC] Strengthening Upgrade Safety: Concord Equivalence Checker by Certora",
+        slug:
+          "arfc-strengthening-upgrade-safety-concord-equivalence-checker-by-certora",
+        posts_count: 4,
+        reply_count: 0,
+        created_at: "2026-04-23T12:57:05.384Z",
+        last_posted_at: "2026-06-24T15:30:28.977Z",
+        category_id: 29,
+        last_poster_username: "AaveLabs",
+        posters: [
+          {
+            description: "Original Poster",
+            user_id: 10643
+          },
+          {
+            extras: "latest",
+            description: "Most Recent Poster",
+            user_id: 5301,
+            primary_group_id: 46,
+            flair_group_id: 46
+          }
+        ]
+      },
+      {
+        id: 20206,
+        title: "[ARFC] karpatkey as GHO Growth Service Provider",
+        slug: "arfc-karpatkey-as-gho-growth-service-provider",
+        posts_count: 16,
+        reply_count: 2,
+        created_at: "2024-12-15T21:59:18.343Z",
+        last_posted_at: "2025-09-17T09:41:46.917Z",
+        category_id: 4,
+        last_poster_username: "kpk",
+        posters: [
+          {
+            extras: "latest",
+            description: "Original Poster, Most Recent Poster",
+            user_id: 6833
           }
         ]
       }

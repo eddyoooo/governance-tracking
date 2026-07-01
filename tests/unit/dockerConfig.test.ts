@@ -13,6 +13,10 @@ describe("Docker configuration", () => {
     expect(compose).toContain('DEMO_MODE: "true"');
     expect(compose).toContain('ENABLE_SCHEDULER: "false"');
     expect(compose).toContain('ENABLE_TELEGRAM_NOTIFICATIONS: "false"');
+    expect(compose).toContain('AAVE_ALLOWED_PUBLISHERS: \'["LlamaRisk","TokenLogic","Certora","kpk","karpatkey_TokenLogic","AaveLabs","stani"]\'');
+    expect(compose).toContain('UNISWAP_ALLOWED_PUBLISHERS: \'["eek637","Squidward Jalapeno","Rika_Axia Network"]\'');
+    expect(compose).toContain("UNISWAP_FETCH_MAX_PAGES: 10");
+    expect(compose).toContain("UNISWAP_CATEGORY_FETCH_MAX_PAGES: 2");
     expect(compose).not.toContain("FIREBASE_PROJECT_ID");
     expect(compose).not.toContain("FIREBASE_CLIENT_EMAIL");
     expect(compose).not.toContain("FIREBASE_PRIVATE_KEY");

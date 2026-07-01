@@ -155,6 +155,22 @@ const rawEnvSchema = z
       .positive()
       .max(5)
       .default(2),
+    UNISWAP_FORUM_BASE_URL: z.string().url().default("https://gov.uniswap.org"),
+    UNISWAP_FORUM_API_BASE_URL: z
+      .string()
+      .url()
+      .default("https://gov.uniswap.org"),
+    UNISWAP_ENABLED: booleanFromEnv.default(true),
+    UNISWAP_ALLOWED_PUBLISHERS: stringListFromEnv(
+      "UNISWAP_ALLOWED_PUBLISHERS"
+    ).default([]),
+    UNISWAP_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(10),
+    UNISWAP_CATEGORY_FETCH_MAX_PAGES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(5)
+      .default(2),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
@@ -189,6 +205,12 @@ const rawEnvSchema = z
     aaveAllowedPublishers: value.AAVE_ALLOWED_PUBLISHERS,
     aaveFetchMaxPages: value.AAVE_FETCH_MAX_PAGES,
     aaveCategoryFetchMaxPages: value.AAVE_CATEGORY_FETCH_MAX_PAGES,
+    uniswapForumBaseUrl: value.UNISWAP_FORUM_BASE_URL,
+    uniswapForumApiBaseUrl: value.UNISWAP_FORUM_API_BASE_URL,
+    uniswapEnabled: value.UNISWAP_ENABLED,
+    uniswapAllowedPublishers: value.UNISWAP_ALLOWED_PUBLISHERS,
+    uniswapFetchMaxPages: value.UNISWAP_FETCH_MAX_PAGES,
+    uniswapCategoryFetchMaxPages: value.UNISWAP_CATEGORY_FETCH_MAX_PAGES,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,

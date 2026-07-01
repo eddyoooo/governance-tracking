@@ -8,6 +8,7 @@ import {
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
+import { normalizeUniswapForumItem } from "../../src/protocols/uniswap/uniswap.normalizer.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createRawGovernanceItem,
@@ -70,9 +71,15 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
           }
         }) as RawGovernanceItem;
 
-        return fixture.protocol === "aave"
-          ? normalizeAaveForumItem(rawItem)
-          : normalizeLidoForumItem(rawItem);
+        if (fixture.protocol === "aave") {
+          return normalizeAaveForumItem(rawItem);
+        }
+
+        if (fixture.protocol === "uniswap") {
+          return normalizeUniswapForumItem(rawItem);
+        }
+
+        return normalizeLidoForumItem(rawItem);
       });
 
       for (const proposal of proposals) {

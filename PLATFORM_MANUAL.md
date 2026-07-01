@@ -16,7 +16,7 @@ DEMO_STEP_DELAY_MS=750 npm run demo
 
 What to point out:
 
-- Lido and Aave are fetched through the same monitor pipeline.
+- Lido, Aave, and Uniswap are fetched through the same monitor pipeline.
 - Only allowlisted publishers are stored.
 - Non-allowlisted items are counted as skipped.
 - New allowlisted proposals trigger notification handling.
@@ -35,6 +35,7 @@ Then in another terminal:
 curl -s "$API/health"
 curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
+curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 curl -s -X POST "$API/api/admin/notify-pending"
 ```
@@ -76,6 +77,8 @@ What it demonstrates:
 
 - Lido fetches from locally saved proposal-category payload samples.
 - Aave fetches from locally saved global latest and category/subcategory payload samples.
+- Aave allowlist matching uses real Discourse usernames: `LlamaRisk`, `TokenLogic`, `Certora`, `kpk`, `karpatkey_TokenLogic`, `AaveLabs`, and `stani`.
+- Uniswap fetches from locally saved global latest and public category/subcategory payload samples.
 - Allowlisted publishers are stored.
 - Non-allowlisted publishers are skipped.
 - New proposals trigger notification handling.
@@ -108,13 +111,14 @@ Expected result:
 }
 ```
 
-This endpoint does not call Lido or Aave.
+This endpoint does not call Lido, Aave, or Uniswap.
 
 ## 4. Manual Fetch
 
 ```bash
 curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
+curl -s -X POST "$API/api/admin/fetch/uniswap"
 ```
 
 Expected result:
@@ -134,7 +138,7 @@ Expected result:
 }
 ```
 
-These endpoints call the protocol adapters. In memory/demo mode, adapters use local payload samples. In Firestore production mode, adapters call the live forums.
+These endpoints call the protocol adapters. In memory/demo mode, adapters use local payload samples. In Firestore production mode, adapters call the live forums. Lido uses the proposal category feed, while Aave and Uniswap scan global latest plus discovered public category/subcategory feeds.
 
 Count meanings:
 
@@ -252,7 +256,7 @@ Send real test messages:
 npm run telegram:test-send
 ```
 
-Expected result: each configured Telegram user receives multiple governance notification messages based on locally saved Lido/Aave proposal samples. Messages start with bold all-caps `NEW GOVERNANCE ITEM TRACKED`.
+Expected result: each configured Telegram user receives multiple governance notification messages based on locally saved Lido, Aave, and Uniswap proposal samples. Messages start with bold all-caps `NEW GOVERNANCE ITEM TRACKED`.
 
 Run the real Telegram E2E test:
 

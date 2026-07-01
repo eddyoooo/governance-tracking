@@ -60,6 +60,58 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
     title: "[ARFC] Umbrella Parameter Update: Target Liquidity and Emission Optimization",
     sourceUrl: "https://governance.aave.com/t/arfc-umbrella-parameter-update-target-liquidity-and-emission-optimization/25154",
     publishedAt: "2026-06-16T15:45:02.282Z"
+  },
+  {
+    protocol: "aave",
+    sourceType: "forum",
+    sourceId: "24713",
+    publisherName: "Certora",
+    title:
+      "[ARFC] Strengthening Upgrade Safety: Concord Equivalence Checker by Certora",
+    sourceUrl:
+      "https://governance.aave.com/t/arfc-strengthening-upgrade-safety-concord-equivalence-checker-by-certora/24713",
+    publishedAt: "2026-04-23T12:57:05.384Z"
+  },
+  {
+    protocol: "aave",
+    sourceType: "forum",
+    sourceId: "20206",
+    publisherName: "kpk",
+    title: "[ARFC] karpatkey as GHO Growth Service Provider",
+    sourceUrl:
+      "https://governance.aave.com/t/arfc-karpatkey-as-gho-growth-service-provider/20206",
+    publishedAt: "2024-12-15T21:59:18.343Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "26127",
+    publisherName: "eek637",
+    title:
+      "[RFC] - Update Crosschain Governance Parameters for Avalanche, MegaETH, Soneium, and X Layer",
+    sourceUrl:
+      "https://gov.uniswap.org/t/rfc-update-crosschain-governance-parameters-for-avalanche-megaeth-soneium-and-x-layer/26127",
+    publishedAt: "2026-06-19T17:04:30.632Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "26123",
+    publisherName: "Squidward Jalapeno",
+    title:
+      '[RFC] Introduction and Advice: "Seeds & Bones" Web3 Survival MOBA on Unichain & Ecosystem Grant Inquiry / General Guidance',
+    sourceUrl:
+      "https://gov.uniswap.org/t/rfc-introduction-and-advice-seeds-bones-web3-survival-moba-on-unichain-ecosystem-grant-inquiry-general-guidance/26123",
+    publishedAt: "2026-06-14T03:00:12.974Z"
+  },
+  {
+    protocol: "uniswap",
+    sourceType: "forum",
+    sourceId: "26036",
+    publisherName: "Rika_Axia Network",
+    title: "Axia Network Delegate Platform",
+    sourceUrl: "https://gov.uniswap.org/t/axia-network-delegate-platform/26036",
+    publishedAt: "2026-02-20T21:49:40.384Z"
   }
 ];
 

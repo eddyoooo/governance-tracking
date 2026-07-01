@@ -1,0 +1,146 @@
+import type { Logger } from "pino";
+import type {
+  GovernanceSource,
+  NormalizedGovernanceItem,
+  ProtocolAdapter,
+  RawGovernanceItem
+} from "../types.js";
+import {
+  UniswapForumClient,
+  type UniswapForumTopicPage
+} from "./uniswapForum.client.js";
+import { normalizeUniswapForumItem } from "./uniswap.normalizer.js";
+
+export interface UniswapAdapterOptions {
+  enabled: boolean;
+  forumBaseUrl: string;
+  forumApiBaseUrl: string;
+  allowedPublishers: string[];
+  maxPages: number;
+  categoryMaxPages: number;
+  logger?: Logger;
+  client?: UniswapForumClient;
+}
+
+export class UniswapAdapter implements ProtocolAdapter {
+  readonly protocol = "uniswap";
+  readonly source: GovernanceSource;
+  readonly enabled: boolean;
+  readonly publisherAllowlist: string[];
+  private readonly client: UniswapForumClient;
+  private readonly logger?: Logger;
+  private readonly maxPages: number;
+  private readonly categoryMaxPages: number;
+
+  constructor(options: UniswapAdapterOptions) {
+    this.enabled = options.enabled;
+    this.publisherAllowlist = options.allowedPublishers;
+    this.maxPages = options.maxPages;
+    this.categoryMaxPages = options.categoryMaxPages;
+    this.source = {
+      protocol: this.protocol,
+      type: "forum",
+      name: "Uniswap Governance Forum",
+      baseUrl: options.forumBaseUrl
+    };
+    this.client =
+      options.client ??
+      new UniswapForumClient({
+        baseUrl: options.forumBaseUrl,
+        apiBaseUrl: options.forumApiBaseUrl,
+        logger: options.logger
+      });
+    this.logger = options.logger;
+  }
+
+  async fetchRecent(): Promise<RawGovernanceItem[]> {
+    if (!this.enabled) {
+      this.logger?.info({ protocol: this.protocol }, "Skipping disabled protocol adapter");
+      return [];
+    }
+
+    const fetchedAt = new Date().toISOString();
+    const itemsBySourceId = new Map<string, RawGovernanceItem>();
+
+    await this.fetchTopicPages({
+      fetchedAt,
+      itemsBySourceId,
+      maxPages: this.maxPages,
+      fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
+      paginationLimitMessage:
+        "Reached Uniswap global latest pagination limit before exhausting pages"
+    });
+
+    const categories = await this.client.fetchCategories();
+
+    for (const category of categories) {
+      await this.fetchTopicPages({
+        fetchedAt,
+        itemsBySourceId,
+        maxPages: this.categoryMaxPages,
+        fetchPage: (page) => this.client.fetchCategoryTopicPage(category, { page }),
+        logContext: {
+          categoryId: category.id,
+          categoryName: category.name,
+          categoryPath: category.path
+        },
+        paginationLimitMessage:
+          "Reached Uniswap category pagination limit before exhausting pages"
+      });
+    }
+
+    return [...itemsBySourceId.values()];
+  }
+
+  normalize(item: RawGovernanceItem): NormalizedGovernanceItem {
+    return normalizeUniswapForumItem(item);
+  }
+
+  private async fetchTopicPages(options: {
+    fetchedAt: string;
+    itemsBySourceId: Map<string, RawGovernanceItem>;
+    maxPages: number;
+    fetchPage: (
+      page: number
+    ) => Promise<Pick<UniswapForumTopicPage, "topics" | "hasMore">>;
+    logContext?: Record<string, unknown>;
+    paginationLimitMessage: string;
+  }): Promise<void> {
+    const { fetchedAt, itemsBySourceId, fetchPage } = options;
+
+    for (let page = 0; page < options.maxPages; page += 1) {
+      const topicPage = await fetchPage(page);
+      const pageItems = topicPage.topics.map((topic) => ({
+        protocol: this.protocol,
+        sourceType: this.source.type,
+        sourceId: topic.sourceId,
+        title: topic.title,
+        publisherName: topic.publisherName,
+        sourceUrl: topic.sourceUrl,
+        publishedAt: topic.publishedAt,
+        fetchedAt,
+        raw: topic.raw
+      }));
+
+      for (const item of pageItems) {
+        if (!itemsBySourceId.has(item.sourceId)) {
+          itemsBySourceId.set(item.sourceId, item);
+        }
+      }
+
+      if (pageItems.length === 0 || !topicPage.hasMore) {
+        return;
+      }
+    }
+
+    this.logger?.warn(
+      {
+        protocol: this.protocol,
+        maxPages: options.maxPages,
+        fetchedCount: itemsBySourceId.size,
+        ...options.logContext
+      },
+      options.paginationLimitMessage
+    );
+  }
+}

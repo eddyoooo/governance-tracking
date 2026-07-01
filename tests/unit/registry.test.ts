@@ -2,19 +2,32 @@ import { describe, expect, it } from "@jest/globals";
 import { createProtocolRegistry, ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createFakeProtocolAdapter, createSilentLogger, testEnv } from "../helpers/builders.js";
 
+const aaveAllowedPublishers = [
+  "LlamaRisk",
+  "TokenLogic",
+  "Certora",
+  "kpk",
+  "karpatkey_TokenLogic",
+  "AaveLabs",
+  "stani"
+];
+
 describe("ProtocolRegistry", () => {
   it("registers, retrieves, and lists protocol adapters", () => {
     const registry = new ProtocolRegistry();
     const lido = createFakeProtocolAdapter({ protocol: "lido" });
     const aave = createFakeProtocolAdapter({ protocol: "aave" });
+    const uniswap = createFakeProtocolAdapter({ protocol: "uniswap" });
 
     registry.register(lido);
     registry.register(aave);
+    registry.register(uniswap);
 
     expect(registry.get("lido")).toBe(lido);
     expect(registry.get("aave")).toBe(aave);
+    expect(registry.get("uniswap")).toBe(uniswap);
     expect(registry.get("missing")).toBeUndefined();
-    expect(registry.list()).toEqual([lido, aave]);
+    expect(registry.list()).toEqual([lido, aave, uniswap]);
   });
 
   it("replaces adapters registered with the same protocol key", () => {
@@ -45,10 +58,14 @@ describe("ProtocolRegistry", () => {
         AAVE_ENABLED: "false",
         AAVE_FORUM_BASE_URL: "https://governance.aave.com",
         AAVE_FORUM_API_BASE_URL: "https://governance.aave.com",
-        AAVE_ALLOWED_PUBLISHERS: JSON.stringify([
-          "AaveLabs",
-          "TokenLogic",
-          "LlamaRisk"
+        AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
+        UNISWAP_ENABLED: "false",
+        UNISWAP_FORUM_BASE_URL: "https://gov.uniswap.org",
+        UNISWAP_FORUM_API_BASE_URL: "https://gov.uniswap.org",
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
+          "eek637",
+          "Squidward Jalapeno",
+          "Rika_Axia Network"
         ])
       }),
       createSilentLogger()
@@ -56,6 +73,7 @@ describe("ProtocolRegistry", () => {
 
     const lido = registry.get("lido");
     const aave = registry.get("aave");
+    const uniswap = registry.get("uniswap");
 
     expect(lido).toBeDefined();
     expect(lido).toMatchObject({
@@ -73,12 +91,24 @@ describe("ProtocolRegistry", () => {
     expect(aave).toMatchObject({
       protocol: "aave",
       enabled: false,
-      publisherAllowlist: ["AaveLabs", "TokenLogic", "LlamaRisk"],
+      publisherAllowlist: aaveAllowedPublishers,
       source: {
         protocol: "aave",
         type: "forum",
         name: "Aave Governance Forum",
         baseUrl: "https://governance.aave.com"
+      }
+    });
+    expect(uniswap).toBeDefined();
+    expect(uniswap).toMatchObject({
+      protocol: "uniswap",
+      enabled: false,
+      publisherAllowlist: ["eek637", "Squidward Jalapeno", "Rika_Axia Network"],
+      source: {
+        protocol: "uniswap",
+        type: "forum",
+        name: "Uniswap Governance Forum",
+        baseUrl: "https://gov.uniswap.org"
       }
     });
   });
@@ -89,16 +119,18 @@ describe("ProtocolRegistry", () => {
         STORAGE_MODE: "memory",
         DEMO_MODE: "true",
         LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher"]),
-        AAVE_ALLOWED_PUBLISHERS: JSON.stringify([
-          "AaveLabs",
-          "TokenLogic",
-          "LlamaRisk"
+        AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
+          "eek637",
+          "Squidward Jalapeno",
+          "Rika_Axia Network"
         ])
       }),
       createSilentLogger()
     );
     const lido = registry.get("lido");
     const aave = registry.get("aave");
+    const uniswap = registry.get("uniswap");
 
     await expect(lido?.fetchRecent()).resolves.toMatchObject([
       {
@@ -116,7 +148,7 @@ describe("ProtocolRegistry", () => {
     ]);
     const aaveItems = await aave?.fetchRecent();
 
-    expect(aaveItems).toHaveLength(4);
+    expect(aaveItems).toHaveLength(6);
     expect(aaveItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -140,8 +172,51 @@ describe("ProtocolRegistry", () => {
         expect.objectContaining({
           protocol: "aave",
           sourceType: "forum",
+          sourceId: "24713",
+          publisherName: "Certora"
+        }),
+        expect.objectContaining({
+          protocol: "aave",
+          sourceType: "forum",
+          sourceId: "20206",
+          publisherName: "kpk"
+        }),
+        expect.objectContaining({
+          protocol: "aave",
+          sourceType: "forum",
           sourceId: "25089",
           publisherName: "Gepetto"
+        })
+      ])
+    );
+    const uniswapItems = await uniswap?.fetchRecent();
+
+    expect(uniswapItems).toHaveLength(4);
+    expect(uniswapItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26127",
+          publisherName: "eek637"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26123",
+          publisherName: "Squidward Jalapeno"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26036",
+          publisherName: "Rika_Axia Network"
+        }),
+        expect.objectContaining({
+          protocol: "uniswap",
+          sourceType: "forum",
+          sourceId: "26132",
+          publisherName: "Sergei"
         })
       ])
     );

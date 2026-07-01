@@ -51,6 +51,32 @@ export type DiscourseRecentTopicsResponse = z.infer<
   typeof discourseRecentTopicsResponseSchema
 >;
 
+const discourseSiteCategorySchema = z
+  .object({
+    id: z.number(),
+    name: z.string(),
+    slug: z.string(),
+    parent_category_id: z.number().nullable().optional(),
+    read_restricted: z.boolean().optional().default(false)
+  })
+  .passthrough();
+
+export const discourseSiteResponseSchema = z
+  .object({
+    categories: z.array(discourseSiteCategorySchema).default([])
+  })
+  .passthrough();
+
+export type DiscourseSiteResponse = z.infer<typeof discourseSiteResponseSchema>;
+
+export interface DiscourseForumCategory {
+  id: number;
+  name: string;
+  slug: string;
+  parentCategoryId?: number;
+  path: string;
+}
+
 export interface DiscourseForumTopic {
   sourceId: string;
   title: string;
@@ -154,4 +180,33 @@ export function toDiscourseTopicPage(
     hasMore: Boolean(payload.topic_list.more_topics_url),
     moreTopicsUrl: payload.topic_list.more_topics_url ?? undefined
   };
+}
+
+export function mapDiscourseCategories(
+  payload: DiscourseSiteResponse
+): DiscourseForumCategory[] {
+  const categoriesById = new Map(
+    payload.categories.map((category) => [category.id, category])
+  );
+
+  return payload.categories
+    .filter((category) => !category.read_restricted)
+    .map((category) => {
+      const pathParts: string[] = [];
+      let current: DiscourseSiteResponse["categories"][number] | undefined = category;
+
+      while (current) {
+        pathParts.unshift(current.slug);
+        const parentId: number | undefined = current.parent_category_id ?? undefined;
+        current = parentId ? categoriesById.get(parentId) : undefined;
+      }
+
+      return {
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        parentCategoryId: category.parent_category_id ?? undefined,
+        path: `/c/${pathParts.join("/")}/${category.id}/l/latest.json`
+      };
+    });
 }

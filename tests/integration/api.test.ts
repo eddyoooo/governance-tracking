@@ -144,9 +144,11 @@ describe("monitor API", () => {
 
     const lido = await request(app).post("/api/admin/fetch/LIDO").expect(200);
     const aave = await request(app).post("/api/admin/fetch/aave").expect(200);
+    const uniswap = await request(app).post("/api/admin/fetch/uniswap").expect(200);
 
     expect(fetchJob.run).toHaveBeenNthCalledWith(1, "lido");
     expect(fetchJob.run).toHaveBeenNthCalledWith(2, "aave");
+    expect(fetchJob.run).toHaveBeenNthCalledWith(3, "uniswap");
     expect(lido.body).toMatchObject({
       protocol: "lido",
       fetchedCount: 2,
@@ -155,6 +157,12 @@ describe("monitor API", () => {
     });
     expect(aave.body).toMatchObject({
       protocol: "aave",
+      fetchedCount: 2,
+      storedNewCount: 1,
+      skippedCount: 1
+    });
+    expect(uniswap.body).toMatchObject({
+      protocol: "uniswap",
       fetchedCount: 2,
       storedNewCount: 1,
       skippedCount: 1

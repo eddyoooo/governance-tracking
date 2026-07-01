@@ -1,7 +1,9 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import {
   discourseRecentTopicsResponseSchema,
+  discourseSiteResponseSchema,
   fetchDiscourseJson,
+  mapDiscourseCategories,
   mapDiscourseRecentTopics,
   toDiscourseTopicPage
 } from "../../src/protocols/discourse/discourseForum.client.js";
@@ -53,6 +55,55 @@ describe("shared Discourse forum helpers", () => {
         topics: []
       }
     });
+  });
+
+  it("validates site categories and defaults missing category arrays", () => {
+    const parsed = discourseSiteResponseSchema.parse({});
+
+    expect(parsed.categories).toEqual([]);
+  });
+
+  it("maps public categories and subcategories to Discourse latest paths", () => {
+    const payload = discourseSiteResponseSchema.parse({
+      categories: [
+        {
+          id: 1,
+          name: "Governance",
+          slug: "governance",
+          read_restricted: false
+        },
+        {
+          id: 2,
+          name: "Requests for Comment",
+          slug: "proposal-discussion",
+          parent_category_id: 1,
+          read_restricted: false
+        },
+        {
+          id: 3,
+          name: "Private Staff",
+          slug: "private-staff",
+          read_restricted: true
+        }
+      ]
+    });
+
+    expect(mapDiscourseCategories(payload)).toEqual([
+      {
+        id: 1,
+        name: "Governance",
+        slug: "governance",
+        parentCategoryId: undefined,
+        path: "/c/governance/1/l/latest.json"
+      },
+      {
+        id: 2,
+        name: "Requests for Comment",
+        slug: "proposal-discussion",
+        parentCategoryId: 1,
+        path: "/c/governance/proposal-discussion/2/l/latest.json"
+      }
+    ]);
   });
 
   it("maps topics using original-poster metadata and preserves raw future fields", () => {

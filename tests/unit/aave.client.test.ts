@@ -43,7 +43,7 @@ describe("AaveForumClient", () => {
 
     const topics = await client.fetchRecentTopics();
 
-    expect(topics).toHaveLength(4);
+    expect(topics).toHaveLength(6);
     expect(topics[0]).toMatchObject({
       sourceId: "25170",
       title: "[ARFC] Deploy Aave V4 on Arc",
@@ -55,8 +55,26 @@ describe("AaveForumClient", () => {
       "AaveLabs",
       "LlamaRisk",
       "TokenLogic",
-      "Gepetto"
+      "Gepetto",
+      "Certora",
+      "kpk"
     ]);
+    expect(topics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: "24713",
+          publisherName: "Certora",
+          sourceUrl:
+            "https://governance.aave.com/t/arfc-strengthening-upgrade-safety-concord-equivalence-checker-by-certora/24713"
+        }),
+        expect.objectContaining({
+          sourceId: "20206",
+          publisherName: "kpk",
+          sourceUrl:
+            "https://governance.aave.com/t/arfc-karpatkey-as-gho-growth-service-provider/20206"
+        })
+      ])
+    );
   });
 
   it("requests the Aave latest JSON endpoint with pagination", async () => {
@@ -154,7 +172,7 @@ describe("AaveForumClient", () => {
       { page: 2 }
     );
 
-    expect(page.topics).toHaveLength(4);
+    expect(page.topics).toHaveLength(6);
     const [url, init] = fetchImpl.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe(
       "https://governance.aave.com/c/governance/new-market/10/l/latest.json?page=2"
@@ -187,7 +205,7 @@ describe("AaveForumClient", () => {
       hasMore: true,
       moreTopicsUrl: "/latest?no_definitions=true&page=1"
     });
-    expect(page.topics).toHaveLength(4);
+    expect(page.topics).toHaveLength(6);
   });
 
   it("trims blank display names and falls back to username or last poster", async () => {

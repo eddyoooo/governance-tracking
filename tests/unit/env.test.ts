@@ -1,11 +1,23 @@
 import { describe, expect, it } from "@jest/globals";
 import { isMemoryMode, loadEnv } from "../../src/config/env.js";
 
+const aaveAllowedPublishers = [
+  "LlamaRisk",
+  "TokenLogic",
+  "Certora",
+  "kpk",
+  "karpatkey_TokenLogic",
+  "AaveLabs",
+  "stani"
+];
+
 describe("env parsing", () => {
   it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
     const env = loadEnv({
       LIDO_ALLOWED_PUBLISHERS: " Allowed Publisher,DAO Ops ",
-      AAVE_ALLOWED_PUBLISHERS: " AaveLabs, TokenLogic, LlamaRisk ",
+      AAVE_ALLOWED_PUBLISHERS:
+        " LlamaRisk, TokenLogic, Certora, kpk, karpatkey_TokenLogic, AaveLabs, stani ",
+      UNISWAP_ALLOWED_PUBLISHERS: " eek637, Squidward Jalapeno, Rika_Axia Network ",
       FIREBASE_PRIVATE_KEY: "line1\\nline2"
     } as NodeJS.ProcessEnv);
 
@@ -18,13 +30,19 @@ describe("env parsing", () => {
     expect(env.aaveForumBaseUrl).toBe("https://governance.aave.com");
     expect(env.aaveForumApiBaseUrl).toBe("https://governance.aave.com");
     expect(env.aaveEnabled).toBe(true);
-    expect(env.aaveAllowedPublishers).toEqual([
-      "AaveLabs",
-      "TokenLogic",
-      "LlamaRisk"
-    ]);
+    expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
     expect(env.aaveFetchMaxPages).toBe(10);
     expect(env.aaveCategoryFetchMaxPages).toBe(2);
+    expect(env.uniswapForumBaseUrl).toBe("https://gov.uniswap.org");
+    expect(env.uniswapForumApiBaseUrl).toBe("https://gov.uniswap.org");
+    expect(env.uniswapEnabled).toBe(true);
+    expect(env.uniswapAllowedPublishers).toEqual([
+      "eek637",
+      "Squidward Jalapeno",
+      "Rika_Axia Network"
+    ]);
+    expect(env.uniswapFetchMaxPages).toBe(10);
+    expect(env.uniswapCategoryFetchMaxPages).toBe(2);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
@@ -39,7 +57,12 @@ describe("env parsing", () => {
         "Lido | Finance Team",
         "Lido Ecosystem Foundation - Operations Team"
       ]),
-      AAVE_ALLOWED_PUBLISHERS: JSON.stringify(["AaveLabs", "TokenLogic", "LlamaRisk"])
+      AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
+      UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify([
+        "eek637",
+        "Squidward Jalapeno",
+        "Rika_Axia Network"
+      ])
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoAllowedPublishers).toEqual([
@@ -47,10 +70,11 @@ describe("env parsing", () => {
       "Lido | Finance Team",
       "Lido Ecosystem Foundation - Operations Team"
     ]);
-    expect(env.aaveAllowedPublishers).toEqual([
-      "AaveLabs",
-      "TokenLogic",
-      "LlamaRisk"
+    expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
+    expect(env.uniswapAllowedPublishers).toEqual([
+      "eek637",
+      "Squidward Jalapeno",
+      "Rika_Axia Network"
     ]);
   });
 
@@ -77,6 +101,12 @@ describe("env parsing", () => {
         AAVE_ALLOWED_PUBLISHERS: "[not-json"
       } as NodeJS.ProcessEnv)
     ).toThrow("Invalid JSON array in AAVE_ALLOWED_PUBLISHERS.");
+
+    expect(() =>
+      loadEnv({
+        UNISWAP_ALLOWED_PUBLISHERS: "[not-json"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in UNISWAP_ALLOWED_PUBLISHERS.");
   });
 
   it("rejects JSON allowlists that are not arrays of strings", () => {
@@ -99,6 +129,7 @@ describe("env parsing", () => {
       ENABLE_SCHEDULER: "false",
       LIDO_ENABLED: "FALSE",
       AAVE_ENABLED: "FALSE",
+      UNISWAP_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       TELEGRAM_E2E_ENABLED: "true",
       API_AUTH_ENABLED: "true"
@@ -108,6 +139,7 @@ describe("env parsing", () => {
     expect(env.enableScheduler).toBe(false);
     expect(env.lidoEnabled).toBe(false);
     expect(env.aaveEnabled).toBe(false);
+    expect(env.uniswapEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.apiAuthEnabled).toBe(true);
@@ -247,12 +279,16 @@ describe("env parsing", () => {
     const env = loadEnv({
       LIDO_FETCH_MAX_PAGES: "7",
       AAVE_FETCH_MAX_PAGES: "6",
-      AAVE_CATEGORY_FETCH_MAX_PAGES: "3"
+      AAVE_CATEGORY_FETCH_MAX_PAGES: "3",
+      UNISWAP_FETCH_MAX_PAGES: "8",
+      UNISWAP_CATEGORY_FETCH_MAX_PAGES: "4"
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoFetchMaxPages).toBe(7);
     expect(env.aaveFetchMaxPages).toBe(6);
     expect(env.aaveCategoryFetchMaxPages).toBe(3);
+    expect(env.uniswapFetchMaxPages).toBe(8);
+    expect(env.uniswapCategoryFetchMaxPages).toBe(4);
 
     expect(() =>
       loadEnv({
@@ -287,6 +323,30 @@ describe("env parsing", () => {
     expect(() =>
       loadEnv({
         AAVE_CATEGORY_FETCH_MAX_PAGES: "6"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        UNISWAP_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        UNISWAP_FETCH_MAX_PAGES: "21"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        UNISWAP_CATEGORY_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        UNISWAP_CATEGORY_FETCH_MAX_PAGES: "6"
       } as NodeJS.ProcessEnv)
     ).toThrow();
   });

@@ -12,50 +12,52 @@ import {
   type DiscourseSiteResponse
 } from "../discourse/discourseForum.client.js";
 
-export const aaveRecentTopicsResponseSchema = discourseRecentTopicsResponseSchema;
-export type AaveRecentTopicsResponse = DiscourseRecentTopicsResponse;
-export const aaveSiteResponseSchema = discourseSiteResponseSchema;
-export type AaveSiteResponse = DiscourseSiteResponse;
-export type AaveForumCategory = DiscourseForumCategory;
-export type AaveForumTopic = DiscourseForumTopic;
-export type AaveForumTopicPage = DiscourseForumTopicPage;
+export const uniswapRecentTopicsResponseSchema = discourseRecentTopicsResponseSchema;
+export const uniswapSiteResponseSchema = discourseSiteResponseSchema;
+export type UniswapRecentTopicsResponse = DiscourseRecentTopicsResponse;
+export type UniswapSiteResponse = DiscourseSiteResponse;
+export type UniswapForumCategory = DiscourseForumCategory;
+export type UniswapForumTopic = DiscourseForumTopic;
+export type UniswapForumTopicPage = DiscourseForumTopicPage;
 
-export interface AaveForumClientOptions {
+export interface UniswapForumClientOptions {
   baseUrl: string;
   apiBaseUrl: string;
   fetchImpl?: typeof fetch;
   logger?: Pick<Logger, "debug" | "error">;
 }
 
-export class AaveForumClient {
+export class UniswapForumClient {
   private readonly baseUrl: string;
   private readonly apiBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly logger?: Pick<Logger, "debug" | "error">;
 
-  constructor(options: AaveForumClientOptions) {
+  constructor(options: UniswapForumClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiBaseUrl = options.apiBaseUrl.replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logger = options.logger;
   }
 
-  async fetchRecentTopics(options: { page?: number } = {}): Promise<AaveForumTopic[]> {
+  async fetchRecentTopics(
+    options: { page?: number } = {}
+  ): Promise<UniswapForumTopic[]> {
     const topicPage = await this.fetchRecentTopicPage(options);
 
     return topicPage.topics;
   }
 
-  async fetchCategories(): Promise<AaveForumCategory[]> {
+  async fetchCategories(): Promise<UniswapForumCategory[]> {
     const payload = await this.fetchJson("/site.json");
-    const parsed = aaveSiteResponseSchema.safeParse(payload);
+    const parsed = uniswapSiteResponseSchema.safeParse(payload);
 
     if (!parsed.success) {
       this.logger?.error(
         { issues: parsed.error.issues },
-        "Failed to validate Aave site response"
+        "Failed to validate Uniswap site response"
       );
-      throw new Error("Invalid Aave site response.");
+      throw new Error("Invalid Uniswap site response.");
     }
 
     return mapDiscourseCategories(parsed.data);
@@ -63,36 +65,36 @@ export class AaveForumClient {
 
   async fetchRecentTopicPage(
     options: { page?: number } = {}
-  ): Promise<AaveForumTopicPage> {
+  ): Promise<UniswapForumTopicPage> {
     const page = options.page ?? 0;
     const payload = await this.fetchJson(`/latest.json?page=${page}`);
-    const parsed = aaveRecentTopicsResponseSchema.safeParse(payload);
+    const parsed = uniswapRecentTopicsResponseSchema.safeParse(payload);
 
     if (!parsed.success) {
       this.logger?.error(
         { issues: parsed.error.issues },
-        "Failed to validate Aave recent topics response"
+        "Failed to validate Uniswap recent topics response"
       );
-      throw new Error("Invalid Aave recent topics response.");
+      throw new Error("Invalid Uniswap recent topics response.");
     }
 
     return toDiscourseTopicPage(page, parsed.data, this.baseUrl);
   }
 
   async fetchCategoryTopicPage(
-    category: AaveForumCategory,
+    category: UniswapForumCategory,
     options: { page?: number } = {}
-  ): Promise<AaveForumTopicPage> {
+  ): Promise<UniswapForumTopicPage> {
     const page = options.page ?? 0;
     const payload = await this.fetchJson(`${category.path}?page=${page}`);
-    const parsed = aaveRecentTopicsResponseSchema.safeParse(payload);
+    const parsed = uniswapRecentTopicsResponseSchema.safeParse(payload);
 
     if (!parsed.success) {
       this.logger?.error(
         { category, issues: parsed.error.issues },
-        "Failed to validate Aave category topics response"
+        "Failed to validate Uniswap category topics response"
       );
-      throw new Error("Invalid Aave category topics response.");
+      throw new Error("Invalid Uniswap category topics response.");
     }
 
     return toDiscourseTopicPage(page, parsed.data, this.baseUrl);
@@ -102,7 +104,7 @@ export class AaveForumClient {
     return fetchDiscourseJson({
       apiBaseUrl: this.apiBaseUrl,
       pathname,
-      forumLabel: "Aave forum",
+      forumLabel: "Uniswap forum",
       fetchImpl: this.fetchImpl,
       logger: this.logger
     });

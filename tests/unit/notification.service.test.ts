@@ -58,7 +58,7 @@ describe("notification services", () => {
     expect(telegramTestNotificationFixtures.length).toBeGreaterThanOrEqual(2);
     expect(new Set(publisherNames).size).toBe(telegramTestNotificationFixtures.length);
     expect(new Set(telegramTestNotificationFixtures.map((fixture) => fixture.protocol))).toEqual(
-      new Set(["lido", "aave"])
+      new Set(["lido", "aave", "uniswap"])
     );
     expect(publisherNames).toEqual(
       expect.arrayContaining([
@@ -66,7 +66,12 @@ describe("notification services", () => {
         "Lido | Finance Team",
         "AaveLabs",
         "LlamaRisk",
-        "TokenLogic"
+        "TokenLogic",
+        "Certora",
+        "kpk",
+        "eek637",
+        "Squidward Jalapeno",
+        "Rika_Axia Network"
       ])
     );
 
@@ -78,10 +83,15 @@ describe("notification services", () => {
         expect(fixture.sourceUrl).toMatch(
           new RegExp(`^https://research\\.lido\\.fi/t/.+/${fixture.sourceId}$`)
         );
-      } else {
+      } else if (fixture.protocol === "aave") {
         expect(fixture.protocol).toBe("aave");
         expect(fixture.sourceUrl).toMatch(
           new RegExp(`^https://governance\\.aave\\.com/t/.+/${fixture.sourceId}$`)
+        );
+      } else {
+        expect(fixture.protocol).toBe("uniswap");
+        expect(fixture.sourceUrl).toMatch(
+          new RegExp(`^https://gov\\.uniswap\\.org/t/.+/${fixture.sourceId}$`)
         );
       }
       expect(new Date(fixture.publishedAt).toISOString()).toBe(fixture.publishedAt);

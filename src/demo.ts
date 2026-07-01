@@ -9,6 +9,8 @@ import { AaveAdapter } from "./protocols/aave/aave.adapter.js";
 import { createAaveDemoClient } from "./protocols/aave/aave.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
 import type { StoredProposal } from "./protocols/types.js";
+import { UniswapAdapter } from "./protocols/uniswap/uniswap.adapter.js";
+import { createUniswapDemoClient } from "./protocols/uniswap/uniswap.demoClient.js";
 import { createApp } from "./server.js";
 import type { FetchRun } from "./storage/fetchRun.repository.js";
 
@@ -17,7 +19,20 @@ const DEMO_ALLOWED_PUBLISHERS = [
   "Lido | Finance Team",
   "Lido Ecosystem Foundation - Operations Team"
 ];
-const DEMO_AAVE_ALLOWED_PUBLISHERS = ["AaveLabs", "TokenLogic", "LlamaRisk"];
+const DEMO_AAVE_ALLOWED_PUBLISHERS = [
+  "LlamaRisk",
+  "TokenLogic",
+  "Certora",
+  "kpk",
+  "karpatkey_TokenLogic",
+  "AaveLabs",
+  "stani"
+];
+const DEMO_UNISWAP_ALLOWED_PUBLISHERS = [
+  "eek637",
+  "Squidward Jalapeno",
+  "Rika_Axia Network"
+];
 
 function readStepDelayMs(): number {
   const raw = process.env.DEMO_STEP_DELAY_MS;
@@ -107,11 +122,13 @@ function summarizeFetchRuns(fetchRuns: FetchRun[]) {
 
 function createDemoRegistry(
   lidoAdapter: ScriptedLidoDemoAdapter,
-  aaveAdapter: AaveAdapter
+  aaveAdapter: AaveAdapter,
+  uniswapAdapter: UniswapAdapter
 ): ProtocolRegistry {
   const registry = new ProtocolRegistry();
   registry.register(lidoAdapter);
   registry.register(aaveAdapter);
+  registry.register(uniswapAdapter);
 
   return registry;
 }
@@ -132,6 +149,9 @@ async function main(): Promise<void> {
     AAVE_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_AAVE_ALLOWED_PUBLISHERS),
     AAVE_FETCH_MAX_PAGES: "10",
     AAVE_CATEGORY_FETCH_MAX_PAGES: "2",
+    UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_UNISWAP_ALLOWED_PUBLISHERS),
+    UNISWAP_FETCH_MAX_PAGES: "10",
+    UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
     API_AUTH_ENABLED: "false",
     LOG_LEVEL: "silent"
   });
@@ -151,13 +171,27 @@ async function main(): Promise<void> {
       forumApiBaseUrl: env.aaveForumApiBaseUrl
     })
   });
+  const uniswapAdapter = new UniswapAdapter({
+    enabled: env.uniswapEnabled,
+    forumBaseUrl: env.uniswapForumBaseUrl,
+    forumApiBaseUrl: env.uniswapForumApiBaseUrl,
+    allowedPublishers: env.uniswapAllowedPublishers,
+    maxPages: env.uniswapFetchMaxPages,
+    categoryMaxPages: env.uniswapCategoryFetchMaxPages,
+    client: createUniswapDemoClient({
+      forumBaseUrl: env.uniswapForumBaseUrl,
+      forumApiBaseUrl: env.uniswapForumApiBaseUrl
+    })
+  });
   const { context } = createApp({
     env,
-    protocolRegistry: createDemoRegistry(lidoAdapter, aaveAdapter)
+    protocolRegistry: createDemoRegistry(lidoAdapter, aaveAdapter, uniswapAdapter)
   });
 
   console.log("Governance monitor demo");
-  console.log("Using memory storage plus locally saved Lido and Aave forum samples.");
+  console.log(
+    "Using memory storage plus locally saved Lido, Aave, and Uniswap forum samples."
+  );
   console.log(
     env.enableTelegramNotifications
       ? `Telegram is enabled for ${env.telegramAllowedUserIds.length} allowed user(s).`
@@ -173,6 +207,7 @@ async function main(): Promise<void> {
       telegramEnabled: env.enableTelegramNotifications,
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,
+      uniswapAllowedPublishers: env.uniswapAllowedPublishers,
       nonAllowlistedPublisherSample: {
         sourceId: nonAllowlistedDemoFixture.sourceId,
         publisherName: nonAllowlistedDemoFixture.publisherName,
@@ -256,6 +291,18 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  const uniswapFirstFetch = await runStep(
+    "Uniswap fetch: scan global latest plus all public category feeds",
+    async () => summarizeFetch(await context.fetchJob.run("uniswap")),
+    stepDelayMs
+  );
+
+  const uniswapDuplicateFetch = await runStep(
+    "Uniswap duplicate fetch: prove existing proposals are not duplicated or rewritten",
+    async () => summarizeFetch(await context.fetchJob.run("uniswap")),
+    stepDelayMs
+  );
+
   const lidoDuplicateFetch = await runStep(
     "Lido duplicate fetch: prove repeat sightings are unchanged",
     async () => summarizeFetch(await context.fetchJob.run("lido")),
@@ -301,6 +348,10 @@ async function main(): Promise<void> {
     aave: {
       firstFetch: aaveFirstFetch,
       duplicateFetch: aaveDuplicateFetch
+    },
+    uniswap: {
+      firstFetch: uniswapFirstFetch,
+      duplicateFetch: uniswapDuplicateFetch
     },
     lidoDuplicateFetch,
     storedProposalCount: storedProposals.length,

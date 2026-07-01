@@ -2,7 +2,7 @@
 
 Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
 
-The current tracked protocols are Lido and Aave. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
+The current tracked protocols are Lido, Aave, and Uniswap. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
 
 For operator commands and expected results, use [PLATFORM_MANUAL.md](/Users/orzsikodon/Projects/governance-tracking/PLATFORM_MANUAL.md).
 
@@ -22,6 +22,7 @@ API=http://localhost:3000
 curl -s "$API/health"
 curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
+curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 ```
 
@@ -39,7 +40,7 @@ npm run check
 
 ## Current Scope
 
-- Fetch recent proposal/forum activity for Lido and Aave.
+- Fetch recent proposal/forum activity for Lido, Aave, and Uniswap.
 - Validate Discourse JSON responses with Zod.
 - Filter fetched items by protocol-specific trusted publisher allowlists.
 - Normalize allowlisted items into a common stored proposal shape.
@@ -68,7 +69,7 @@ npm run check
 ```text
 Scheduler or admin fetch request
   -> protocol registry
-  -> Lido or Aave adapter
+  -> Lido, Aave, or Uniswap adapter
   -> Discourse client
   -> Zod response validation
   -> publisher allowlist filter
@@ -86,15 +87,19 @@ GET https://research.lido.fi/c/proposals/9/l/latest.json?page=<page>
 
 `9` is the Lido forum proposal category id. This keeps Lido polling focused on proposal-category topics instead of all latest forum discussion.
 
-Aave uses broader forum coverage because Aave proposal-like activity can appear across multiple public categories and subcategories:
+Aave and Uniswap use broader forum coverage because proposal-like activity can appear across multiple public categories and subcategories:
 
 ```text
 GET https://governance.aave.com/latest.json?page=<page>
 GET https://governance.aave.com/site.json
 GET https://governance.aave.com/c/<category-path>/<category-id>/l/latest.json?page=<page>
+
+GET https://gov.uniswap.org/latest.json?page=<page>
+GET https://gov.uniswap.org/site.json
+GET https://gov.uniswap.org/c/<category-path>/<category-id>/l/latest.json?page=<page>
 ```
 
-The Aave adapter combines global latest pages with discovered public category/subcategory feeds, then deduplicates by Discourse topic id.
+The Aave and Uniswap adapters combine global latest pages with discovered public category/subcategory feeds, then deduplicate by Discourse topic id. For Uniswap, that currently covers public categories discovered from `/site.json`, such as Temperature Check, Requests for Comment, Consensus Check, Delegation Pitch, Governance-Meta, and Service Providers. Private/read-restricted categories are ignored because the public API does not expose them without forum permissions.
 
 ## Stored Data
 
@@ -215,12 +220,33 @@ AAVE_FORUM_BASE_URL=https://governance.aave.com
 AAVE_FORUM_API_BASE_URL=https://governance.aave.com
 AAVE_ENABLED=true
 AAVE_ALLOWED_PUBLISHERS='[
-  "AaveLabs",
+  "LlamaRisk",
   "TokenLogic",
-  "LlamaRisk"
+  "Certora",
+  "kpk",
+  "karpatkey_TokenLogic",
+  "AaveLabs",
+  "stani"
 ]'
 AAVE_FETCH_MAX_PAGES=10
 AAVE_CATEGORY_FETCH_MAX_PAGES=2
+```
+
+Aave allowlist entries should use Discourse publisher usernames. The current tracked names correspond to LlamaRisk, TokenLogic, Certora, karpatkey, Aave Labs, and Stani. `karpatkey_TokenLogic` is included because Aave has used that joint provider account for finance-service-provider posts.
+
+Uniswap configuration:
+
+```bash
+UNISWAP_FORUM_BASE_URL=https://gov.uniswap.org
+UNISWAP_FORUM_API_BASE_URL=https://gov.uniswap.org
+UNISWAP_ENABLED=true
+UNISWAP_ALLOWED_PUBLISHERS='[
+  "eek637",
+  "Squidward Jalapeno",
+  "Rika_Axia Network"
+]'
+UNISWAP_FETCH_MAX_PAGES=10
+UNISWAP_CATEGORY_FETCH_MAX_PAGES=2
 ```
 
 Telegram direct-user notifications:
@@ -301,6 +327,7 @@ Security notes:
 | `GET /health` | No | Confirms service health and storage/scheduler mode. |
 | `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/notify-pending` | No | Retries proposals currently marked `pending`. |
 | `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
 
@@ -322,6 +349,7 @@ Demo mode shows:
 - New allowlisted Lido items being discovered over multiple fetches.
 - Non-allowlisted Lido items being skipped.
 - Aave global latest plus category/subcategory coverage.
+- Uniswap global latest plus all discovered public category/subcategory coverage.
 - Repeat fetches updating counts without duplicating proposals.
 - Stored proposals printed from the repository.
 - Fetch-run audit records printed from the repository.
