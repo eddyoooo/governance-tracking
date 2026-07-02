@@ -1,4 +1,5 @@
 import { loadEnv } from "./config/env.js";
+import { shouldEnableAdminStatusDemo } from "./demoConfig.js";
 import {
   nonAllowlistedDemoFixture,
   ScriptedLidoDemoAdapter
@@ -139,6 +140,7 @@ function createDemoRegistry(
 
 async function main(): Promise<void> {
   const stepDelayMs = readStepDelayMs();
+  const adminDemoEnabled = shouldEnableAdminStatusDemo();
   const env = loadEnv({
     ...process.env,
     NODE_ENV: "development",
@@ -157,7 +159,7 @@ async function main(): Promise<void> {
     UNISWAP_FETCH_MAX_PAGES: "10",
     UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
     API_AUTH_ENABLED: "false",
-    ENABLE_ADMIN_STATUS_REPORTS: "false",
+    ENABLE_ADMIN_STATUS_REPORTS: adminDemoEnabled ? "true" : "false",
     LOG_LEVEL: "silent"
   });
   const lidoAdapter = new ScriptedLidoDemoAdapter({
@@ -202,6 +204,11 @@ async function main(): Promise<void> {
       ? `Telegram is enabled for ${env.telegramAllowedUserIds.length} allowed user(s).`
       : "Telegram is disabled; notifications will be marked skipped."
   );
+  console.log(
+    env.enableAdminStatusReports
+      ? "Admin status demo is enabled for the configured Telegram admin."
+      : "Admin status demo is disabled; run npm run demo:admin to send it."
+  );
 
   await runStep(
     "Runtime configuration",
@@ -210,6 +217,7 @@ async function main(): Promise<void> {
       demoMode: env.demoMode,
       schedulerEnabled: env.enableScheduler,
       telegramEnabled: env.enableTelegramNotifications,
+      adminStatusReportsEnabled: env.enableAdminStatusReports,
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,
       uniswapAllowedPublishers: env.uniswapAllowedPublishers,
@@ -347,6 +355,34 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  let adminStatusReport:
+    | {
+        sent: boolean;
+        healthy: boolean;
+        problemCount: number;
+        problems: string[];
+        messagePreview: string[];
+      }
+    | undefined;
+
+  if (context.adminStatusReporter.enabled) {
+    adminStatusReport = await runStep(
+      "Admin status report: send operator health check",
+      async () => {
+        const report = await context.adminStatusReporter.sendDailyStatusReport();
+
+        return {
+          sent: true,
+          healthy: report.healthy,
+          problemCount: report.problems.length,
+          problems: report.problems,
+          messagePreview: report.message.split("\n").slice(0, 12)
+        };
+      },
+      stepDelayMs
+    );
+  }
+
   console.log("\nSummary");
   printJson({
     lidoDiscoveries: discoverySummaries,
@@ -365,7 +401,11 @@ async function main(): Promise<void> {
       env.enableTelegramNotifications
         ? "notifications sent during new proposal fetches"
         : "disabled for this run",
+    adminStatusReport:
+      adminStatusReport ??
+      "disabled for this run; use npm run demo:admin to send the operator status report",
     completeDemoCommand: "npm run demo",
+    adminDemoCommand: "npm run demo:admin",
     telegramOnlyCommand: "npm run telegram:test-send"
   });
 }

@@ -123,6 +123,10 @@ export async function buildAdminStatusReport(options: {
     }
   }
 
+  if (enabledProtocols.length === 0) {
+    problems.push("No protocol adapters are enabled.");
+  }
+
   for (const protocol of enabledProtocols) {
     const latestRun = latestByProtocol.get(protocol);
 

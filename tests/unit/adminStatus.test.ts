@@ -141,6 +141,54 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Aave forum unavailable");
   });
 
+  it("reports unhealthy when no protocol adapters are enabled", async () => {
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: {
+        list: jest.fn(() => [
+          createFakeProtocolAdapter({ protocol: "lido", enabled: false }),
+          createFakeProtocolAdapter({ protocol: "aave", enabled: false })
+        ])
+      } as never,
+      fetchRunRepository: new MemoryFetchRunRepository(),
+      proposalRepository: new MemoryProposalRepository()
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toContain("No protocol adapters are enabled.");
+    expect(result.message).toContain("Status: ATTENTION REQUIRED");
+    expect(result.message).toContain("Enabled protocols: none");
+  });
+
+  it("escapes source values in Telegram HTML status messages", async () => {
+    const protocol = "aave&<bad>";
+    const fetchRunRepository = new MemoryFetchRunRepository();
+
+    await fetchRunRepository.upsert(
+      createRun({
+        id: "fetchRun_html_escape",
+        protocol,
+        status: "failed",
+        errors: ["<script>alert('&')</script>"]
+      })
+    );
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: {
+        list: jest.fn(() => [createFakeProtocolAdapter({ protocol })])
+      } as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository()
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.message).toContain("aave&amp;&lt;bad&gt;");
+    expect(result.message).toContain("&lt;script&gt;alert('&amp;')&lt;/script&gt;");
+    expect(result.message).not.toContain("aave&<bad>");
+    expect(result.message).not.toContain("<script>alert('&')</script>");
+  });
+
   it("sends the built report through the configured admin notifier", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();
@@ -225,6 +273,28 @@ describe("admin status reports", () => {
       disable_web_page_preview: true
     });
     expect(String(body.text)).toContain("GOVERNANCE MONITOR DAILY STATUS");
+  });
+
+  it("rejects invalid Telegram admin notifier configuration before sending", () => {
+    expect(
+      () =>
+        new TelegramAdminStatusNotifier({
+          botToken: " ",
+          adminUserId: "1549323073",
+          fetchImpl: jest.fn<typeof fetch>()
+        })
+    ).toThrow("TelegramAdminStatusNotifier requires a bot token.");
+
+    expect(
+      () =>
+        new TelegramAdminStatusNotifier({
+          botToken: "admin-token",
+          adminUserId: "0",
+          fetchImpl: jest.fn<typeof fetch>()
+        })
+    ).toThrow(
+      "TelegramAdminStatusNotifier admin user id must be a positive numeric Telegram user ID."
+    );
   });
 
   it("redacts Telegram admin secrets when delivery fails", async () => {

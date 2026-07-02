@@ -32,6 +32,12 @@ Run the end-to-end terminal walkthrough:
 DEMO_STEP_DELAY_MS=750 npm run demo
 ```
 
+Run the walkthrough and send the final operator status report to the configured Telegram admin:
+
+```bash
+DEMO_STEP_DELAY_MS=750 npm run demo:admin
+```
+
 Run the full local safety check:
 
 ```bash
@@ -49,6 +55,7 @@ npm run check
 - Avoid rewriting unchanged proposals on every poll.
 - Send direct Telegram notifications for newly discovered allowlisted proposals.
 - Avoid duplicate notifications for already-known proposals.
+- Send a daily Telegram status report to the configured admin when enabled.
 - Run scheduled polling every six hours by default.
 - Provide a small operational API for health, manual fetches, notification retries, and fetch-run audit.
 - Run deterministic unit/integration tests without live forum calls.
@@ -284,6 +291,8 @@ ADMIN_STATUS_CRON=0 9 * * *
 
 Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, the admin receives one daily status message at `09:00` server time by default. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, pending/failed notification counts, and recent problems.
 
+For a one-off demo, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo:admin`. That command uses memory storage and local forum samples, performs the normal monitor demo, and sends the final status report to the admin user only. Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
+
 ## Commands
 
 Install dependencies:
@@ -302,6 +311,12 @@ Run the terminal demo:
 
 ```bash
 npm run demo
+```
+
+Run the terminal demo with the final admin status Telegram report:
+
+```bash
+npm run demo:admin
 ```
 
 Run all normal tests:

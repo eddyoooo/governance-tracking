@@ -97,6 +97,16 @@ DEMO_STEP_DELAY_MS=0 npm run demo
 
 Telegram demo mode: set `ENABLE_TELEGRAM_NOTIFICATIONS=true`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ALLOWED_USER_IDS`, then run `npm run demo`. Each newly discovered allowlisted proposal can send a direct Telegram notification.
 
+Admin status demo mode: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run:
+
+```bash
+npm run demo:admin
+```
+
+Expected result: the normal terminal demo runs, then the final operator status report is sent to the configured Telegram admin.
+
+Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
+
 ## 3. Health Check
 
 ```bash
@@ -284,6 +294,12 @@ ENABLE_SCHEDULER=true
 ```
 
 Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, pending/failed notification counts, enabled protocols, and any detected problems.
+
+One-off demo command:
+
+```bash
+npm run demo:admin
+```
 
 ## 10. Tests
 

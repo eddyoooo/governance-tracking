@@ -14,6 +14,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "demo": "tsx src/demo.ts",
+    "demo:admin": "ENABLE_ADMIN_DEMO=true tsx src/demo.ts",
     "telegram:test-send": "tsx src/telegramTestSend.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
     "test:e2e:telegram": "RUN_TELEGRAM_E2E=true TELEGRAM_E2E_ENABLED=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/e2e/telegram.e2e.test.ts",
