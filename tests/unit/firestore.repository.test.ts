@@ -6,6 +6,10 @@ import {
   type FetchRun
 } from "../../src/storage/fetchRun.repository.js";
 import { FirestoreProposalRepository } from "../../src/storage/firestoreProposal.repository.js";
+import {
+  FirestoreSourceActivityRepository,
+  type SourceActivityRecord
+} from "../../src/storage/sourceActivity.repository.js";
 import { createRawGovernanceItem } from "../helpers/builders.js";
 
 type StoredDocument = Record<string, unknown>;
@@ -31,6 +35,14 @@ class FakeDocumentReference {
       this.id,
       options?.merge ? { ...(existing ?? {}), ...data } : data
     );
+  }
+
+  create(data: StoredDocument) {
+    if (this.documents.has(this.id)) {
+      throw new Error(`Document already exists: ${this.id}`);
+    }
+
+    this.documents.set(this.id, data);
   }
 }
 
@@ -100,6 +112,28 @@ class FakeCollectionReference extends FakeQuery {
   }
 }
 
+class FakeTransaction {
+  async get(target: { get(): Promise<unknown> }) {
+    return target.get();
+  }
+
+  set(
+    ref: FakeDocumentReference,
+    data: StoredDocument,
+    options?: { merge?: boolean }
+  ): FakeTransaction {
+    void ref.set(data, options);
+
+    return this;
+  }
+
+  create(ref: FakeDocumentReference, data: StoredDocument): FakeTransaction {
+    ref.create(data);
+
+    return this;
+  }
+}
+
 function createFakeFirestore(
   seed: Record<string, Record<string, StoredDocument>> = {}
 ): Firestore {
@@ -117,7 +151,9 @@ function createFakeFirestore(
       }
 
       return new FakeCollectionReference(collections.get(name) ?? new Map());
-    }
+    },
+    runTransaction: async (updateFunction: (transaction: FakeTransaction) => unknown) =>
+      updateFunction(new FakeTransaction())
   } as unknown as Firestore;
 }
 
@@ -569,5 +605,51 @@ describe("FirestoreFetchRunRepository", () => {
       { id: "older" }
     ]);
     await expect(repository.findAll(1)).resolves.toMatchObject([{ id: "newer" }]);
+  });
+});
+
+describe("FirestoreSourceActivityRepository", () => {
+  it("upserts and lists source activity records by updatedAt", async () => {
+    const repository = new FirestoreSourceActivityRepository(createFakeFirestore());
+    const older: SourceActivityRecord = {
+      protocol: "lido",
+      sourceType: "forum",
+      latestRawSourceId: "1001",
+      latestRawPublishedAt: "2026-06-01T00:00:00.000Z",
+      lastFetchedAt: "2026-07-01T00:00:00.000Z",
+      lastFetchedCount: 30,
+      consecutiveStaleRuns: 4,
+      status: "warning",
+      statusReason: "Newest raw source item is 30 day(s) old.",
+      warningThresholdDays: 14,
+      criticalThresholdDays: 30,
+      minFetchedCount: 1,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z"
+    };
+    const newer: SourceActivityRecord = {
+      ...older,
+      protocol: "aave",
+      latestRawSourceId: "25170",
+      status: "healthy",
+      updatedAt: "2026-07-02T00:00:00.000Z"
+    };
+
+    await repository.upsert(older);
+    await repository.upsert(newer);
+
+    await expect(repository.findByProtocol("aave")).resolves.toMatchObject({
+      protocol: "aave",
+      latestRawSourceId: "25170",
+      status: "healthy"
+    });
+    await expect(repository.findByProtocol("missing")).resolves.toBeNull();
+    await expect(repository.findAll()).resolves.toMatchObject([
+      { protocol: "aave" },
+      { protocol: "lido" }
+    ]);
+    await expect(repository.findAll(1)).resolves.toMatchObject([
+      { protocol: "aave" }
+    ]);
   });
 });

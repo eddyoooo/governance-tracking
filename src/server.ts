@@ -26,12 +26,14 @@ import { createHealthRouter } from "./api/routes/health.routes.js";
 import { requireApiAuth } from "./api/middleware/auth.middleware.js";
 import type { FetchRunRepository } from "./storage/fetchRun.repository.js";
 import type { ProposalRepository } from "./storage/proposal.repository.js";
+import type { SourceActivityRepository } from "./storage/sourceActivity.repository.js";
 
 export interface AppContext {
   env: Env;
   logger: Logger;
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
+  sourceActivityRepository: SourceActivityRepository;
   protocolRegistry: ProtocolRegistry;
   notificationService: NotificationService;
   adminStatusReporter: AdminStatusReporter;
@@ -78,6 +80,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       protocolRegistry,
       fetchRunRepository: repositories.fetchRunRepository,
       proposalRepository: repositories.proposalRepository,
+      sourceActivityRepository: repositories.sourceActivityRepository,
       logger
     });
   const fetchJob =
@@ -86,9 +89,12 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       protocolRegistry,
       repositories.proposalRepository,
       repositories.fetchRunRepository,
+      repositories.sourceActivityRepository,
       logger,
       {
-        notificationService
+        notificationService,
+        sourceActivityConfig:
+          FetchProtocolGovernanceJob.sourceActivityConfigFromEnv(runtimeEnv)
       }
     );
   const context: AppContext = {
@@ -96,6 +102,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     logger,
     proposalRepository: repositories.proposalRepository,
     fetchRunRepository: repositories.fetchRunRepository,
+    sourceActivityRepository: repositories.sourceActivityRepository,
     protocolRegistry,
     notificationService,
     adminStatusReporter,
@@ -121,7 +128,8 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
         "GET /health",
         "POST /api/admin/fetch/:protocol",
         "POST /api/admin/notify-pending",
-        "GET /api/admin/fetch-runs"
+        "GET /api/admin/fetch-runs",
+        "GET /api/admin/source-activity"
       ]
     });
   });

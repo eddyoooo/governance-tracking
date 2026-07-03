@@ -1,6 +1,6 @@
 # Governance Tracking
 
-Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
+Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, tracks raw forum-source freshness, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
 
 The current tracked protocols are Lido, Aave, and Uniswap. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
 
@@ -24,6 +24,7 @@ curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
+curl -s "$API/api/admin/source-activity"
 ```
 
 Run the end-to-end terminal walkthrough:
@@ -44,6 +45,32 @@ Run the full local safety check:
 npm run check
 ```
 
+## Production Preflight
+
+Before pointing the monitor at production Firestore/Telegram, run:
+
+```bash
+npm run check
+DEMO_STEP_DELAY_MS=0 npm run demo
+docker build -t governance-tracker-bot .
+```
+
+Then start the production-like service and verify:
+
+```bash
+API=http://localhost:3000
+curl -s "$API/health" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
+```
+
+Expected result: all three manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, and Uniswap, and any Telegram failures are visible in `notificationFailedCount` and the daily admin status report.
+
+Production deployment note: if you run multiple backend replicas, prefer enabling `ENABLE_SCHEDULER=true` on only one worker. Firestore proposal upserts are transaction-backed to protect against duplicate proposal records and duplicate new-proposal notifications, but multiple active schedulers can still create duplicate polling load and extra fetch-run audit records.
+
 ## Current Scope
 
 - Fetch recent proposal/forum activity for Lido, Aave, and Uniswap.
@@ -52,11 +79,12 @@ npm run check
 - Normalize allowlisted items into a common stored proposal shape.
 - Deduplicate by `protocol + sourceType + sourceId`.
 - Store proposals and fetch runs in Firestore or memory mode.
+- Track raw source activity so silent forum migrations or abandoned feeds surface.
 - Avoid rewriting unchanged proposals on every poll.
 - Send direct Telegram notifications for newly discovered allowlisted proposals.
 - Avoid duplicate notifications for already-known proposals.
 - Send a daily Telegram status report to the configured admin when enabled.
-- Run scheduled polling every six hours by default.
+- Run scheduled polling once daily by default.
 - Provide a small operational API for health, manual fetches, notification retries, and fetch-run audit.
 - Run deterministic unit/integration tests without live forum calls.
 - Run optional real Telegram E2E tests only when explicitly enabled.
@@ -79,6 +107,7 @@ Scheduler or admin fetch request
   -> Lido, Aave, or Uniswap adapter
   -> Discourse client
   -> Zod response validation
+  -> source-activity watchdog update
   -> publisher allowlist filter
   -> normalizer
   -> proposal repository upsert
@@ -156,6 +185,29 @@ Fetch runs are stored under `fetchRuns/{runId}`:
 
 `storedNewCount` means a proposal was first discovered. `updatedExistingCount` means an already-stored proposal changed in a meaningful source field. `unchangedExistingCount` means the item was seen again but not rewritten. `skippedCount` means the publisher did not match the allowlist.
 
+Source activity records are stored under `sourceActivity/{protocol}`. These records are based on all raw fetched forum items, before publisher allowlist filtering, so they can detect a forum that still responds but appears abandoned or silently migrated.
+
+Example source activity record:
+
+```json
+{
+  "protocol": "aave",
+  "sourceType": "forum",
+  "latestRawSourceId": "25170",
+  "latestRawPublishedAt": "2026-07-01T00:00:00.000Z",
+  "lastFetchedAt": "2026-07-02T00:00:00.000Z",
+  "lastFetchedCount": 120,
+  "consecutiveStaleRuns": 0,
+  "status": "healthy",
+  "warningThresholdDays": 14,
+  "criticalThresholdDays": 30,
+  "minFetchedCount": 1,
+  "updatedAt": "2026-07-02T00:00:00.000Z"
+}
+```
+
+If the newest raw item becomes older than the configured threshold, or a fetch unexpectedly returns too few raw items, the daily admin status report marks the source as warning or critical.
+
 ## Configuration
 
 Create a local `.env` file manually. It is ignored by git.
@@ -180,7 +232,11 @@ PORT=3000
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 */6 * * *
+FETCH_INTERVAL_CRON=0 8 * * *
+ENABLE_SOURCE_ACTIVITY_ALERTS=true
+SOURCE_ACTIVITY_WARNING_DAYS=14
+SOURCE_ACTIVITY_CRITICAL_DAYS=30
+SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
 ENABLE_ADMIN_STATUS_REPORTS=true
 TELEGRAM_ADMIN_USER_ID=1549323073
 ADMIN_STATUS_CRON=0 9 * * *
@@ -196,6 +252,10 @@ Allowed values:
 - `STORAGE_MODE`: `firestore` or `memory`.
 - `DEMO_MODE`: `true` or `false`.
 - `ENABLE_SCHEDULER`: `true` or `false`.
+- `ENABLE_SOURCE_ACTIVITY_ALERTS`: `true` or `false`.
+- `SOURCE_ACTIVITY_WARNING_DAYS`: positive integer; warns when newest raw forum item is at least this old.
+- `SOURCE_ACTIVITY_CRITICAL_DAYS`: positive integer greater than or equal to warning days.
+- `SOURCE_ACTIVITY_MIN_FETCHED_COUNT`: non-negative integer; marks source critical if a fetch returns fewer raw items.
 - `API_AUTH_ENABLED`: `true` or `false`.
 - `ENABLE_TELEGRAM_NOTIFICATIONS`: `true` or `false`.
 - `ENABLE_ADMIN_STATUS_REPORTS`: `true` or `false`.
@@ -289,7 +349,18 @@ TELEGRAM_ADMIN_USER_ID=1549323073
 ADMIN_STATUS_CRON=0 9 * * *
 ```
 
-Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, the admin receives one daily status message at `09:00` server time by default. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, pending/failed notification counts, and recent problems.
+Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, protocol fetches run daily at `08:00` server time by default, then the admin receives one daily status message at `09:00` server time. The one-hour gap gives the report time to include the latest daily fetch outcome. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, pending/failed notification counts, and recent problems.
+
+Source activity watchdog:
+
+```bash
+ENABLE_SOURCE_ACTIVITY_ALERTS=true
+SOURCE_ACTIVITY_WARNING_DAYS=14
+SOURCE_ACTIVITY_CRITICAL_DAYS=30
+SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
+```
+
+This watchdog looks at all raw fetched forum topics, not just allowlisted publishers. It helps catch silent forum migrations, abandoned category feeds, and old forums that still return valid JSON but no longer receive new governance activity.
 
 For a one-off demo, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo:admin`. That command uses memory storage and local forum samples, performs the normal monitor demo, and sends the final status report to the admin user only. Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
 
@@ -365,6 +436,7 @@ Security notes:
 | `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/notify-pending` | No | Retries proposals currently marked `pending`. |
 | `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
+| `GET /api/admin/source-activity` | No | Returns latest raw-source freshness records used by the silent-migration watchdog. |
 
 With auth enabled, include a token:
 
@@ -388,6 +460,7 @@ Demo mode shows:
 - Repeat fetches updating counts without duplicating proposals.
 - Stored proposals printed from the repository.
 - Fetch-run audit records printed from the repository.
+- Source-activity watchdog records printed from the repository.
 - Pending notification retry behavior.
 
 Speed it up:
@@ -400,26 +473,74 @@ If Telegram is enabled in `.env`, the demo can send real direct-user Telegram no
 
 ## Docker
 
-Development compose:
-
-```bash
-docker compose up --build
-```
-
-Credential-free demo API container:
-
-```bash
-docker compose -f docker-compose.demo.yml up --build
-```
-
 Production image:
 
 ```bash
-docker build -t governance-tracking-backend .
-docker run --env-file .env -p 3000:3000 governance-tracking-backend
+docker build -t governance-tracker-bot .
 ```
 
-Secrets are injected through environment variables and are not baked into the Docker image.
+Production container with runtime environment variables:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  --name governance-tracker-bot \
+  --restart unless-stopped \
+  -e NODE_ENV=production \
+  -e PORT=3000 \
+  -e STORAGE_MODE=firestore \
+  -e DEMO_MODE=false \
+  -e ENABLE_SCHEDULER=true \
+  -e FETCH_INTERVAL_CRON="0 8 * * *" \
+  -e ENABLE_SOURCE_ACTIVITY_ALERTS=true \
+  -e SOURCE_ACTIVITY_WARNING_DAYS=14 \
+  -e SOURCE_ACTIVITY_CRITICAL_DAYS=30 \
+  -e SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1 \
+  -e API_AUTH_ENABLED=true \
+  -e API_AUTH_TOKEN="replace-with-long-random-secret" \
+  -e FIREBASE_PROJECT_ID="replace-with-project-id" \
+  -e FIREBASE_CLIENT_EMAIL="replace-with-client-email" \
+  -e FIREBASE_PRIVATE_KEY="replace-with-private-key" \
+  -e ENABLE_TELEGRAM_NOTIFICATIONS=true \
+  -e TELEGRAM_BOT_TOKEN="replace-with-telegram-bot-token" \
+  -e TELEGRAM_ALLOWED_USER_IDS='["1549323073"]' \
+  -e ENABLE_ADMIN_STATUS_REPORTS=true \
+  -e TELEGRAM_ADMIN_USER_ID="1549323073" \
+  -e ADMIN_STATUS_CRON="0 9 * * *" \
+  -e LIDO_ENABLED=true \
+  -e AAVE_ENABLED=true \
+  -e UNISWAP_ENABLED=true \
+  -e LOG_LEVEL=info \
+  governance-tracker-bot
+```
+
+Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, and `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'` if they are not already provided by the deployment environment.
+
+For `FIREBASE_PRIVATE_KEY`, pass the same escaped newline format used in `.env`, for example `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n`. If quoting this directly in the shell becomes annoying, using Docker's `--env-file .env` flag is less error-prone, but production does not require Docker Compose.
+
+Useful Docker commands:
+
+```bash
+docker ps -a
+docker images
+docker build -t governance-tracker-bot .
+docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
+docker logs -f governance-tracker-bot
+docker stop governance-tracker-bot
+docker rm governance-tracker-bot
+docker restart governance-tracker-bot
+```
+
+To replace a running container after rebuilding:
+
+```bash
+docker stop governance-tracker-bot
+docker rm governance-tracker-bot
+docker build -t governance-tracker-bot .
+docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
+```
+
+Secrets are injected through environment variables and are not baked into the Docker image. Do not commit `.env` files or paste real secrets into shell history unless you are comfortable rotating them later.
 
 ## Adding Another Protocol
 

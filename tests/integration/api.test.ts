@@ -13,6 +13,7 @@ import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createApp } from "../../src/server.js";
 import { MemoryFetchRunRepository } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
+import { MemorySourceActivityRepository } from "../../src/storage/sourceActivity.repository.js";
 import { createLogger } from "../../src/utils/logger.js";
 import {
   createFakeProtocolAdapter,
@@ -57,7 +58,8 @@ describe("monitor API", () => {
         "GET /health",
         "POST /api/admin/fetch/:protocol",
         "POST /api/admin/notify-pending",
-        "GET /api/admin/fetch-runs"
+        "GET /api/admin/fetch-runs",
+        "GET /api/admin/source-activity"
       ]
     });
   });
@@ -240,7 +242,8 @@ describe("monitor API", () => {
       env: testEnv(),
       repositories: {
         proposalRepository: new MemoryProposalRepository(),
-        fetchRunRepository
+        fetchRunRepository,
+        sourceActivityRepository: new MemorySourceActivityRepository()
       }
     });
 
@@ -258,6 +261,47 @@ describe("monitor API", () => {
         protocol: "lido",
         storedNewCount: 1
       }
+    ]);
+  });
+
+  it("lists source activity watchdog records from the admin endpoint", async () => {
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await sourceActivityRepository.upsert({
+      protocol: "aave",
+      sourceType: "forum",
+      latestRawSourceId: "25170",
+      latestRawPublishedAt: "2026-07-01T00:00:00.000Z",
+      lastFetchedAt: "2026-07-02T00:00:00.000Z",
+      lastFetchedCount: 120,
+      consecutiveStaleRuns: 0,
+      status: "healthy",
+      warningThresholdDays: 14,
+      criticalThresholdDays: 30,
+      minFetchedCount: 1,
+      createdAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:00:00.000Z"
+    });
+
+    const { app } = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository: new MemoryProposalRepository(),
+        fetchRunRepository: new MemoryFetchRunRepository(),
+        sourceActivityRepository
+      }
+    });
+
+    const response = await request(app)
+      .get("/api/admin/source-activity")
+      .expect(200);
+
+    expect(response.body.sourceActivity).toEqual([
+      expect.objectContaining({
+        protocol: "aave",
+        latestRawSourceId: "25170",
+        status: "healthy"
+      })
     ]);
   });
 
@@ -303,7 +347,8 @@ describe("monitor API", () => {
       env: testEnv(),
       repositories: {
         proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository()
+        fetchRunRepository: new MemoryFetchRunRepository(),
+        sourceActivityRepository: new MemorySourceActivityRepository()
       },
       notificationService
     });
@@ -334,6 +379,7 @@ describe("monitor API", () => {
     await request(app).post("/api/admin/fetch/lido").expect(401);
     await request(app).post("/api/admin/notify-pending").expect(401);
     await request(app).get("/api/admin/fetch-runs").expect(401);
+    await request(app).get("/api/admin/source-activity").expect(401);
   });
 
   it("accepts bearer, raw Authorization, and x-api-token auth headers", async () => {
@@ -417,6 +463,7 @@ describe("monitor API", () => {
   it("can execute the real fetch job through the admin route with a fake adapter", async () => {
     const proposalRepository = new MemoryProposalRepository();
     const fetchRunRepository = new MemoryFetchRunRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
     const notificationService = new RecordingNotificationService();
     const registry = new ProtocolRegistry();
 
@@ -440,6 +487,7 @@ describe("monitor API", () => {
       registry,
       proposalRepository,
       fetchRunRepository,
+      sourceActivityRepository,
       createSilentLogger(),
       {
         notificationService
@@ -449,7 +497,8 @@ describe("monitor API", () => {
       env: testEnv(),
       repositories: {
         proposalRepository,
-        fetchRunRepository
+        fetchRunRepository,
+        sourceActivityRepository
       },
       protocolRegistry: registry,
       notificationService,

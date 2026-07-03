@@ -6,6 +6,33 @@ Compact operator playbook for the current monitor-only governance tracking servi
 API=http://localhost:3000
 ```
 
+## Go-Live Checklist
+
+Run before deploying or restarting production:
+
+```bash
+npm run check
+DEMO_STEP_DELAY_MS=0 npm run demo
+docker build -t governance-tracker-bot .
+```
+
+Expected result: build/typecheck/tests pass, the demo completes without Firebase, and the production Docker image builds.
+
+After the production service starts:
+
+```bash
+curl -s "$API/health" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
+```
+
+Expected result: the health endpoint returns `ok: true`, each manual fetch returns a successful run, fetch-run records exist, and source-activity records exist for all enabled protocols.
+
+Production note: if more than one backend replica is running, keep `ENABLE_SCHEDULER=true` on only one worker when possible. Firestore proposal upserts are transaction-backed, but multiple schedulers still create duplicate polling work and extra fetch-run audit records.
+
 ## Fast Colleague Demo
 
 Run the full terminal walkthrough:
@@ -22,6 +49,7 @@ What to point out:
 - New allowlisted proposals trigger notification handling.
 - Duplicate fetches do not create duplicate proposals or rewrite unchanged documents.
 - Fetch-run audit records show exactly what happened.
+- Source-activity records show whether each raw forum source is still active.
 
 API version of the same story:
 
@@ -37,6 +65,7 @@ curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
+curl -s "$API/api/admin/source-activity"
 curl -s -X POST "$API/api/admin/notify-pending"
 ```
 
@@ -57,6 +86,7 @@ PORT=3000
 STORAGE_MODE=memory
 DEMO_MODE=true
 ENABLE_SCHEDULER=false
+ENABLE_SOURCE_ACTIVITY_ALERTS=true
 API_AUTH_ENABLED=false
 ENABLE_TELEGRAM_NOTIFICATIONS=false
 ENABLE_ADMIN_STATUS_REPORTS=false
@@ -88,6 +118,7 @@ What it demonstrates:
 - Unchanged repeat sightings are counted without rewriting proposal documents.
 - Stored proposal snapshots are printed directly from the repository.
 - Fetch-run audit records are printed directly from the repository.
+- Source-activity watchdog records are printed directly from the repository.
 
 Fast mode:
 
@@ -165,7 +196,33 @@ Count meanings:
 
 For unchanged repeat sightings, the stored proposal is not rewritten, so `lastSeenAt`, `fetchedAt`, and `updatedAt` stay at the last meaningful insert/update time.
 
-## 5. Fetch-Run Audit
+## 5. Source Activity
+
+```bash
+curl -s "$API/api/admin/source-activity"
+```
+
+Expected result: latest source freshness records for each protocol.
+
+```json
+{
+  "sourceActivity": [
+    {
+      "protocol": "aave",
+      "sourceType": "forum",
+      "latestRawSourceId": "25170",
+      "latestRawPublishedAt": "2026-07-01T00:00:00.000Z",
+      "lastFetchedCount": 120,
+      "consecutiveStaleRuns": 0,
+      "status": "healthy"
+    }
+  ]
+}
+```
+
+This endpoint reads stored watchdog records only. It does not call protocol forums. The watchdog uses all raw fetched forum items, before allowlist filtering, so it can flag silent forum migrations or stale category feeds even when no allowlisted publisher has posted.
+
+## 6. Fetch-Run Audit
 
 ```bash
 curl -s "$API/api/admin/fetch-runs"
@@ -191,7 +248,7 @@ Expected result: latest stored fetch-run audit records, newest first.
 
 This endpoint reads stored fetch-run records only. It does not call protocol forums.
 
-## 6. Retry Pending Notifications
+## 7. Retry Pending Notifications
 
 ```bash
 curl -s -X POST "$API/api/admin/notify-pending"
@@ -211,7 +268,7 @@ Expected result:
 
 If Telegram is disabled, pending proposals are marked `skipped`. If Telegram is enabled, the service attempts to send each pending proposal to every allowed Telegram user and marks proposals `sent` or `failed`.
 
-## 7. Auth Check
+## 8. Auth Check
 
 Set:
 
@@ -246,7 +303,7 @@ curl -s "$API/health" \
   -H "x-api-token: $API_AUTH_TOKEN"
 ```
 
-## 8. Telegram Test
+## 9. Telegram Test
 
 Telegram notifications are direct user messages, not group/channel messages. Each recipient must open the bot and send `/start` once. The backend sends only to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
 
@@ -280,7 +337,7 @@ Expected result: pending proposals are seeded in memory, sent through the real T
 
 Normal `npm test` and `npm run check` do not send Telegram messages. The live E2E path only runs through this dedicated command.
 
-## 9. Daily Admin Status
+## 10. Daily Admin Status
 
 The admin status report is a separate daily Telegram message for the operator. It uses the same bot token as proposal notifications, but sends only to `TELEGRAM_ADMIN_USER_ID`.
 
@@ -291,9 +348,13 @@ ENABLE_ADMIN_STATUS_REPORTS=true
 TELEGRAM_ADMIN_USER_ID=1549323073
 ADMIN_STATUS_CRON=0 9 * * *
 ENABLE_SCHEDULER=true
+ENABLE_SOURCE_ACTIVITY_ALERTS=true
+SOURCE_ACTIVITY_WARNING_DAYS=14
+SOURCE_ACTIVITY_CRITICAL_DAYS=30
+SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
 ```
 
-Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, pending/failed notification counts, enabled protocols, and any detected problems.
+Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, source-activity freshness, pending/failed notification counts, enabled protocols, and any detected problems.
 
 One-off demo command:
 
@@ -301,7 +362,7 @@ One-off demo command:
 npm run demo:admin
 ```
 
-## 10. Tests
+## 11. Tests
 
 Run all normal tests:
 
@@ -323,7 +384,7 @@ Watch mode:
 npm run test:watch
 ```
 
-## 11. Firestore Run
+## 12. Firestore Run
 
 Set:
 
@@ -332,7 +393,11 @@ NODE_ENV=production
 STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 */6 * * *
+FETCH_INTERVAL_CRON=0 8 * * *
+ENABLE_SOURCE_ACTIVITY_ALERTS=true
+SOURCE_ACTIVITY_WARNING_DAYS=14
+SOURCE_ACTIVITY_CRITICAL_DAYS=30
+SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
 FIREBASE_PROJECT_ID=replace-with-project-id
@@ -347,30 +412,54 @@ npm run build
 npm run start
 ```
 
-Expected result: proposals are stored in Firestore `proposals`, fetch runs are stored in Firestore `fetchRuns`, and the scheduler polls enabled protocols every six hours.
+Expected result: proposals are stored in Firestore `proposals`, fetch runs are stored in Firestore `fetchRuns`, source freshness is stored in Firestore `sourceActivity`, and the scheduler polls enabled protocols once daily at `08:00` server time by default. The admin status report runs at `09:00`, giving the daily fetch time to complete first.
 
-## 12. Docker
+## 13. Docker
 
-Development compose:
-
-```bash
-docker compose up --build
-```
-
-Credential-free demo API container:
+Build the production image:
 
 ```bash
-docker compose -f docker-compose.demo.yml up --build
+docker build -t governance-tracker-bot .
 ```
 
-Production image:
+Run the production container with runtime env vars:
 
 ```bash
-docker build -t governance-tracking-backend .
-docker run --env-file .env -p 3000:3000 governance-tracking-backend
+docker run -d \
+  -p 3000:3000 \
+  --name governance-tracker-bot \
+  --restart unless-stopped \
+  -e NODE_ENV=production \
+  -e STORAGE_MODE=firestore \
+  -e DEMO_MODE=false \
+  -e ENABLE_SCHEDULER=true \
+  -e API_AUTH_ENABLED=true \
+  -e API_AUTH_TOKEN="replace-with-long-random-secret" \
+  -e FIREBASE_PROJECT_ID="replace-with-project-id" \
+  -e FIREBASE_CLIENT_EMAIL="replace-with-client-email" \
+  -e FIREBASE_PRIVATE_KEY="replace-with-private-key" \
+  -e ENABLE_TELEGRAM_NOTIFICATIONS=true \
+  -e TELEGRAM_BOT_TOKEN="replace-with-telegram-bot-token" \
+  -e TELEGRAM_ALLOWED_USER_IDS='["1549323073"]' \
+  -e ENABLE_ADMIN_STATUS_REPORTS=true \
+  -e TELEGRAM_ADMIN_USER_ID="1549323073" \
+  governance-tracker-bot
 ```
 
-## 13. What No Longer Exists
+Useful Docker commands:
+
+```bash
+docker ps -a
+docker images
+docker build -t governance-tracker-bot .
+docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
+docker logs -f governance-tracker-bot
+docker stop governance-tracker-bot
+docker rm governance-tracker-bot
+docker restart governance-tracker-bot
+```
+
+## 14. What No Longer Exists
 
 The platform no longer exposes dashboard-oriented endpoints:
 

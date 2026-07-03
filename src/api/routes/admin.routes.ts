@@ -40,5 +40,15 @@ export function createAdminRouter(context: AppContext): Router {
     }
   });
 
+  router.get("/source-activity", async (_request, response, next) => {
+    try {
+      const sourceActivity = await context.sourceActivityRepository.findAll(100);
+
+      response.json({ sourceActivity });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }

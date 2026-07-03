@@ -14,6 +14,7 @@ import { UniswapAdapter } from "./protocols/uniswap/uniswap.adapter.js";
 import { createUniswapDemoClient } from "./protocols/uniswap/uniswap.demoClient.js";
 import { createApp } from "./server.js";
 import type { FetchRun } from "./storage/fetchRun.repository.js";
+import type { SourceActivityRecord } from "./storage/sourceActivity.repository.js";
 
 const DEMO_ALLOWED_PUBLISHERS = [
   "Lido Labs Foundation - Operations Team",
@@ -125,6 +126,20 @@ function summarizeFetchRuns(fetchRuns: FetchRun[]) {
   }));
 }
 
+function summarizeSourceActivity(records: SourceActivityRecord[]) {
+  return records.map((record) => ({
+    protocol: record.protocol,
+    sourceType: record.sourceType,
+    status: record.status,
+    statusReason: record.statusReason,
+    latestRawSourceId: record.latestRawSourceId,
+    latestRawPublishedAt: record.latestRawPublishedAt,
+    lastFetchedAt: record.lastFetchedAt,
+    lastFetchedCount: record.lastFetchedCount,
+    consecutiveStaleRuns: record.consecutiveStaleRuns
+  }));
+}
+
 function createDemoRegistry(
   lidoAdapter: ScriptedLidoDemoAdapter,
   aaveAdapter: AaveAdapter,
@@ -150,6 +165,8 @@ async function main(): Promise<void> {
     FIREBASE_CLIENT_EMAIL: "",
     FIREBASE_PRIVATE_KEY: "",
     ENABLE_SCHEDULER: "false",
+    SOURCE_ACTIVITY_WARNING_DAYS: "365",
+    SOURCE_ACTIVITY_CRITICAL_DAYS: "730",
     LIDO_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_ALLOWED_PUBLISHERS),
     LIDO_FETCH_MAX_PAGES: "5",
     AAVE_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_AAVE_ALLOWED_PUBLISHERS),
@@ -355,6 +372,17 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  const sourceActivity = await context.sourceActivityRepository.findAll(20);
+
+  await runStep(
+    "Source-activity watchdog snapshot",
+    async () => ({
+      count: sourceActivity.length,
+      sourceActivity: summarizeSourceActivity(sourceActivity)
+    }),
+    stepDelayMs
+  );
+
   let adminStatusReport:
     | {
         sent: boolean;
@@ -397,6 +425,7 @@ async function main(): Promise<void> {
     lidoDuplicateFetch,
     storedProposalCount: storedProposals.length,
     fetchRunCount: fetchRuns.length,
+    sourceActivityCount: sourceActivity.length,
     telegram:
       env.enableTelegramNotifications
         ? "notifications sent during new proposal fetches"

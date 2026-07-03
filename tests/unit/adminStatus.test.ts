@@ -16,6 +16,10 @@ import {
 } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
+  MemorySourceActivityRepository,
+  type SourceActivityRecord
+} from "../../src/storage/sourceActivity.repository.js";
+import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
   createSilentLogger,
@@ -52,6 +56,27 @@ function createRun(overrides: Partial<FetchRun> = {}): FetchRun {
   };
 }
 
+function createSourceActivity(
+  overrides: Partial<SourceActivityRecord> = {}
+): SourceActivityRecord {
+  return {
+    protocol: "lido",
+    sourceType: "forum",
+    latestRawSourceId: "1001",
+    latestRawPublishedAt: "2026-07-01T00:00:00.000Z",
+    lastFetchedAt: "2026-07-01T09:00:00.000Z",
+    lastFetchedCount: 10,
+    consecutiveStaleRuns: 0,
+    status: "healthy",
+    warningThresholdDays: 14,
+    criticalThresholdDays: 30,
+    minFetchedCount: 1,
+    createdAt: "2026-07-01T09:00:00.000Z",
+    updatedAt: "2026-07-01T09:00:00.000Z",
+    ...overrides
+  };
+}
+
 function createRegistry() {
   return {
     list: jest.fn(() => [
@@ -66,10 +91,14 @@ describe("admin status reports", () => {
   it("builds a healthy daily status report from recent successful fetch runs", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
 
     await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
     await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
     await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "uniswap" }));
 
     const result = await buildAdminStatusReport({
       env: testEnv({
@@ -79,7 +108,8 @@ describe("admin status reports", () => {
       }),
       protocolRegistry: createRegistry() as never,
       fetchRunRepository,
-      proposalRepository
+      proposalRepository,
+      sourceActivityRepository
     });
 
     expect(result.healthy).toBe(true);
@@ -90,12 +120,15 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Scheduler: enabled");
     expect(result.message).toContain("Enabled protocols: lido, aave, uniswap");
     expect(result.message).toContain("- lido: success");
+    expect(result.message).toContain("Source activity:");
+    expect(result.message).toContain("- lido: healthy");
     expect(result.message).toContain("Problems:\n- None detected.");
   });
 
   it("reports missing fetches, failed fetches, and failed notification state", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
     const failedProposal = normalizeLidoForumItem(
       createRawGovernanceItem({ sourceId: "failed-notification" })
     );
@@ -118,12 +151,21 @@ describe("admin status reports", () => {
       "failed",
       "Telegram unavailable"
     );
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(
+      createSourceActivity({
+        protocol: "aave",
+        status: "critical",
+        statusReason: "Newest raw source item is 35 day(s) old."
+      })
+    );
 
     const result = await buildAdminStatusReport({
       env: testEnv({ ENABLE_SCHEDULER: "true" }),
       protocolRegistry: createRegistry() as never,
       fetchRunRepository,
-      proposalRepository
+      proposalRepository,
+      sourceActivityRepository
     });
 
     expect(result.healthy).toBe(false);
@@ -133,7 +175,9 @@ describe("admin status reports", () => {
         "No fetch run has been recorded for uniswap.",
         "aave fetch failed at 2026-07-01T09:00:00.000Z: Aave forum unavailable",
         "aave had 2 notification failure(s) in fetch run fetchRun_aave_failed.",
-        "1 proposal notification(s) are marked failed."
+        "1 proposal notification(s) are marked failed.",
+        "aave source activity is critical: Newest raw source item is 35 day(s) old.",
+        "No source activity record has been recorded for uniswap."
       ])
     );
     expect(result.message).toContain("Status: ATTENTION REQUIRED");
@@ -151,13 +195,71 @@ describe("admin status reports", () => {
         ])
       } as never,
       fetchRunRepository: new MemoryFetchRunRepository(),
-      proposalRepository: new MemoryProposalRepository()
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository()
     });
 
     expect(result.healthy).toBe(false);
     expect(result.problems).toContain("No protocol adapters are enabled.");
     expect(result.message).toContain("Status: ATTENTION REQUIRED");
     expect(result.message).toContain("Enabled protocols: none");
+  });
+
+  it("does not fail the daily report on missing source-activity records when alerts are disabled", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({
+        ENABLE_SOURCE_ACTIVITY_ALERTS: "false",
+        ENABLE_SCHEDULER: "true"
+      }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository()
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.problems).toEqual([]);
+    expect(result.message).toContain("Source activity:");
+    expect(result.message).toContain("- lido: no source activity recorded");
+  });
+
+  it("propagates admin notifier failures so the scheduler can log them", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+    const notifier = {
+      name: "failing-admin-status",
+      enabled: true,
+      send: jest.fn(async () => {
+        throw new Error("Telegram admin send failed");
+      })
+    };
+    const reporter = new DailyAdminStatusReporter({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository,
+      notifier,
+      logger: createSilentLogger()
+    });
+
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "uniswap" }));
+
+    await expect(reporter.sendDailyStatusReport()).rejects.toThrow(
+      "Telegram admin send failed"
+    );
+    expect(notifier.send).toHaveBeenCalledTimes(1);
   });
 
   it("escapes source values in Telegram HTML status messages", async () => {
@@ -179,7 +281,8 @@ describe("admin status reports", () => {
         list: jest.fn(() => [createFakeProtocolAdapter({ protocol })])
       } as never,
       fetchRunRepository,
-      proposalRepository: new MemoryProposalRepository()
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository()
     });
 
     expect(result.healthy).toBe(false);
@@ -192,12 +295,14 @@ describe("admin status reports", () => {
   it("sends the built report through the configured admin notifier", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
     const notifier = new RecordingAdminStatusNotifier();
     const reporter = new DailyAdminStatusReporter({
       env: testEnv({ ENABLE_SCHEDULER: "true" }),
       protocolRegistry: createRegistry() as never,
       fetchRunRepository,
       proposalRepository,
+      sourceActivityRepository,
       notifier,
       logger: createSilentLogger()
     });
@@ -205,6 +310,9 @@ describe("admin status reports", () => {
     await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
     await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
     await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "uniswap" }));
 
     const result = await reporter.sendDailyStatusReport();
 
@@ -218,6 +326,7 @@ describe("admin status reports", () => {
       protocolRegistry: createRegistry() as never,
       fetchRunRepository: new MemoryFetchRunRepository(),
       proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository(),
       logger: createSilentLogger()
     });
 
@@ -234,6 +343,7 @@ describe("admin status reports", () => {
         protocolRegistry: createRegistry() as never,
         fetchRunRepository: new MemoryFetchRunRepository(),
         proposalRepository: new MemoryProposalRepository(),
+        sourceActivityRepository: new MemorySourceActivityRepository(),
         logger: createSilentLogger()
       })
     ).toThrow(

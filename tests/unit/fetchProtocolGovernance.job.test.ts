@@ -16,6 +16,10 @@ import {
 } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
+  MemorySourceActivityRepository,
+  type SourceActivityRepository
+} from "../../src/storage/sourceActivity.repository.js";
+import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
   createSilentLogger
@@ -64,27 +68,61 @@ class RecordingNotificationService implements NotificationService {
   }
 }
 
+class FailingSourceActivityRepository implements SourceActivityRepository {
+  async upsert(): Promise<void> {
+    throw new Error("Source activity write failed");
+  }
+
+  async findByProtocol(): Promise<null> {
+    return null;
+  }
+
+  async findAll(): Promise<[]> {
+    return [];
+  }
+}
+
 function createJob(
   adapter = createFakeProtocolAdapter(),
   proposalRepository = new MemoryProposalRepository(),
   fetchRunRepository = new RecordingFetchRunRepository(),
+  sourceActivityRepositoryOrNotificationService?:
+    | SourceActivityRepository
+    | NotificationService,
   notificationService?: NotificationService
 ) {
   const registry = new ProtocolRegistry();
   registry.register(adapter);
+  const sourceActivityRepository =
+    sourceActivityRepositoryOrNotificationService &&
+    "findByProtocol" in sourceActivityRepositoryOrNotificationService
+      ? sourceActivityRepositoryOrNotificationService
+      : new MemorySourceActivityRepository();
+  const resolvedNotificationService =
+    sourceActivityRepositoryOrNotificationService &&
+    "findByProtocol" in sourceActivityRepositoryOrNotificationService
+      ? notificationService
+      : sourceActivityRepositoryOrNotificationService;
 
   return {
     job: new FetchProtocolGovernanceJob(
       registry,
       proposalRepository,
       fetchRunRepository,
+      sourceActivityRepository,
       createSilentLogger(),
       {
-        notificationService
+        notificationService: resolvedNotificationService,
+        sourceActivityConfig: {
+          warningDays: 365,
+          criticalDays: 730,
+          minFetchedCount: 1
+        }
       }
     ),
     proposalRepository,
-    fetchRunRepository
+    fetchRunRepository,
+    sourceActivityRepository
   };
 }
 
@@ -102,7 +140,7 @@ describe("FetchProtocolGovernanceJob", () => {
       sourceId: "1002",
       publisherName: "Random Person"
     });
-    const { job, proposalRepository, fetchRunRepository } = createJob(
+    const { job, proposalRepository, fetchRunRepository, sourceActivityRepository } = createJob(
       createFakeProtocolAdapter({
         items: [allowed, skipped],
         publisherAllowlist: ["Allowed Publisher"]
@@ -139,10 +177,16 @@ describe("FetchProtocolGovernanceJob", () => {
       publisherName: "Allowed Publisher",
       notificationStatus: "skipped"
     });
+    await expect(sourceActivityRepository.findByProtocol("lido")).resolves.toMatchObject({
+      protocol: "lido",
+      latestRawSourceId: "1001",
+      lastFetchedCount: 2,
+      status: "healthy"
+    });
   });
 
   it("records a successful run when all fetched items are skipped", async () => {
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, sourceActivityRepository } = createJob(
       createFakeProtocolAdapter({
         items: [
           createRawGovernanceItem({
@@ -164,6 +208,11 @@ describe("FetchProtocolGovernanceJob", () => {
       skippedCount: 1
     });
     expect(await proposalRepository.findAll()).toEqual([]);
+    await expect(sourceActivityRepository.findByProtocol("lido")).resolves.toMatchObject({
+      latestRawSourceId: "1002",
+      lastFetchedCount: 1,
+      status: "healthy"
+    });
   });
 
   it("filters non-allowlisted publishers before normalization", async () => {
@@ -546,6 +595,7 @@ describe("FetchProtocolGovernanceJob", () => {
       registry,
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
+      new MemorySourceActivityRepository(),
       createSilentLogger()
     );
 
@@ -585,6 +635,29 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(fetchRunRepository.upserts[1]).toMatchObject({
       status: "failed",
       errors: ["Lido is unavailable"]
+    });
+  });
+
+  it("records fetched count when source activity persistence fails", async () => {
+    const { job, fetchRunRepository } = createJob(
+      createFakeProtocolAdapter({
+        items: [
+          createRawGovernanceItem({ sourceId: "1001" }),
+          createRawGovernanceItem({ sourceId: "1002" })
+        ]
+      }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      new FailingSourceActivityRepository()
+    );
+
+    await expect(job.run("lido")).rejects.toThrow(
+      "Source activity write failed"
+    );
+    expect(fetchRunRepository.upserts[1]).toMatchObject({
+      status: "failed",
+      fetchedCount: 2,
+      errors: ["Source activity write failed"]
     });
   });
 

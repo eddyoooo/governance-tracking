@@ -4,6 +4,10 @@ import type { ProtocolRegistry } from "../protocols/registry.js";
 import type { FetchRun } from "../storage/fetchRun.repository.js";
 import type { FetchRunRepository } from "../storage/fetchRun.repository.js";
 import type { ProposalRepository } from "../storage/proposal.repository.js";
+import type {
+  SourceActivityRecord,
+  SourceActivityRepository
+} from "../storage/sourceActivity.repository.js";
 import { TelegramAdminStatusNotifier } from "./telegramAdminStatus.service.js";
 
 export interface AdminStatusNotifier {
@@ -44,6 +48,7 @@ export class DailyAdminStatusReporter implements AdminStatusReporter {
       protocolRegistry: ProtocolRegistry;
       fetchRunRepository: FetchRunRepository;
       proposalRepository: ProposalRepository;
+      sourceActivityRepository: SourceActivityRepository;
       notifier: AdminStatusNotifier;
       logger?: Pick<Logger, "info" | "error">;
     }
@@ -54,7 +59,8 @@ export class DailyAdminStatusReporter implements AdminStatusReporter {
       env: this.options.env,
       protocolRegistry: this.options.protocolRegistry,
       fetchRunRepository: this.options.fetchRunRepository,
-      proposalRepository: this.options.proposalRepository
+      proposalRepository: this.options.proposalRepository,
+      sourceActivityRepository: this.options.sourceActivityRepository
     });
 
     await this.options.notifier.send(result.message);
@@ -76,6 +82,7 @@ export function createAdminStatusReporter(options: {
   protocolRegistry: ProtocolRegistry;
   fetchRunRepository: FetchRunRepository;
   proposalRepository: ProposalRepository;
+  sourceActivityRepository: SourceActivityRepository;
   logger: Logger;
 }): AdminStatusReporter {
   if (!options.env.enableAdminStatusReports) {
@@ -104,6 +111,7 @@ export async function buildAdminStatusReport(options: {
   protocolRegistry: ProtocolRegistry;
   fetchRunRepository: FetchRunRepository;
   proposalRepository: ProposalRepository;
+  sourceActivityRepository: SourceActivityRepository;
 }): Promise<AdminStatusReportResult> {
   const enabledProtocols = options.protocolRegistry
     .list()
@@ -114,13 +122,19 @@ export async function buildAdminStatusReport(options: {
     await options.proposalRepository.findByNotificationStatus("pending", 20);
   const failedNotifications =
     await options.proposalRepository.findByNotificationStatus("failed", 20);
+  const sourceActivityRecords = await options.sourceActivityRepository.findAll(100);
   const problems: string[] = [];
   const latestByProtocol = new Map<string, FetchRun>();
+  const sourceActivityByProtocol = new Map<string, SourceActivityRecord>();
 
   for (const run of fetchRuns) {
     if (!latestByProtocol.has(run.protocol)) {
       latestByProtocol.set(run.protocol, run);
     }
+  }
+
+  for (const record of sourceActivityRecords) {
+    sourceActivityByProtocol.set(record.protocol, record);
   }
 
   if (enabledProtocols.length === 0) {
@@ -164,6 +178,25 @@ export async function buildAdminStatusReport(options: {
     );
   }
 
+  if (options.env.enableSourceActivityAlerts) {
+    for (const protocol of enabledProtocols) {
+      const sourceActivity = sourceActivityByProtocol.get(protocol);
+
+      if (!sourceActivity) {
+        problems.push(`No source activity record has been recorded for ${protocol}.`);
+        continue;
+      }
+
+      if (sourceActivity.status !== "healthy") {
+        problems.push(
+          `${protocol} source activity is ${sourceActivity.status}: ${
+            sourceActivity.statusReason ?? "No status reason recorded."
+          }`
+        );
+      }
+    }
+  }
+
   const healthy = problems.length === 0;
 
   return {
@@ -173,6 +206,7 @@ export async function buildAdminStatusReport(options: {
       env: options.env,
       enabledProtocols,
       latestByProtocol,
+      sourceActivityByProtocol,
       pendingNotificationCount: pendingNotifications.length,
       failedNotificationCount: failedNotifications.length,
       healthy,
@@ -186,6 +220,7 @@ export function formatAdminStatusMessage(options: {
   env: Env;
   enabledProtocols: string[];
   latestByProtocol: Map<string, FetchRun>;
+  sourceActivityByProtocol: Map<string, SourceActivityRecord>;
   pendingNotificationCount: number;
   failedNotificationCount: number;
   healthy: boolean;
@@ -214,6 +249,21 @@ export function formatAdminStatusMessage(options: {
     options.problems.length > 0
       ? options.problems.map((problem) => `- ${escapeTelegramHtml(problem)}`)
       : ["- None detected."];
+  const sourceActivityLines = options.enabledProtocols.map((protocol) => {
+    const record = options.sourceActivityByProtocol.get(protocol);
+
+    if (!record) {
+      return `- ${escapeTelegramHtml(protocol)}: no source activity recorded`;
+    }
+
+    return [
+      `- ${escapeTelegramHtml(protocol)}: ${escapeTelegramHtml(record.status)}`,
+      `latest raw ${escapeTelegramHtml(record.latestRawSourceId ?? "unknown")}`,
+      `published ${escapeTelegramHtml(record.latestRawPublishedAt ?? "unknown")}`,
+      `fetched ${record.lastFetchedCount}`,
+      `stale runs ${record.consecutiveStaleRuns}`
+    ].join("; ");
+  });
 
   return [
     "<b>GOVERNANCE MONITOR DAILY STATUS</b>",
@@ -227,6 +277,9 @@ export function formatAdminStatusMessage(options: {
     "",
     "Latest fetches:",
     ...latestFetchLines,
+    "",
+    "Source activity:",
+    ...sourceActivityLines,
     "",
     "Problems:",
     ...problemLines

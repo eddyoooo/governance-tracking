@@ -34,7 +34,11 @@ describe("env parsing", () => {
     expect(env.port).toBe(3000);
     expect(env.storageMode).toBe("firestore");
     expect(env.enableScheduler).toBe(true);
-    expect(env.fetchIntervalCron).toBe("0 */6 * * *");
+    expect(env.fetchIntervalCron).toBe("0 8 * * *");
+    expect(env.enableSourceActivityAlerts).toBe(true);
+    expect(env.sourceActivityWarningDays).toBe(14);
+    expect(env.sourceActivityCriticalDays).toBe(30);
+    expect(env.sourceActivityMinFetchedCount).toBe(1);
     expect(env.lidoAllowedPublishers).toEqual(["Allowed Publisher", "DAO Ops"]);
     expect(env.lidoFetchMaxPages).toBe(5);
     expect(env.aaveForumBaseUrl).toBe("https://governance.aave.com");
@@ -133,6 +137,7 @@ describe("env parsing", () => {
       UNISWAP_ENABLED: "FALSE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       ENABLE_ADMIN_STATUS_REPORTS: "true",
+      ENABLE_SOURCE_ACTIVITY_ALERTS: "false",
       TELEGRAM_E2E_ENABLED: "true",
       API_AUTH_ENABLED: "true"
     } as NodeJS.ProcessEnv);
@@ -144,8 +149,38 @@ describe("env parsing", () => {
     expect(env.uniswapEnabled).toBe(false);
     expect(env.enableTelegramNotifications).toBe(true);
     expect(env.enableAdminStatusReports).toBe(true);
+    expect(env.enableSourceActivityAlerts).toBe(false);
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.apiAuthEnabled).toBe(true);
+  });
+
+  it("parses and validates source activity watchdog thresholds", () => {
+    const env = loadEnv({
+      ENABLE_SOURCE_ACTIVITY_ALERTS: "true",
+      SOURCE_ACTIVITY_WARNING_DAYS: "7",
+      SOURCE_ACTIVITY_CRITICAL_DAYS: "21",
+      SOURCE_ACTIVITY_MIN_FETCHED_COUNT: "0"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.enableSourceActivityAlerts).toBe(true);
+    expect(env.sourceActivityWarningDays).toBe(7);
+    expect(env.sourceActivityCriticalDays).toBe(21);
+    expect(env.sourceActivityMinFetchedCount).toBe(0);
+
+    expect(() =>
+      loadEnv({
+        SOURCE_ACTIVITY_WARNING_DAYS: "14",
+        SOURCE_ACTIVITY_CRITICAL_DAYS: "7"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(
+      "SOURCE_ACTIVITY_CRITICAL_DAYS must be greater than or equal to SOURCE_ACTIVITY_WARNING_DAYS."
+    );
+
+    expect(() =>
+      loadEnv({
+        SOURCE_ACTIVITY_MIN_FETCHED_COUNT: "-1"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
   });
 
   it("parses and deduplicates Telegram allowed user ids", () => {

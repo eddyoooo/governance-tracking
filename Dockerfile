@@ -5,10 +5,6 @@ FROM base AS deps
 COPY package*.json ./
 RUN npm ci
 
-FROM deps AS dev
-COPY . .
-CMD ["npm", "run", "dev"]
-
 FROM deps AS build
 COPY . .
 RUN npm run build

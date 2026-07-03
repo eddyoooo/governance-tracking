@@ -4,9 +4,16 @@ import { NoopNotificationService } from "../notifications/noopNotification.servi
 import type { NotificationService } from "../notifications/notification.service.js";
 import { notifyProposal } from "../notifications/proposalNotifications.js";
 import type { ProtocolRegistry } from "../protocols/registry.js";
+import {
+  sourceActivityConfigFromEnv,
+  updateSourceActivity,
+  type SourceActivityConfig
+} from "../sourceActivity/sourceActivity.service.js";
 import { createFetchRunId } from "../utils/hash.js";
+import type { Env } from "../config/env.js";
 import type { FetchRun, FetchRunRepository } from "../storage/fetchRun.repository.js";
 import type { ProposalRepository } from "../storage/proposal.repository.js";
+import type { SourceActivityRepository } from "../storage/sourceActivity.repository.js";
 
 export interface FetchProtocolResult {
   run: FetchRun;
@@ -26,6 +33,7 @@ export interface FetchProtocolResult {
 
 export interface FetchProtocolGovernanceJobOptions {
   notificationService?: NotificationService;
+  sourceActivityConfig?: SourceActivityConfig;
 }
 
 export class FetchAlreadyRunningError extends Error {
@@ -50,11 +58,19 @@ export class FetchProtocolGovernanceJob {
     private readonly registry: ProtocolRegistry,
     private readonly proposalRepository: ProposalRepository,
     private readonly fetchRunRepository: FetchRunRepository,
+    private readonly sourceActivityRepository: SourceActivityRepository,
     private readonly logger: Logger,
     options: FetchProtocolGovernanceJobOptions = {}
   ) {
     this.notificationService =
       options.notificationService ?? new NoopNotificationService();
+    this.sourceActivityConfig = options.sourceActivityConfig;
+  }
+
+  private readonly sourceActivityConfig?: SourceActivityConfig;
+
+  static sourceActivityConfigFromEnv(env: Env): SourceActivityConfig {
+    return sourceActivityConfigFromEnv(env);
   }
 
   async run(protocol: string): Promise<FetchProtocolResult> {
@@ -103,6 +119,19 @@ export class FetchProtocolGovernanceJob {
       this.logger.info({ protocol, runId }, "Starting governance fetch");
       const rawItems = await adapter.fetchRecent();
       fetchedCount = rawItems.length;
+      const sourceActivity = await updateSourceActivity({
+        repository: this.sourceActivityRepository,
+        source: adapter.source,
+        rawItems,
+        fetchedAt: new Date().toISOString(),
+        config:
+          this.sourceActivityConfig ??
+          {
+            warningDays: 14,
+            criticalDays: 30,
+            minFetchedCount: 1
+          }
+      });
       const filtered = filterByPublisherAllowlist(rawItems, adapter.publisherAllowlist);
       allowlistedCount = filtered.allowed.length;
       skippedCount = filtered.skipped.length;
@@ -178,6 +207,17 @@ export class FetchProtocolGovernanceJob {
         },
         "Finished governance fetch"
       );
+
+      if (sourceActivity.status !== "healthy") {
+        this.logger.warn(
+          {
+            protocol,
+            sourceActivityStatus: sourceActivity.status,
+            sourceActivityReason: sourceActivity.statusReason
+          },
+          "Source activity watchdog reported non-healthy status"
+        );
+      }
 
       return {
         run: finishedRun,

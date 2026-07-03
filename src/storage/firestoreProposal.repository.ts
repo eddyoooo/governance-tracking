@@ -1,7 +1,8 @@
 import {
   type CollectionReference,
   type DocumentData,
-  type Firestore
+  type Firestore,
+  type Query
 } from "firebase-admin/firestore";
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
@@ -57,8 +58,10 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
 
 export class FirestoreProposalRepository implements ProposalRepository {
   private readonly collection: CollectionReference<DocumentData>;
+  private readonly db: Firestore;
 
   constructor(db: Firestore) {
+    this.db = db;
     this.collection = db.collection("proposals");
   }
 
@@ -66,30 +69,59 @@ export class FirestoreProposalRepository implements ProposalRepository {
     proposal: NormalizedGovernanceItem,
     options: UpsertProposalOptions = {}
   ): Promise<UpsertResult> {
-    const existing = await this.findBySourceIdentity(
-      proposal.protocol,
-      proposal.sourceType,
-      proposal.sourceId
-    );
+    return this.db.runTransaction(async (transaction) => {
+      const deterministicRef = this.collection.doc(
+        proposalIdFromSourceIdentity(
+          proposal.protocol,
+          proposal.sourceType,
+          proposal.sourceId
+        )
+      );
+      const deterministicSnapshot = await transaction.get(deterministicRef);
+      let existing: StoredProposal | null = deterministicSnapshot.exists
+        ? cleanStoredProposal(deterministicSnapshot.data() as StoredProposal)
+        : null;
+      let targetRef = deterministicRef;
 
-    if (existing && !hasMeaningfulProposalChange(existing, proposal)) {
+      if (!existing) {
+        const legacySnapshot = await transaction.get(
+          this.sourceIdentityQuery(
+            proposal.protocol,
+            proposal.sourceType,
+            proposal.sourceId
+          )
+        );
+        const [legacyDocument] = legacySnapshot.docs;
+
+        if (legacyDocument) {
+          existing = cleanStoredProposal(legacyDocument.data() as StoredProposal);
+          targetRef = this.collection.doc(existing.id);
+        }
+      }
+
+      if (existing && !hasMeaningfulProposalChange(existing, proposal)) {
+        return {
+          proposal: existing,
+          created: false,
+          updated: false
+        };
+      }
+
+      const storedProposal = buildStoredProposal(proposal, existing, options);
+      const cleanedProposal = cleanStoredProposal(storedProposal);
+
+      if (existing) {
+        transaction.set(targetRef, cleanedProposal);
+      } else {
+        transaction.create(deterministicRef, cleanedProposal);
+      }
+
       return {
-        proposal: existing,
-        created: false,
-        updated: false
+        proposal: storedProposal,
+        created: !existing,
+        updated: true
       };
-    }
-
-    const storedProposal = buildStoredProposal(proposal, existing, options);
-    const ref = this.collection.doc(storedProposal.id);
-
-    await ref.set(cleanStoredProposal(storedProposal));
-
-    return {
-      proposal: storedProposal,
-      created: !existing,
-      updated: true
-    };
+    });
   }
 
   async upsertMany(
@@ -134,17 +166,28 @@ export class FirestoreProposalRepository implements ProposalRepository {
       return cleanStoredProposal(deterministicSnapshot.data() as StoredProposal);
     }
 
-    const legacySnapshot = await this.collection
-      .where("protocol", "==", protocol)
-      .where("sourceType", "==", sourceType)
-      .where("sourceId", "==", sourceId)
-      .limit(1)
-      .get();
+    const legacySnapshot = await this.sourceIdentityQuery(
+      protocol,
+      sourceType,
+      sourceId
+    ).get();
     const [legacyDocument] = legacySnapshot.docs;
 
     return legacyDocument
       ? cleanStoredProposal(legacyDocument.data() as StoredProposal)
       : null;
+  }
+
+  private sourceIdentityQuery(
+    protocol: string,
+    sourceType: string,
+    sourceId: string
+  ): Query<DocumentData> {
+    return this.collection
+      .where("protocol", "==", protocol)
+      .where("sourceType", "==", sourceType)
+      .where("sourceId", "==", sourceId)
+      .limit(1);
   }
 
   async findByNotificationStatus(

@@ -1,10 +1,16 @@
 node_modules
 dist
 coverage
+tests
 .env
 .env.*
 .env.local
 .git
 .gitignore
+.agents
+.codex
 README.md
+PLATFORM_MANUAL.md
 npm-debug.log
+*.log
+.DS_Store

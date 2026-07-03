@@ -10,10 +10,16 @@ import {
 import { FirestoreProposalRepository } from "./firestoreProposal.repository.js";
 import { MemoryProposalRepository } from "./memoryProposal.repository.js";
 import type { ProposalRepository } from "./proposal.repository.js";
+import {
+  FirestoreSourceActivityRepository,
+  MemorySourceActivityRepository,
+  type SourceActivityRepository
+} from "./sourceActivity.repository.js";
 
 export interface Repositories {
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
+  sourceActivityRepository: SourceActivityRepository;
 }
 
 export function createRepositories(env: Env, logger: Logger): Repositories {
@@ -22,7 +28,8 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
 
     return {
       proposalRepository: new MemoryProposalRepository(),
-      fetchRunRepository: new MemoryFetchRunRepository()
+      fetchRunRepository: new MemoryFetchRunRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository()
     };
   }
 
@@ -31,6 +38,7 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
 
   return {
     proposalRepository: new FirestoreProposalRepository(db),
-    fetchRunRepository: new FirestoreFetchRunRepository(db)
+    fetchRunRepository: new FirestoreFetchRunRepository(db),
+    sourceActivityRepository: new FirestoreSourceActivityRepository(db)
   };
 }

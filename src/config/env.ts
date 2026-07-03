@@ -154,7 +154,15 @@ const rawEnvSchema = z
     FIREBASE_CLIENT_EMAIL: z.string().default(""),
     FIREBASE_PRIVATE_KEY: z.string().default(""),
     ENABLE_SCHEDULER: booleanFromEnv.optional(),
-    FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
+    FETCH_INTERVAL_CRON: z.string().default("0 8 * * *"),
+    ENABLE_SOURCE_ACTIVITY_ALERTS: booleanFromEnv.default(true),
+    SOURCE_ACTIVITY_WARNING_DAYS: z.coerce.number().int().positive().default(14),
+    SOURCE_ACTIVITY_CRITICAL_DAYS: z.coerce.number().int().positive().default(30),
+    SOURCE_ACTIVITY_MIN_FETCHED_COUNT: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(1),
     LIDO_FORUM_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_FORUM_API_BASE_URL: z.string().url().default("https://research.lido.fi"),
     LIDO_ENABLED: booleanFromEnv.default(true),
@@ -216,6 +224,10 @@ const rawEnvSchema = z
       value.ENABLE_SCHEDULER ??
       !(value.DEMO_MODE || value.STORAGE_MODE === "memory"),
     fetchIntervalCron: value.FETCH_INTERVAL_CRON,
+    enableSourceActivityAlerts: value.ENABLE_SOURCE_ACTIVITY_ALERTS,
+    sourceActivityWarningDays: value.SOURCE_ACTIVITY_WARNING_DAYS,
+    sourceActivityCriticalDays: value.SOURCE_ACTIVITY_CRITICAL_DAYS,
+    sourceActivityMinFetchedCount: value.SOURCE_ACTIVITY_MIN_FETCHED_COUNT,
     lidoForumBaseUrl: value.LIDO_FORUM_BASE_URL,
     lidoForumApiBaseUrl: value.LIDO_FORUM_API_BASE_URL,
     lidoEnabled: value.LIDO_ENABLED,
@@ -244,7 +256,14 @@ const rawEnvSchema = z
     apiAuthEnabled: value.API_AUTH_ENABLED,
     apiAuthToken: value.API_AUTH_TOKEN,
     logLevel: value.LOG_LEVEL
-  }));
+  }))
+  .refine(
+    (value) => value.sourceActivityCriticalDays >= value.sourceActivityWarningDays,
+    {
+      message:
+        "SOURCE_ACTIVITY_CRITICAL_DAYS must be greater than or equal to SOURCE_ACTIVITY_WARNING_DAYS."
+    }
+  );
 
 export type Env = z.infer<typeof rawEnvSchema>;
 
