@@ -1,3 +1,5 @@
+import type { Logger } from "pino";
+import { TelegramNotificationService } from "./notifications/telegramNotification.service.js";
 import type { NotificationService } from "./notifications/notification.service.js";
 import type { NotificationMessage } from "./notifications/notification.service.js";
 
@@ -8,6 +10,13 @@ export interface SendTelegramTestNotificationsOptions {
   notifications: NotificationMessage[];
   delayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+}
+
+export interface CreateAdminOnlyTelegramTestServiceOptions {
+  botToken: string;
+  adminUserId: string;
+  fetchImpl?: typeof fetch;
+  logger?: Pick<Logger, "debug" | "error">;
 }
 
 export function parseTelegramTestSendDelayMs(value: string | undefined): number {
@@ -27,6 +36,23 @@ export function parseTelegramTestSendDelayMs(value: string | undefined): number 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+export function createAdminOnlyTelegramTestNotificationService(
+  options: CreateAdminOnlyTelegramTestServiceOptions
+): NotificationService {
+  if (!options.botToken.trim() || !options.adminUserId.trim()) {
+    throw new Error(
+      "Telegram test send requires TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_USER_ID."
+    );
+  }
+
+  return new TelegramNotificationService({
+    botToken: options.botToken,
+    allowedUserIds: [options.adminUserId],
+    fetchImpl: options.fetchImpl,
+    logger: options.logger
   });
 }
 

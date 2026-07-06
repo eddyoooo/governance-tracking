@@ -1,5 +1,8 @@
 import { loadEnv } from "./config/env.js";
-import { shouldEnableAdminStatusDemo } from "./demoConfig.js";
+import {
+  shouldEnableAdminStatusDemo,
+  telegramAllowedUserIdsForDemo
+} from "./demoConfig.js";
 import {
   nonAllowlistedDemoFixture,
   ScriptedLidoDemoAdapter
@@ -175,6 +178,7 @@ async function main(): Promise<void> {
     UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_UNISWAP_ALLOWED_PUBLISHERS),
     UNISWAP_FETCH_MAX_PAGES: "10",
     UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
+    TELEGRAM_ALLOWED_USER_IDS: telegramAllowedUserIdsForDemo(process.env),
     API_AUTH_ENABLED: "false",
     ENABLE_ADMIN_STATUS_REPORTS: adminDemoEnabled ? "true" : "false",
     LOG_LEVEL: "silent"
@@ -218,7 +222,7 @@ async function main(): Promise<void> {
   );
   console.log(
     env.enableTelegramNotifications
-      ? `Telegram is enabled for ${env.telegramAllowedUserIds.length} allowed user(s).`
+      ? "Telegram demo notifications are enabled for the configured admin user only."
       : "Telegram is disabled; notifications will be marked skipped."
   );
   console.log(
@@ -234,6 +238,9 @@ async function main(): Promise<void> {
       demoMode: env.demoMode,
       schedulerEnabled: env.enableScheduler,
       telegramEnabled: env.enableTelegramNotifications,
+      telegramDemoRecipient: env.enableTelegramNotifications
+        ? "configured admin user only"
+        : "not used",
       adminStatusReportsEnabled: env.enableAdminStatusReports,
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,

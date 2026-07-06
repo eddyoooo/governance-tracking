@@ -14,6 +14,10 @@ import { createRawGovernanceItem } from "../helpers/builders.js";
 
 type StoredDocument = Record<string, unknown>;
 
+interface FakeFirestoreOptions {
+  failSourceIdentityCompositeIndex?: boolean;
+}
+
 class FakeDocumentReference {
   constructor(
     private readonly documents: Map<string, StoredDocument>,
@@ -49,6 +53,7 @@ class FakeDocumentReference {
 class FakeQuery {
   constructor(
     protected readonly documents: Map<string, StoredDocument>,
+    private readonly options: FakeFirestoreOptions = {},
     private readonly filters: Array<{ field: string; value: string }> = [],
     private readonly limitCount?: number,
     private readonly orderField = "publishedAt",
@@ -58,6 +63,7 @@ class FakeQuery {
   where(field: string, _operator: string, value: string): FakeQuery {
     return new FakeQuery(
       this.documents,
+      this.options,
       [...this.filters, { field, value }],
       this.limitCount,
       this.orderField,
@@ -66,8 +72,18 @@ class FakeQuery {
   }
 
   orderBy(field: string, direction: "asc" | "desc"): FakeQuery {
+    if (
+      field === "firstSeenAt" &&
+      this.filters.some((filter) => filter.field === "notificationStatus")
+    ) {
+      throw new Error(
+        "The query requires an index for notificationStatus + firstSeenAt."
+      );
+    }
+
     return new FakeQuery(
       this.documents,
+      this.options,
       this.filters,
       this.limitCount,
       field,
@@ -78,6 +94,7 @@ class FakeQuery {
   limit(limitCount: number): FakeQuery {
     return new FakeQuery(
       this.documents,
+      this.options,
       this.filters,
       limitCount,
       this.orderField,
@@ -86,6 +103,22 @@ class FakeQuery {
   }
 
   async get() {
+    if (
+      this.options.failSourceIdentityCompositeIndex &&
+      ["protocol", "sourceType", "sourceId"].every((field) =>
+        this.filters.some((filter) => filter.field === field)
+      )
+    ) {
+      const error = new Error(
+        "The query requires an index for protocol + sourceType + sourceId."
+      ) as Error & { code: number; details: string };
+
+      error.code = 9;
+      error.details =
+        "The query requires an index. You can create it in Firestore.";
+      throw error;
+    }
+
     const docs = [...this.documents.values()]
       .filter((document) =>
         this.filters.every((filter) => document[filter.field] === filter.value)
@@ -135,7 +168,8 @@ class FakeTransaction {
 }
 
 function createFakeFirestore(
-  seed: Record<string, Record<string, StoredDocument>> = {}
+  seed: Record<string, Record<string, StoredDocument>> = {},
+  options: FakeFirestoreOptions = {}
 ): Firestore {
   const collections = new Map(
     Object.entries(seed).map(([collectionName, documents]) => [
@@ -150,7 +184,7 @@ function createFakeFirestore(
         collections.set(name, new Map());
       }
 
-      return new FakeCollectionReference(collections.get(name) ?? new Map());
+      return new FakeCollectionReference(collections.get(name) ?? new Map(), options);
     },
     runTransaction: async (updateFunction: (transaction: FakeTransaction) => unknown) =>
       updateFunction(new FakeTransaction())
@@ -273,6 +307,36 @@ describe("FirestoreProposalRepository", () => {
       title: "Updated legacy document"
     });
     await expect(repository.findAll()).resolves.toHaveLength(1);
+  });
+
+  it("does not require the legacy source-identity index when inserting deterministic Firestore documents", async () => {
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({}, { failSourceIdentityCompositeIndex: true })
+    );
+
+    await expect(repository.upsert(proposal)).resolves.toMatchObject({
+      created: true,
+      updated: true,
+      proposal: {
+        id: proposal.id,
+        sourceId: proposal.sourceId
+      }
+    });
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      id: proposal.id,
+      sourceId: proposal.sourceId
+    });
+  });
+
+  it("returns null instead of failing when optional legacy source-identity lookup needs an index", async () => {
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({}, { failSourceIdentityCompositeIndex: true })
+    );
+
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "missing")
+    ).resolves.toBeNull();
   });
 
   it("prefers deterministic Firestore proposal documents over legacy source-identity matches", async () => {

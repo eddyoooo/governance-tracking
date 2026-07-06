@@ -103,8 +103,6 @@ export class FetchProtocolGovernanceJob {
       errors: []
     };
 
-    await this.fetchRunRepository.upsert(run);
-
     let fetchedCount = 0;
     let allowlistedCount = 0;
     let skippedCount = 0;
@@ -116,6 +114,7 @@ export class FetchProtocolGovernanceJob {
     const errors: string[] = [];
 
     try {
+      await this.fetchRunRepository.upsert(run);
       this.logger.info({ protocol, runId }, "Starting governance fetch");
       const rawItems = await adapter.fetchRecent();
       fetchedCount = rawItems.length;
@@ -251,7 +250,16 @@ export class FetchProtocolGovernanceJob {
         errors: [...errors, errorMessage]
       };
 
-      await this.fetchRunRepository.upsert(failedRun);
+      try {
+        await this.fetchRunRepository.upsert(failedRun);
+      } catch (fetchRunError) {
+        this.logger.error(
+          { protocol, runId, error, fetchRunError },
+          "Failed to record failed governance fetch"
+        );
+        throw error;
+      }
+
       this.logger.error({ protocol, runId, error }, "Governance fetch failed");
       throw error;
     } finally {

@@ -128,6 +128,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
         "GET /health",
         "POST /api/admin/fetch/:protocol",
         "POST /api/admin/notify-pending",
+        "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
         "GET /api/admin/source-activity"
       ]

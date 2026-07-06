@@ -2,7 +2,8 @@ import {
   type CollectionReference,
   type DocumentData,
   type Firestore,
-  type Query
+  type Query,
+  type Transaction
 } from "firebase-admin/firestore";
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
@@ -56,6 +57,24 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
   return cleaned;
 }
 
+function isFirestoreMissingIndexError(error: unknown): boolean {
+  const maybeError = error as {
+    code?: unknown;
+    details?: unknown;
+    message?: unknown;
+  };
+  const text = [maybeError.details, maybeError.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    maybeError.code === 9 &&
+    (text.includes("requires an index") ||
+      (text.includes("create") && text.includes("index")))
+  );
+}
+
 export class FirestoreProposalRepository implements ProposalRepository {
   private readonly collection: CollectionReference<DocumentData>;
   private readonly db: Firestore;
@@ -84,17 +103,14 @@ export class FirestoreProposalRepository implements ProposalRepository {
       let targetRef = deterministicRef;
 
       if (!existing) {
-        const legacySnapshot = await transaction.get(
-          this.sourceIdentityQuery(
-            proposal.protocol,
-            proposal.sourceType,
-            proposal.sourceId
-          )
+        existing = await this.findLegacyBySourceIdentityInTransaction(
+          transaction,
+          proposal.protocol,
+          proposal.sourceType,
+          proposal.sourceId
         );
-        const [legacyDocument] = legacySnapshot.docs;
 
-        if (legacyDocument) {
-          existing = cleanStoredProposal(legacyDocument.data() as StoredProposal);
+        if (existing) {
           targetRef = this.collection.doc(existing.id);
         }
       }
@@ -166,11 +182,22 @@ export class FirestoreProposalRepository implements ProposalRepository {
       return cleanStoredProposal(deterministicSnapshot.data() as StoredProposal);
     }
 
-    const legacySnapshot = await this.sourceIdentityQuery(
-      protocol,
-      sourceType,
-      sourceId
-    ).get();
+    let legacySnapshot;
+
+    try {
+      legacySnapshot = await this.sourceIdentityQuery(
+        protocol,
+        sourceType,
+        sourceId
+      ).get();
+    } catch (error) {
+      if (isFirestoreMissingIndexError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+
     const [legacyDocument] = legacySnapshot.docs;
 
     return legacyDocument
@@ -190,17 +217,42 @@ export class FirestoreProposalRepository implements ProposalRepository {
       .limit(1);
   }
 
+  private async findLegacyBySourceIdentityInTransaction(
+    transaction: Transaction,
+    protocol: string,
+    sourceType: string,
+    sourceId: string
+  ): Promise<StoredProposal | null> {
+    try {
+      const snapshot = await transaction.get(
+        this.sourceIdentityQuery(protocol, sourceType, sourceId)
+      );
+      const [legacyDocument] = snapshot.docs;
+
+      return legacyDocument
+        ? cleanStoredProposal(legacyDocument.data() as StoredProposal)
+        : null;
+    } catch (error) {
+      if (isFirestoreMissingIndexError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
   async findByNotificationStatus(
     status: StoredProposal["notificationStatus"],
     limit = 100
   ): Promise<StoredProposal[]> {
     const snapshot = await this.collection
       .where("notificationStatus", "==", status)
-      .orderBy("firstSeenAt", "asc")
-      .limit(limit)
       .get();
 
-    return snapshot.docs.map((doc) => cleanStoredProposal(doc.data() as StoredProposal));
+    return snapshot.docs
+      .map((doc) => cleanStoredProposal(doc.data() as StoredProposal))
+      .sort((left, right) => left.firstSeenAt.localeCompare(right.firstSeenAt))
+      .slice(0, limit);
   }
 
   async updateNotificationStatus(

@@ -4,6 +4,7 @@ import type {
   NotificationService
 } from "../../src/notifications/index.js";
 import {
+  createAdminOnlyTelegramTestNotificationService,
   DEFAULT_TELEGRAM_TEST_SEND_DELAY_MS,
   parseTelegramTestSendDelayMs,
   sendTelegramTestNotifications
@@ -91,5 +92,47 @@ describe("Telegram test-send runner", () => {
       "two"
     ]);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("creates an admin-only Telegram service for live test sends", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () => new Response("{}", { status: 200 })
+    );
+    const service = createAdminOnlyTelegramTestNotificationService({
+      botToken: "test-token",
+      adminUserId: "1549323073",
+      fetchImpl
+    });
+
+    await service.send(message("admin only"));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const body = JSON.parse(
+      (fetchImpl.mock.calls[0][1] as RequestInit).body as string
+    ) as Record<string, unknown>;
+
+    expect(body.chat_id).toBe("1549323073");
+    expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain("987654321");
+  });
+
+  it("fails clearly when admin-only Telegram test-send credentials are missing", () => {
+    expect(() =>
+      createAdminOnlyTelegramTestNotificationService({
+        botToken: "",
+        adminUserId: "1549323073"
+      })
+    ).toThrow(
+      "Telegram test send requires TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_USER_ID."
+    );
+
+    expect(() =>
+      createAdminOnlyTelegramTestNotificationService({
+        botToken: "test-token",
+        adminUserId: " "
+      })
+    ).toThrow(
+      "Telegram test send requires TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_USER_ID."
+    );
   });
 });

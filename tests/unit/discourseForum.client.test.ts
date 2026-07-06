@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import {
   discourseRecentTopicsResponseSchema,
   discourseSiteResponseSchema,
@@ -44,6 +44,10 @@ function recentTopicsPayload() {
 }
 
 describe("shared Discourse forum helpers", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("validates recent topics and defaults optional users/topics arrays", () => {
     const parsed = discourseRecentTopicsResponseSchema.parse({
       topic_list: {}
@@ -177,6 +181,37 @@ describe("shared Discourse forum helpers", () => {
       Accept: "application/json",
       "User-Agent": "governance-tracking/0.1"
     });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("times out stuck forum requests with protocol-labelled errors", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = jest.fn<typeof fetch>(
+      async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          signal?.addEventListener("abort", () => {
+            reject(new Error("request aborted"));
+          });
+        })
+    );
+
+    const request = fetchDiscourseJson({
+      apiBaseUrl: "https://forum.example",
+      pathname: "/latest.json?page=0",
+      forumLabel: "Example forum",
+      fetchImpl,
+      timeoutMs: 25
+    });
+
+    await Promise.resolve();
+    jest.advanceTimersByTime(25);
+
+    await expect(request).rejects.toThrow(
+      "Example forum request timed out after 25ms: https://forum.example/latest.json?page=0"
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 
   it("throws protocol-labelled errors for non-success responses", async () => {

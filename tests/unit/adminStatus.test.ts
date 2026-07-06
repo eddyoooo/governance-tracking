@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import {
   buildAdminStatusReport,
   createAdminStatusReporter,
@@ -19,6 +19,7 @@ import {
   MemorySourceActivityRepository,
   type SourceActivityRecord
 } from "../../src/storage/sourceActivity.repository.js";
+import type { ProposalRepository } from "../../src/storage/proposal.repository.js";
 import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
@@ -34,6 +35,22 @@ class RecordingAdminStatusNotifier implements AdminStatusNotifier {
   async send(message: string): Promise<void> {
     this.messages.push(message);
   }
+}
+
+function createNotificationLookupFailureRepository(
+  message = "Firestore index missing"
+): ProposalRepository {
+  return {
+    upsert: jest.fn(),
+    upsertMany: jest.fn(),
+    findAll: jest.fn(),
+    findById: jest.fn(),
+    findBySourceIdentity: jest.fn(),
+    findByNotificationStatus: jest.fn(async () => {
+      throw new Error(message);
+    }),
+    updateNotificationStatus: jest.fn()
+  } as unknown as ProposalRepository;
 }
 
 function createRun(overrides: Partial<FetchRun> = {}): FetchRun {
@@ -88,6 +105,10 @@ function createRegistry() {
 }
 
 describe("admin status reports", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("builds a healthy daily status report from recent successful fetch runs", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();
@@ -227,6 +248,67 @@ describe("admin status reports", () => {
     expect(result.problems).toEqual([]);
     expect(result.message).toContain("Source activity:");
     expect(result.message).toContain("- lido: no source activity recorded");
+  });
+
+  it("still builds and marks unhealthy when notification queue reads fail", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "uniswap" }));
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository: createNotificationLookupFailureRepository(),
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toEqual(
+      expect.arrayContaining([
+        "Unable to read pending notification queue: Firestore index missing",
+        "Unable to read failed notification queue: Firestore index missing"
+      ])
+    );
+    expect(result.message).toContain("Status: ATTENTION REQUIRED");
+    expect(result.message).toContain("Pending notifications: unknown");
+    expect(result.message).toContain("Failed notifications: unknown");
+    expect(result.message).toContain("- lido: success");
+  });
+
+  it("sends a fallback attention report if status report construction throws unexpectedly", async () => {
+    const notifier = new RecordingAdminStatusNotifier();
+    const reporter = new DailyAdminStatusReporter({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: {
+        list: jest.fn(() => {
+          throw new Error("registry unavailable");
+        })
+      } as never,
+      fetchRunRepository: new MemoryFetchRunRepository(),
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository(),
+      notifier,
+      logger: createSilentLogger()
+    });
+
+    const result = await reporter.sendDailyStatusReport();
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toEqual([
+      "Unable to build admin status report: registry unavailable"
+    ]);
+    expect(notifier.messages).toHaveLength(1);
+    expect(notifier.messages[0]).toContain("Status: ATTENTION REQUIRED");
+    expect(notifier.messages[0]).toContain(
+      "Unable to build admin status report: registry unavailable"
+    );
   });
 
   it("propagates admin notifier failures so the scheduler can log them", async () => {
@@ -382,7 +464,41 @@ describe("admin status reports", () => {
       parse_mode: "HTML",
       disable_web_page_preview: true
     });
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(
+      AbortSignal
+    );
     expect(String(body.text)).toContain("GOVERNANCE MONITOR DAILY STATUS");
+  });
+
+  it("times out stuck Telegram admin status requests", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = jest.fn<typeof fetch>(
+      async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          signal?.addEventListener("abort", () => {
+            reject(new Error("request aborted"));
+          });
+        })
+    );
+    const notifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl,
+      logger: createSilentLogger(),
+      requestTimeoutMs: 25
+    });
+
+    const send = notifier.send("status");
+
+    await Promise.resolve();
+    jest.advanceTimersByTime(25);
+
+    await expect(send).rejects.toThrow(
+      "Telegram admin status message failed: Telegram admin status request timed out after 25ms"
+    );
+    await expect(send).rejects.not.toThrow(/admin-token|1549323073/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid Telegram admin notifier configuration before sending", () => {

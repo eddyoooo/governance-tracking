@@ -6,7 +6,10 @@ export interface TelegramAdminStatusNotifierOptions {
   adminUserId: string;
   fetchImpl?: typeof fetch;
   logger?: Pick<Logger, "debug" | "error">;
+  requestTimeoutMs?: number;
 }
+
+export const DEFAULT_TELEGRAM_ADMIN_STATUS_TIMEOUT_MS = 15_000;
 
 export class TelegramAdminStatusDeliveryError extends Error {
   constructor(readonly status?: number, readonly responseBody?: string) {
@@ -26,6 +29,7 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
   private readonly adminUserId: string;
   private readonly fetchImpl: typeof fetch;
   private readonly logger?: Pick<Logger, "debug" | "error">;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: TelegramAdminStatusNotifierOptions) {
     const botToken = options.botToken.trim();
@@ -45,10 +49,17 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
     this.adminUserId = adminUserId;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logger = options.logger;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_TELEGRAM_ADMIN_STATUS_TIMEOUT_MS;
   }
 
   async send(message: string): Promise<void> {
     const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      this.requestTimeoutMs
+    );
 
     this.logger?.debug(
       { notificationService: this.name },
@@ -61,6 +72,7 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
         headers: {
           "content-type": "application/json"
         },
+        signal: controller.signal,
         body: JSON.stringify({
           chat_id: this.adminUserId,
           text: message,
@@ -89,9 +101,12 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
         throw error;
       }
 
-      const errorMessage = this.redact(
-        error instanceof Error ? error.message : String(error)
-      );
+      const rawErrorMessage = controller.signal.aborted
+        ? `Telegram admin status request timed out after ${this.requestTimeoutMs}ms`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      const errorMessage = this.redact(rawErrorMessage);
 
       this.logger?.error(
         {
@@ -101,6 +116,8 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
         "Telegram admin status report request failed"
       );
       throw new TelegramAdminStatusDeliveryError(undefined, errorMessage);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

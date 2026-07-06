@@ -30,6 +30,25 @@ export function createAdminRouter(context: AppContext): Router {
     }
   });
 
+  router.post("/status/send", async (_request, response, next) => {
+    try {
+      if (!context.adminStatusReporter.enabled) {
+        response.status(409).json({ error: "Admin status reports are disabled." });
+        return;
+      }
+
+      const result = await context.adminStatusReporter.sendDailyStatusReport();
+
+      response.json({
+        sent: true,
+        healthy: result.healthy,
+        problems: result.problems
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/fetch-runs", async (_request, response, next) => {
     try {
       const runs = await context.fetchRunRepository.findAll(100);

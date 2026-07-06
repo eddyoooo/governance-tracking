@@ -100,36 +100,55 @@ export interface FetchDiscourseJsonOptions {
   forumLabel: string;
   fetchImpl: typeof fetch;
   logger?: Pick<Logger, "debug" | "error">;
+  timeoutMs?: number;
 }
+
+export const DEFAULT_DISCOURSE_FETCH_TIMEOUT_MS = 30_000;
 
 export async function fetchDiscourseJson(
   options: FetchDiscourseJsonOptions
 ): Promise<unknown> {
   const url = new URL(options.pathname, options.apiBaseUrl);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOURSE_FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   options.logger?.debug({ url: url.toString() }, `Fetching ${options.forumLabel} JSON`);
 
-  const response = await options.fetchImpl(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "governance-tracking/0.1"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `${options.forumLabel} request failed with ${response.status}: ${url}`
-    );
-  }
-
   try {
-    return await response.json();
+    const response = await options.fetchImpl(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "governance-tracking/0.1"
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `${options.forumLabel} request failed with ${response.status}: ${url}`
+      );
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      options.logger?.error(
+        { url: url.toString(), error },
+        `Failed to parse ${options.forumLabel} JSON response`
+      );
+      throw new Error(`Invalid JSON response from ${options.forumLabel}: ${url}`);
+    }
   } catch (error) {
-    options.logger?.error(
-      { url: url.toString(), error },
-      `Failed to parse ${options.forumLabel} JSON response`
-    );
-    throw new Error(`Invalid JSON response from ${options.forumLabel}: ${url}`);
+    if (controller.signal.aborted) {
+      throw new Error(
+        `${options.forumLabel} request timed out after ${timeoutMs}ms: ${url}`
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

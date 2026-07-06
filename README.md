@@ -25,6 +25,7 @@ curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 curl -s "$API/api/admin/source-activity"
+curl -s -X POST "$API/api/admin/status/send"
 ```
 
 Run the end-to-end terminal walkthrough:
@@ -65,9 +66,10 @@ curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_
 curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected result: all three manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, and Uniswap, and any Telegram failures are visible in `notificationFailedCount` and the daily admin status report.
+Expected result: all three manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, and Uniswap, and the manual admin status endpoint sends the configured Telegram admin a compact health report. Any Telegram failures are visible in `notificationFailedCount` and in the admin status report.
 
 Production deployment note: if you run multiple backend replicas, prefer enabling `ENABLE_SCHEDULER=true` on only one worker. Firestore proposal upserts are transaction-backed to protect against duplicate proposal records and duplicate new-proposal notifications, but multiple active schedulers can still create duplicate polling load and extra fetch-run audit records.
 
@@ -75,6 +77,7 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 
 - Fetch recent proposal/forum activity for Lido, Aave, and Uniswap.
 - Validate Discourse JSON responses with Zod.
+- Bound external forum and Telegram requests with timeouts so a stuck network call does not hang the monitor indefinitely.
 - Filter fetched items by protocol-specific trusted publisher allowlists.
 - Normalize allowlisted items into a common stored proposal shape.
 - Deduplicate by `protocol + sourceType + sourceId`.
@@ -84,6 +87,7 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 - Send direct Telegram notifications for newly discovered allowlisted proposals.
 - Avoid duplicate notifications for already-known proposals.
 - Send a daily Telegram status report to the configured admin when enabled.
+- Allow manually sending the same admin status report after deploys or restarts.
 - Run scheduled polling once daily by default.
 - Provide a small operational API for health, manual fetches, notification retries, and fetch-run audit.
 - Run deterministic unit/integration tests without live forum calls.
@@ -136,6 +140,8 @@ GET https://gov.uniswap.org/c/<category-path>/<category-id>/l/latest.json?page=<
 ```
 
 The Aave and Uniswap adapters combine global latest pages with discovered public category/subcategory feeds, then deduplicate by Discourse topic id. For Uniswap, that currently covers public categories discovered from `/site.json`, such as Temperature Check, Requests for Comment, Consensus Check, Delegation Pitch, Governance-Meta, and Service Providers. Private/read-restricted categories are ignored because the public API does not expose them without forum permissions.
+
+If a forum still reports more pages after the configured page cap, the monitor logs that as an `info` message with the page limit and fetched count. That is coverage telemetry, not a failed fetch.
 
 ## Stored Data
 
@@ -339,7 +345,7 @@ TELEGRAM_E2E_ENABLED=false
 TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
 
-Telegram recipients must open the bot and send `/start` once before Telegram allows the bot to message them. The service only sends to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
+Telegram recipients must open the bot and send `/start` once before Telegram allows the bot to message them. In production, proposal notifications fan out to every numeric ID listed in `TELEGRAM_ALLOWED_USER_IDS`. Demo/test notification sends are intentionally admin-only so teammates are not spammed during rehearsals.
 
 Telegram admin status reports:
 
@@ -350,6 +356,8 @@ ADMIN_STATUS_CRON=0 9 * * *
 ```
 
 Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, protocol fetches run daily at `08:00` server time by default, then the admin receives one daily status message at `09:00` server time. The one-hour gap gives the report time to include the latest daily fetch outcome. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, pending/failed notification counts, and recent problems.
+
+The same report can be triggered manually with `POST /api/admin/status/send`. The report is defensive: if one status subsection cannot be read, for example a Firestore query error, the admin still receives an `ATTENTION REQUIRED` message with the failing subsection named.
 
 Source activity watchdog:
 
@@ -362,7 +370,7 @@ SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
 
 This watchdog looks at all raw fetched forum topics, not just allowlisted publishers. It helps catch silent forum migrations, abandoned category feeds, and old forums that still return valid JSON but no longer receive new governance activity.
 
-For a one-off demo, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo:admin`. That command uses memory storage and local forum samples, performs the normal monitor demo, and sends the final status report to the admin user only. Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
+For a one-off Telegram-safe demo, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo:admin`. Demo proposal notifications and the final status report are sent only to the admin user. Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
 
 ## Commands
 
@@ -410,13 +418,15 @@ Run real Telegram test-send:
 npm run telegram:test-send
 ```
 
+This command requires `TELEGRAM_E2E_ENABLED=true` and sends only to `TELEGRAM_ADMIN_USER_ID`. It deliberately ignores `TELEGRAM_ALLOWED_USER_IDS` so teammate proposal-notification recipients are not spammed during tests.
+
 Run real Telegram E2E test:
 
 ```bash
 npm run test:e2e:telegram
 ```
 
-The Telegram commands send real messages only when the required Telegram env values are configured. Normal `npm test` and `npm run check` do not send Telegram messages, even if `.env` has `TELEGRAM_E2E_ENABLED=true`; the real E2E test requires the dedicated script.
+The Telegram commands send real messages only when the required Telegram env values are configured. Demo/test Telegram messages are admin-only. Normal `npm test` and `npm run check` do not send Telegram messages, even if `.env` has `TELEGRAM_E2E_ENABLED=true`; the real E2E test requires the dedicated script.
 
 ## Operational API
 
@@ -435,6 +445,7 @@ Security notes:
 | `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/notify-pending` | No | Retries proposals currently marked `pending`. |
+| `POST /api/admin/status/send` | No | Sends the same operator Telegram status report used by the daily admin cron. |
 | `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
 | `GET /api/admin/source-activity` | No | Returns latest raw-source freshness records used by the silent-migration watchdog. |
 

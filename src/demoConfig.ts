@@ -12,3 +12,15 @@ export function shouldEnableAdminStatusDemo(
 ): boolean {
   return readBooleanFlag("ENABLE_ADMIN_DEMO", source);
 }
+
+export function telegramAdminUserIdForDemo(
+  source: NodeJS.ProcessEnv = process.env
+): string {
+  return source.TELEGRAM_ADMIN_USER_ID?.trim() || "1549323073";
+}
+
+export function telegramAllowedUserIdsForDemo(
+  source: NodeJS.ProcessEnv = process.env
+): string {
+  return JSON.stringify([telegramAdminUserIdForDemo(source)]);
+}

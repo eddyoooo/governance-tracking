@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   readBooleanFlag,
-  shouldEnableAdminStatusDemo
+  shouldEnableAdminStatusDemo,
+  telegramAllowedUserIdsForDemo,
+  telegramAdminUserIdForDemo
 } from "../../src/demoConfig.js";
 
 describe("demo config", () => {
@@ -32,5 +34,26 @@ describe("demo config", () => {
         ENABLE_ADMIN_STATUS_REPORTS: "false"
       })
     ).toBe(true);
+  });
+
+  it("forces demo Telegram proposal notifications to the configured admin user only", () => {
+    const source = {
+      TELEGRAM_ADMIN_USER_ID: " 1549323073 ",
+      TELEGRAM_ALLOWED_USER_IDS: JSON.stringify(["111111111", "222222222"])
+    };
+
+    expect(telegramAdminUserIdForDemo(source)).toBe("1549323073");
+    expect(telegramAllowedUserIdsForDemo(source)).toBe(
+      JSON.stringify(["1549323073"])
+    );
+    expect(telegramAllowedUserIdsForDemo(source)).not.toContain("111111111");
+    expect(telegramAllowedUserIdsForDemo(source)).not.toContain("222222222");
+  });
+
+  it("uses the production admin user id default for demo safety", () => {
+    expect(telegramAdminUserIdForDemo({})).toBe("1549323073");
+    expect(telegramAllowedUserIdsForDemo({})).toBe(
+      JSON.stringify(["1549323073"])
+    );
   });
 });

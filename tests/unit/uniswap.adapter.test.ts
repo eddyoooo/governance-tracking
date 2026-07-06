@@ -239,7 +239,7 @@ describe("UniswapAdapter", () => {
     });
   });
 
-  it("uses configured page limits and logs warnings", async () => {
+  it("uses configured page limits and logs info messages", async () => {
     const logger = createSilentLogger();
     const client = {
       fetchRecentTopicPage: jest.fn(async () => ({
@@ -283,7 +283,7 @@ describe("UniswapAdapter", () => {
 
     expect(client.fetchCategoryTopicPage).toHaveBeenCalledTimes(2);
     expect(items.map((item) => item.sourceId)).toEqual(["26120", "26121"]);
-    expect(logger.warn).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: "uniswap",
         maxPages: 2,

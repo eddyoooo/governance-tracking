@@ -127,7 +127,7 @@ describe("LidoAdapter", () => {
     expect(items.map((item) => item.sourceId)).toEqual(["1001", "1002"]);
   });
 
-  it("stops at the configured max page count and logs a warning", async () => {
+  it("stops at the configured max page count and logs an info message", async () => {
     const logger = createSilentLogger();
     const client = {
       fetchRecentTopicPage: jest.fn(async (options: { page: number }) => ({
@@ -158,7 +158,7 @@ describe("LidoAdapter", () => {
 
     expect(client.fetchRecentTopicPage).toHaveBeenCalledTimes(2);
     expect(items.map((item) => item.sourceId)).toEqual(["1000", "1001"]);
-    expect(logger.warn).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: "lido",
         maxPages: 2,

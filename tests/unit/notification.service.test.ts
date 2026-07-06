@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { loadEnv } from "../../src/config/env.js";
 import { telegramTestNotificationFixtures } from "../../src/demoFixtures/telegramNotification.fixture.js";
 import {
@@ -50,6 +50,10 @@ class FailFirstNotificationService implements NotificationService {
 }
 
 describe("notification services", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("keeps Telegram test fixtures realistic and publisher-diverse", () => {
     const publisherNames = telegramTestNotificationFixtures.map(
       (fixture) => fixture.publisherName
@@ -230,8 +234,48 @@ describe("notification services", () => {
       parse_mode: "HTML",
       disable_web_page_preview: false
     });
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(
+      AbortSignal
+    );
     expect(String(firstBody.text)).toContain("<b>NEW GOVERNANCE ITEM TRACKED</b>");
     expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain("333333333");
+  });
+
+  it("times out stuck Telegram proposal notification requests per recipient", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = jest.fn<typeof fetch>(
+      async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          signal?.addEventListener("abort", () => {
+            reject(new Error("request aborted"));
+          });
+        })
+    );
+    const service = new TelegramNotificationService({
+      botToken: "sensitive-token",
+      allowedUserIds: ["111111111"],
+      fetchImpl,
+      logger: createSilentLogger(),
+      requestTimeoutMs: 25
+    });
+
+    const send = service.send({
+      protocol: "lido",
+      sourceType: "forum",
+      publisherName: "Allowed Publisher",
+      title: "Proposal",
+      sourceUrl: "https://example.com"
+    });
+
+    await Promise.resolve();
+    jest.advanceTimersByTime(25);
+
+    await expect(send).rejects.toThrow(
+      "Telegram notification failed for 1 of 1 allowed recipients: recipient 1 failed: Telegram notification request timed out after 25ms"
+    );
+    await expect(send).rejects.not.toThrow(/sensitive-token|111111111/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("does not log Telegram bot tokens or allowed user ids while sending succeeds", async () => {

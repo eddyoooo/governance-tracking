@@ -173,7 +173,7 @@ describe("AaveAdapter", () => {
     expect(items.map((item) => item.sourceId)).toEqual(["25170", "25168"]);
   });
 
-  it("stops at the configured max page count and logs a warning", async () => {
+  it("stops at the configured max page count and logs an info message", async () => {
     const logger = createSilentLogger();
     const client = {
       fetchRecentTopicPage: jest.fn(async (options: { page: number }) => ({
@@ -210,7 +210,7 @@ describe("AaveAdapter", () => {
 
     expect(client.fetchRecentTopicPage).toHaveBeenCalledTimes(2);
     expect(items.map((item) => item.sourceId)).toEqual(["25170", "25171"]);
-    expect(logger.warn).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: "aave",
         maxPages: 2,
@@ -265,7 +265,7 @@ describe("AaveAdapter", () => {
 
     expect(client.fetchCategoryTopicPage).toHaveBeenCalledTimes(2);
     expect(items.map((item) => item.sourceId)).toEqual(["25170", "25171"]);
-    expect(logger.warn).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: "aave",
         maxPages: 2,

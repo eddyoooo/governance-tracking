@@ -55,13 +55,35 @@ export class DailyAdminStatusReporter implements AdminStatusReporter {
   ) {}
 
   async sendDailyStatusReport(): Promise<AdminStatusReportResult> {
-    const result = await buildAdminStatusReport({
-      env: this.options.env,
-      protocolRegistry: this.options.protocolRegistry,
-      fetchRunRepository: this.options.fetchRunRepository,
-      proposalRepository: this.options.proposalRepository,
-      sourceActivityRepository: this.options.sourceActivityRepository
-    });
+    let result: AdminStatusReportResult;
+
+    try {
+      result = await buildAdminStatusReport({
+        env: this.options.env,
+        protocolRegistry: this.options.protocolRegistry,
+        fetchRunRepository: this.options.fetchRunRepository,
+        proposalRepository: this.options.proposalRepository,
+        sourceActivityRepository: this.options.sourceActivityRepository
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+
+      result = {
+        healthy: false,
+        problems: [`Unable to build admin status report: ${message}`],
+        message: formatAdminStatusMessage({
+          env: this.options.env,
+          enabledProtocols: [],
+          latestByProtocol: new Map(),
+          sourceActivityByProtocol: new Map(),
+          pendingNotificationCount: null,
+          failedNotificationCount: null,
+          healthy: false,
+          problems: [`Unable to build admin status report: ${message}`],
+          checkedAt: new Date().toISOString()
+        })
+      };
+    }
 
     await this.options.notifier.send(result.message);
     this.options.logger?.info(
@@ -113,19 +135,44 @@ export async function buildAdminStatusReport(options: {
   proposalRepository: ProposalRepository;
   sourceActivityRepository: SourceActivityRepository;
 }): Promise<AdminStatusReportResult> {
+  const problems: string[] = [];
   const enabledProtocols = options.protocolRegistry
     .list()
     .filter((adapter) => adapter.enabled)
     .map((adapter) => adapter.protocol);
-  const fetchRuns = await options.fetchRunRepository.findAll(50);
-  const pendingNotifications =
-    await options.proposalRepository.findByNotificationStatus("pending", 20);
-  const failedNotifications =
-    await options.proposalRepository.findByNotificationStatus("failed", 20);
-  const sourceActivityRecords = await options.sourceActivityRepository.findAll(100);
-  const problems: string[] = [];
+  const fetchRunsResult = await readReportSection(
+    () => options.fetchRunRepository.findAll(50),
+    "fetch runs"
+  );
+  const pendingNotificationsResult = await readReportSection(
+    () => options.proposalRepository.findByNotificationStatus("pending", 20),
+    "pending notification queue"
+  );
+  const failedNotificationsResult = await readReportSection(
+    () => options.proposalRepository.findByNotificationStatus("failed", 20),
+    "failed notification queue"
+  );
+  const sourceActivityRecordsResult = await readReportSection(
+    () => options.sourceActivityRepository.findAll(100),
+    "source activity records"
+  );
+  const fetchRuns = fetchRunsResult.records ?? [];
+  const pendingNotifications = pendingNotificationsResult.records;
+  const failedNotifications = failedNotificationsResult.records;
+  const sourceActivityRecords = sourceActivityRecordsResult.records ?? [];
   const latestByProtocol = new Map<string, FetchRun>();
   const sourceActivityByProtocol = new Map<string, SourceActivityRecord>();
+
+  for (const result of [
+    fetchRunsResult,
+    pendingNotificationsResult,
+    failedNotificationsResult,
+    sourceActivityRecordsResult
+  ]) {
+    if (result.error) {
+      problems.push(result.error);
+    }
+  }
 
   for (const run of fetchRuns) {
     if (!latestByProtocol.has(run.protocol)) {
@@ -141,44 +188,48 @@ export async function buildAdminStatusReport(options: {
     problems.push("No protocol adapters are enabled.");
   }
 
-  for (const protocol of enabledProtocols) {
-    const latestRun = latestByProtocol.get(protocol);
+  if (fetchRunsResult.records) {
+    for (const protocol of enabledProtocols) {
+      const latestRun = latestByProtocol.get(protocol);
 
-    if (!latestRun) {
-      problems.push(`No fetch run has been recorded for ${protocol}.`);
-      continue;
+      if (!latestRun) {
+        problems.push(`No fetch run has been recorded for ${protocol}.`);
+        continue;
+      }
+
+      if (latestRun.status !== "success") {
+        problems.push(
+          `${protocol} latest fetch is ${latestRun.status}${
+            latestRun.errors.length > 0 ? `: ${latestRun.errors.join("; ")}` : "."
+          }`
+        );
+      }
     }
 
-    if (latestRun.status !== "success") {
+    for (const run of fetchRuns.filter((fetchRun) => fetchRun.status === "failed")) {
       problems.push(
-        `${protocol} latest fetch is ${latestRun.status}${
-          latestRun.errors.length > 0 ? `: ${latestRun.errors.join("; ")}` : "."
+        `${run.protocol} fetch failed at ${run.finishedAt ?? run.startedAt}${
+          run.errors.length > 0 ? `: ${run.errors.join("; ")}` : "."
         }`
+      );
+    }
+
+    for (const run of fetchRuns.filter(
+      (fetchRun) => fetchRun.notificationFailedCount > 0
+    )) {
+      problems.push(
+        `${run.protocol} had ${run.notificationFailedCount} notification failure(s) in fetch run ${run.id}.`
       );
     }
   }
 
-  for (const run of fetchRuns.filter((fetchRun) => fetchRun.status === "failed")) {
-    problems.push(
-      `${run.protocol} fetch failed at ${run.finishedAt ?? run.startedAt}${
-        run.errors.length > 0 ? `: ${run.errors.join("; ")}` : "."
-      }`
-    );
-  }
-
-  for (const run of fetchRuns.filter((fetchRun) => fetchRun.notificationFailedCount > 0)) {
-    problems.push(
-      `${run.protocol} had ${run.notificationFailedCount} notification failure(s) in fetch run ${run.id}.`
-    );
-  }
-
-  if (failedNotifications.length > 0) {
+  if (failedNotifications && failedNotifications.length > 0) {
     problems.push(
       `${failedNotifications.length} proposal notification(s) are marked failed.`
     );
   }
 
-  if (options.env.enableSourceActivityAlerts) {
+  if (options.env.enableSourceActivityAlerts && sourceActivityRecordsResult.records) {
     for (const protocol of enabledProtocols) {
       const sourceActivity = sourceActivityByProtocol.get(protocol);
 
@@ -207,8 +258,8 @@ export async function buildAdminStatusReport(options: {
       enabledProtocols,
       latestByProtocol,
       sourceActivityByProtocol,
-      pendingNotificationCount: pendingNotifications.length,
-      failedNotificationCount: failedNotifications.length,
+      pendingNotificationCount: pendingNotifications?.length ?? null,
+      failedNotificationCount: failedNotifications?.length ?? null,
       healthy,
       problems,
       checkedAt: new Date().toISOString()
@@ -221,8 +272,8 @@ export function formatAdminStatusMessage(options: {
   enabledProtocols: string[];
   latestByProtocol: Map<string, FetchRun>;
   sourceActivityByProtocol: Map<string, SourceActivityRecord>;
-  pendingNotificationCount: number;
-  failedNotificationCount: number;
+  pendingNotificationCount: number | null;
+  failedNotificationCount: number | null;
   healthy: boolean;
   problems: string[];
   checkedAt: string;
@@ -272,8 +323,8 @@ export function formatAdminStatusMessage(options: {
     `Storage: ${escapeTelegramHtml(options.env.demoMode ? "memory" : options.env.storageMode)}`,
     `Scheduler: ${options.env.enableScheduler ? "enabled" : "disabled"}`,
     `Enabled protocols: ${escapeTelegramHtml(options.enabledProtocols.join(", ") || "none")}`,
-    `Pending notifications: ${options.pendingNotificationCount}`,
-    `Failed notifications: ${options.failedNotificationCount}`,
+    `Pending notifications: ${formatOptionalCount(options.pendingNotificationCount)}`,
+    `Failed notifications: ${formatOptionalCount(options.failedNotificationCount)}`,
     "",
     "Latest fetches:",
     ...latestFetchLines,
@@ -284,6 +335,30 @@ export function formatAdminStatusMessage(options: {
     "Problems:",
     ...problemLines
   ].join("\n");
+}
+
+async function readReportSection<T>(
+  read: () => Promise<T[]>,
+  label: string
+): Promise<{ records: T[] | null; error?: string }> {
+  try {
+    return {
+      records: await read()
+    };
+  } catch (error) {
+    return {
+      records: null,
+      error: `Unable to read ${label}: ${errorMessage(error)}`
+    };
+  }
+}
+
+function formatOptionalCount(count: number | null): string {
+  return count === null ? "unknown" : String(count);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function escapeTelegramHtml(value: string): string {

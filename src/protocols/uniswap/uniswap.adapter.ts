@@ -133,7 +133,7 @@ export class UniswapAdapter implements ProtocolAdapter {
       }
     }
 
-    this.logger?.warn(
+    this.logger?.info(
       {
         protocol: this.protocol,
         maxPages: options.maxPages,

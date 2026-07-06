@@ -58,6 +58,7 @@ describe("monitor API", () => {
         "GET /health",
         "POST /api/admin/fetch/:protocol",
         "POST /api/admin/notify-pending",
+        "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
         "GET /api/admin/source-activity"
       ]
@@ -305,6 +306,48 @@ describe("monitor API", () => {
     ]);
   });
 
+  it("sends the daily admin status report through the manual admin endpoint", async () => {
+    const adminStatusReporter = {
+      enabled: true,
+      sendDailyStatusReport: jest.fn(async () => ({
+        healthy: true,
+        message: "<b>GOVERNANCE MONITOR DAILY STATUS</b>\nStatus: OK",
+        problems: []
+      }))
+    };
+    const { app } = createApp({
+      env: testEnv(),
+      adminStatusReporter: adminStatusReporter as never
+    });
+
+    const response = await request(app).post("/api/admin/status/send").expect(200);
+
+    expect(adminStatusReporter.sendDailyStatusReport).toHaveBeenCalledTimes(1);
+    expect(response.body).toEqual({
+      sent: true,
+      healthy: true,
+      problems: []
+    });
+  });
+
+  it("returns a clear conflict when manually sending disabled admin status reports", async () => {
+    const adminStatusReporter = {
+      enabled: false,
+      sendDailyStatusReport: jest.fn()
+    };
+    const { app } = createApp({
+      env: testEnv(),
+      adminStatusReporter: adminStatusReporter as never
+    });
+
+    const response = await request(app)
+      .post("/api/admin/status/send")
+      .expect(409);
+
+    expect(response.body.error).toBe("Admin status reports are disabled.");
+    expect(adminStatusReporter.sendDailyStatusReport).not.toHaveBeenCalled();
+  });
+
   it("returns a clear 400 for malformed JSON request bodies", async () => {
     const { app } = createApp({ env: testEnv() });
 
@@ -378,6 +421,7 @@ describe("monitor API", () => {
     await request(app).get("/health").expect(401);
     await request(app).post("/api/admin/fetch/lido").expect(401);
     await request(app).post("/api/admin/notify-pending").expect(401);
+    await request(app).post("/api/admin/status/send").expect(401);
     await request(app).get("/api/admin/fetch-runs").expect(401);
     await request(app).get("/api/admin/source-activity").expect(401);
   });

@@ -27,11 +27,14 @@ curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_
 curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected result: the health endpoint returns `ok: true`, each manual fetch returns a successful run, fetch-run records exist, and source-activity records exist for all enabled protocols.
+Expected result: the health endpoint returns `ok: true`, each manual fetch returns a successful run, fetch-run records exist, source-activity records exist for all enabled protocols, and the admin status endpoint sends the operator Telegram health report.
 
 Production note: if more than one backend replica is running, keep `ENABLE_SCHEDULER=true` on only one worker when possible. Firestore proposal upserts are transaction-backed, but multiple schedulers still create duplicate polling work and extra fetch-run audit records.
+
+Network-safety note: live forum fetches and Telegram sends have request timeouts. A stuck Discourse or Telegram request should fail the relevant run/report clearly instead of hanging the monitor indefinitely.
 
 ## Fast Colleague Demo
 
@@ -67,6 +70,7 @@ curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 curl -s "$API/api/admin/source-activity"
 curl -s -X POST "$API/api/admin/notify-pending"
+curl -s -X POST "$API/api/admin/status/send"
 ```
 
 ## 1. Start Locally
@@ -126,7 +130,7 @@ Fast mode:
 DEMO_STEP_DELAY_MS=0 npm run demo
 ```
 
-Telegram demo mode: set `ENABLE_TELEGRAM_NOTIFICATIONS=true`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ALLOWED_USER_IDS`, then run `npm run demo`. Each newly discovered allowlisted proposal can send a direct Telegram notification.
+Telegram demo mode: set `ENABLE_TELEGRAM_NOTIFICATIONS=true`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo`. Demo proposal notifications are forced to the admin user only and deliberately ignore `TELEGRAM_ALLOWED_USER_IDS`.
 
 Admin status demo mode: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run:
 
@@ -305,16 +309,15 @@ curl -s "$API/health" \
 
 ## 9. Telegram Test
 
-Telegram notifications are direct user messages, not group/channel messages. Each recipient must open the bot and send `/start` once. The backend sends only to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
+Production Telegram notifications are direct user messages, not group/channel messages. Each recipient must open the bot and send `/start` once. The production monitor sends proposal notifications only to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
+
+Demo/test Telegram sends are different: they go only to `TELEGRAM_ADMIN_USER_ID` so teammate recipients are not spammed. This does not change production proposal alerts, which still fan out to every configured production recipient.
 
 Set:
 
 ```bash
-ENABLE_TELEGRAM_NOTIFICATIONS=true
 TELEGRAM_BOT_TOKEN=replace-with-token
-TELEGRAM_ALLOWED_USER_IDS='[
-  123456789
-]'
+TELEGRAM_ADMIN_USER_ID=1549323073
 TELEGRAM_E2E_ENABLED=true
 TELEGRAM_TEST_SEND_DELAY_MS=3000
 ```
@@ -325,7 +328,7 @@ Send real test messages:
 npm run telegram:test-send
 ```
 
-Expected result: each configured Telegram user receives multiple governance notification messages based on locally saved Lido, Aave, and Uniswap proposal samples. Messages start with bold all-caps `NEW GOVERNANCE ITEM TRACKED`.
+Expected result: only `TELEGRAM_ADMIN_USER_ID` receives multiple governance notification messages based on locally saved Lido, Aave, and Uniswap proposal samples. Messages start with bold all-caps `NEW GOVERNANCE ITEM TRACKED`.
 
 Run the real Telegram E2E test:
 
@@ -333,7 +336,7 @@ Run the real Telegram E2E test:
 npm run test:e2e:telegram
 ```
 
-Expected result: pending proposals are seeded in memory, sent through the real Telegram service, and marked `sent`.
+Expected result: pending proposals are seeded in memory, sent through the real Telegram service to `TELEGRAM_ADMIN_USER_ID` only, and marked `sent`.
 
 Normal `npm test` and `npm run check` do not send Telegram messages. The live E2E path only runs through this dedicated command.
 
@@ -355,6 +358,15 @@ SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
 ```
 
 Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, source-activity freshness, pending/failed notification counts, enabled protocols, and any detected problems.
+
+Send the same report immediately after a restart:
+
+```bash
+curl -s -X POST "$API/api/admin/status/send" \
+  -H "Authorization: Bearer $API_AUTH_TOKEN"
+```
+
+Expected result: Telegram receives the admin report right away. If one status subsection cannot be read, the message should still arrive with `ATTENTION REQUIRED` and the failing subsection listed.
 
 One-off demo command:
 

@@ -2,8 +2,8 @@ import { describe, expect, it } from "@jest/globals";
 import { loadEnv } from "../../src/config/env.js";
 import { telegramTestNotificationFixtures } from "../../src/demoFixtures/telegramNotification.fixture.js";
 import {
-  createNotificationService,
-  notifyPendingProposals
+  notifyPendingProposals,
+  TelegramNotificationService
 } from "../../src/notifications/index.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
@@ -30,7 +30,7 @@ const describeTelegramE2E =
 
 describeTelegramE2E("Telegram direct-message E2E", () => {
   it(
-    "sends real governance notifications from different publishers to configured allowed users",
+    "sends real governance notifications from different publishers to the configured admin only",
     async () => {
       const env = loadEnv({
         ...process.env,
@@ -42,10 +42,11 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
         LOG_LEVEL: "silent"
       });
       const repository = new MemoryProposalRepository();
-      const notificationService = createNotificationService(
-        env,
-        createSilentLogger()
-      );
+      const notificationService = new TelegramNotificationService({
+        botToken: env.telegramBotToken,
+        allowedUserIds: [env.telegramAdminUserId],
+        logger: createSilentLogger()
+      });
       const uniquePublisherCount = new Set(
         telegramTestNotificationFixtures.map((fixture) => fixture.publisherName)
       ).size;

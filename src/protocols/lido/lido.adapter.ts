@@ -77,7 +77,7 @@ export class LidoAdapter implements ProtocolAdapter {
       }
     }
 
-    this.logger?.warn(
+    this.logger?.info(
       { protocol: this.protocol, maxPages: this.maxPages, fetchedCount: items.length },
       "Reached Lido proposal pagination limit before exhausting pages"
     );

@@ -8,6 +8,7 @@ import type {
   NotificationMessage,
   NotificationService
 } from "../../src/notifications/index.js";
+import { TelegramNotificationService } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import {
@@ -40,6 +41,33 @@ class RecordingFetchRunRepository implements FetchRunRepository {
 
   async findAll(): Promise<FetchRun[]> {
     return [...this.runs.values()];
+  }
+}
+
+class FailsOnceFetchRunRepository extends RecordingFetchRunRepository {
+  private remainingFailures = 1;
+
+  async upsert(run: FetchRun): Promise<void> {
+    if (this.remainingFailures > 0) {
+      this.remainingFailures -= 1;
+      throw new Error("Initial fetch run write failed");
+    }
+
+    await super.upsert(run);
+  }
+}
+
+class AlwaysFailingFetchRunRepository implements FetchRunRepository {
+  async upsert(): Promise<void> {
+    throw new Error("Fetch run repository unavailable");
+  }
+
+  async findById(): Promise<null> {
+    return null;
+  }
+
+  async findAll(): Promise<FetchRun[]> {
+    return [];
   }
 }
 
@@ -435,6 +463,87 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
+  it("fans out production Telegram proposal notifications to every configured allowed user and notifies duplicates only once", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    const notificationService = new TelegramNotificationService({
+      botToken: "prod-token",
+      allowedUserIds: ["111111111", "222222222"],
+      fetchImpl,
+      logger: createSilentLogger()
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    const first = await job.run("lido");
+    const second = await job.run("lido");
+    const bodies = fetchImpl.mock.calls.map(
+      (call) => JSON.parse((call[1] as RequestInit).body as string) as Record<string, unknown>
+    );
+
+    expect(first).toMatchObject({
+      storedNewCount: 1,
+      notificationSentCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(second).toMatchObject({
+      storedNewCount: 0,
+      unchangedExistingCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 0
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(bodies.map((body) => body.chat_id)).toEqual(["111111111", "222222222"]);
+    expect(JSON.stringify(bodies)).not.toContain("1549323073");
+    expect(JSON.stringify(bodies)).toContain("<b>NEW GOVERNANCE ITEM TRACKED</b>");
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "sent"
+    });
+  });
+
+  it("attempts every production Telegram recipient before marking a new proposal notification failed", async () => {
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(new Response("blocked", { status: 403 }));
+    const notificationService = new TelegramNotificationService({
+      botToken: "prod-token",
+      allowedUserIds: ["111111111", "222222222"],
+      fetchImpl,
+      logger: createSilentLogger()
+    });
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter(),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    const result = await job.run("lido");
+    const bodies = fetchImpl.mock.calls.map(
+      (call) => JSON.parse((call[1] as RequestInit).body as string) as Record<string, unknown>
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(bodies.map((body) => body.chat_id)).toEqual(["111111111", "222222222"]);
+    expect(result).toMatchObject({
+      storedNewCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 1,
+      errors: [
+        "Telegram notification failed for 1 of 2 allowed recipients: recipient 2 failed with 403: blocked"
+      ]
+    });
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "failed",
+      notificationError:
+        "Telegram notification failed for 1 of 2 allowed recipients: recipient 2 failed with 403: blocked"
+    });
+  });
+
   it("lets adapters run their full bounded pagination window", async () => {
     const skipped = createRawGovernanceItem({
       sourceId: "1001",
@@ -636,6 +745,48 @@ describe("FetchProtocolGovernanceJob", () => {
       status: "failed",
       errors: ["Lido is unavailable"]
     });
+  });
+
+  it("releases the protocol run lock when the initial fetch-run write fails", async () => {
+    const fetchRunRepository = new FailsOnceFetchRunRepository();
+    const fetchRecent = jest.fn(async () => [createRawGovernanceItem()]);
+    const { job } = createJob(
+      createFakeProtocolAdapter({ fetchRecent }),
+      new MemoryProposalRepository(),
+      fetchRunRepository
+    );
+
+    await expect(job.run("lido")).rejects.toThrow(
+      "Initial fetch run write failed"
+    );
+
+    await expect(job.run("lido")).resolves.toMatchObject({
+      fetchedCount: 1,
+      storedNewCount: 1
+    });
+    expect(fetchRecent).toHaveBeenCalledTimes(1);
+    expect(fetchRunRepository.upserts.map((run) => run.status)).toEqual([
+      "failed",
+      "running",
+      "success"
+    ]);
+  });
+
+  it("keeps the original error and releases the lock if failed-run persistence also fails", async () => {
+    const fetchRecent = jest.fn(async () => [createRawGovernanceItem()]);
+    const { job } = createJob(
+      createFakeProtocolAdapter({ fetchRecent }),
+      new MemoryProposalRepository(),
+      new AlwaysFailingFetchRunRepository()
+    );
+
+    await expect(job.run("lido")).rejects.toThrow(
+      "Fetch run repository unavailable"
+    );
+    await expect(job.run("lido")).rejects.toThrow(
+      "Fetch run repository unavailable"
+    );
+    expect(fetchRecent).not.toHaveBeenCalled();
   });
 
   it("records fetched count when source activity persistence fails", async () => {

@@ -9,6 +9,7 @@ export interface TelegramNotificationServiceOptions {
   allowedUserIds: string[];
   fetchImpl?: typeof fetch;
   logger?: Pick<Logger, "debug" | "error">;
+  requestTimeoutMs?: number;
 }
 
 interface TelegramRecipientFailure {
@@ -17,6 +18,8 @@ interface TelegramRecipientFailure {
   responseBody?: string;
   errorMessage?: string;
 }
+
+export const DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS = 15_000;
 
 export class TelegramNotificationDeliveryError extends Error {
   constructor(
@@ -93,6 +96,7 @@ export class TelegramNotificationService implements NotificationService {
   private readonly allowedUserIds: string[];
   private readonly fetchImpl: typeof fetch;
   private readonly logger?: Pick<Logger, "debug" | "error">;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: TelegramNotificationServiceOptions) {
     const botToken = options.botToken.trim();
@@ -118,6 +122,8 @@ export class TelegramNotificationService implements NotificationService {
     this.allowedUserIds = allowedUserIds;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logger = options.logger;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
   }
 
   async send(message: NotificationMessage): Promise<void> {
@@ -135,12 +141,19 @@ export class TelegramNotificationService implements NotificationService {
     const failures: TelegramRecipientFailure[] = [];
 
     for (const [recipientIndex, recipientUserId] of this.allowedUserIds.entries()) {
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        this.requestTimeoutMs
+      );
+
       try {
         const response = await this.fetchImpl(url, {
           method: "POST",
           headers: {
             "content-type": "application/json"
           },
+          signal: controller.signal,
           body: JSON.stringify({
             chat_id: recipientUserId,
             text,
@@ -173,8 +186,13 @@ export class TelegramNotificationService implements NotificationService {
           );
         }
       } catch (error) {
+        const rawErrorMessage = controller.signal.aborted
+          ? `Telegram notification request timed out after ${this.requestTimeoutMs}ms`
+          : error instanceof Error
+            ? error.message
+            : String(error);
         const errorMessage = redactTelegramSensitiveValues(
-          error instanceof Error ? error.message : String(error),
+          rawErrorMessage,
           this.botToken,
           this.allowedUserIds
         );
@@ -192,6 +210,8 @@ export class TelegramNotificationService implements NotificationService {
           },
           "Telegram notification request failed for allowed recipient"
         );
+      } finally {
+        clearTimeout(timeout);
       }
     }
 

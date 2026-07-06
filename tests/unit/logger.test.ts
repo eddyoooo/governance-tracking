@@ -40,6 +40,12 @@ describe("logger", () => {
         apiAuthToken: "super-secret-api-value",
         telegramBotToken: "super-secret-telegram-value",
         telegramAllowedUserIds: ["123456789"],
+        TELEGRAM_ALLOWED_USER_IDS: ["987654321"],
+        telegramAdminUserId: "1549323073",
+        TELEGRAM_ADMIN_USER_ID: "246813579",
+        adminUserId: "1549323073",
+        firebaseClientEmail: "service-account@example.com",
+        FIREBASE_CLIENT_EMAIL: "service-account-uppercase@example.com",
         firebasePrivateKey: "super-secret-firebase-value",
         nested: {
           visible: "safe"
@@ -54,12 +60,23 @@ describe("logger", () => {
     expect(serialized).not.toContain("super-secret-api-value");
     expect(serialized).not.toContain("super-secret-telegram-value");
     expect(serialized).not.toContain("123456789");
+    expect(serialized).not.toContain("987654321");
+    expect(serialized).not.toContain("1549323073");
+    expect(serialized).not.toContain("246813579");
+    expect(serialized).not.toContain("service-account@example.com");
+    expect(serialized).not.toContain("service-account-uppercase@example.com");
     expect(serialized).not.toContain("super-secret-firebase-value");
     expect(serialized).toContain("safe");
     expect(entry).toMatchObject({
       apiAuthToken: "[redacted]",
       telegramBotToken: "[redacted]",
       telegramAllowedUserIds: "[redacted]",
+      TELEGRAM_ALLOWED_USER_IDS: "[redacted]",
+      telegramAdminUserId: "[redacted]",
+      TELEGRAM_ADMIN_USER_ID: "[redacted]",
+      adminUserId: "[redacted]",
+      firebaseClientEmail: "[redacted]",
+      FIREBASE_CLIENT_EMAIL: "[redacted]",
       firebasePrivateKey: "[redacted]"
     });
   });
