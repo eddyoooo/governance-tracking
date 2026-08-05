@@ -29,6 +29,8 @@ describe("Docker configuration", () => {
     const dockerignore = await readProjectFile(".dockerignore");
 
     expect(dockerfile).toContain("RUN npm run build");
+    expect(dockerfile).toContain("FROM node:24-alpine AS base");
+    expect(dockerfile).not.toContain("node:20");
     expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');
     expect(dockerfile).not.toContain("AS dev");
     expect(dockerfile).not.toContain('CMD ["npm", "run", "dev"]');
@@ -40,5 +42,16 @@ describe("Docker configuration", () => {
     expect(dockerignore).toContain("PLATFORM_MANUAL.md");
     expect(dockerignore).toContain(".codex");
     expect(dockerignore).toContain(".agents");
+  });
+
+  it("does not recommend passing the human-readable multiline env file directly to Docker", async () => {
+    const readme = await readProjectFile("README.md");
+    const manual = await readProjectFile("PLATFORM_MANUAL.md");
+
+    expect(readme).toContain(
+      "Do not pass the local, human-readable `.env` directly to Docker"
+    );
+    expect(manual).not.toContain("--env-file .env");
+    expect(manual).toContain("[runtime -e variables...]");
   });
 });

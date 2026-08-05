@@ -239,6 +239,55 @@ describe("source activity watchdog", () => {
     );
   });
 
+  it("marks a non-empty fetch critical when no item has a valid publication time", async () => {
+    const repository = new MemorySourceActivityRepository();
+    const adapter = createFakeProtocolAdapter({ protocol: "aave" });
+    const record = await updateSourceActivity({
+      repository,
+      source: adapter.source,
+      rawItems: [
+        createRawGovernanceItem({
+          protocol: "aave",
+          sourceId: "invalid-time",
+          publishedAt: "not-a-date"
+        })
+      ],
+      fetchedAt: "2026-07-02T06:00:00.000Z",
+      config
+    });
+
+    expect(record).toMatchObject({
+      lastFetchedCount: 1,
+      consecutiveStaleRuns: 0,
+      status: "critical",
+      statusReason: "No valid raw item publishedAt timestamp was found."
+    });
+    expect(record.latestRawPublishedAt).toBeUndefined();
+  });
+
+  it("marks unparseable watchdog timestamps critical instead of assuming health", async () => {
+    const repository = new MemorySourceActivityRepository();
+    const adapter = createFakeProtocolAdapter({ protocol: "uniswap" });
+    const record = await updateSourceActivity({
+      repository,
+      source: adapter.source,
+      rawItems: [
+        createRawGovernanceItem({
+          protocol: "uniswap",
+          sourceId: "26035",
+          publishedAt: "2026-07-02T05:00:00.000Z"
+        })
+      ],
+      fetchedAt: "invalid-fetch-time",
+      config
+    });
+
+    expect(record).toMatchObject({
+      status: "critical",
+      statusReason: "Source activity timestamps could not be parsed."
+    });
+  });
+
   it("treats future-dated source items as recent instead of falsely stale", async () => {
     const repository = new MemorySourceActivityRepository();
     const adapter = createFakeProtocolAdapter({ protocol: "lido" });

@@ -101,55 +101,169 @@ export interface FetchDiscourseJsonOptions {
   fetchImpl: typeof fetch;
   logger?: Pick<Logger, "debug" | "error">;
   timeoutMs?: number;
+  maxAttempts?: number;
+  retryBaseDelayMs?: number;
+  maxRetryDelayMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
 }
 
 export const DEFAULT_DISCOURSE_FETCH_TIMEOUT_MS = 30_000;
+export const DEFAULT_DISCOURSE_MAX_ATTEMPTS = 3;
+export const DEFAULT_DISCOURSE_RETRY_BASE_DELAY_MS = 1_000;
+export const DEFAULT_DISCOURSE_MAX_RETRY_DELAY_MS = 30_000;
+
+function isRetryableDiscourseStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function retryDelayMs(
+  response: Response,
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number
+): number {
+  const retryAfter = response.headers.get("retry-after")?.trim();
+
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1_000, maxDelayMs);
+    }
+
+    const retryAt = Date.parse(retryAfter);
+
+    if (Number.isFinite(retryAt)) {
+      return Math.min(Math.max(0, retryAt - Date.now()), maxDelayMs);
+    }
+  }
+
+  return exponentialRetryDelayMs(attempt, baseDelayMs, maxDelayMs);
+}
+
+function exponentialRetryDelayMs(
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number
+): number {
+  return Math.min(baseDelayMs * 2 ** Math.max(0, attempt - 1), maxDelayMs);
+}
 
 export async function fetchDiscourseJson(
   options: FetchDiscourseJsonOptions
 ): Promise<unknown> {
   const url = new URL(options.pathname, options.apiBaseUrl);
   const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOURSE_FETCH_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const maxAttempts = Math.max(
+    1,
+    options.maxAttempts ?? DEFAULT_DISCOURSE_MAX_ATTEMPTS
+  );
+  const baseDelayMs =
+    options.retryBaseDelayMs ?? DEFAULT_DISCOURSE_RETRY_BASE_DELAY_MS;
+  const maxDelayMs =
+    options.maxRetryDelayMs ?? DEFAULT_DISCOURSE_MAX_RETRY_DELAY_MS;
+  const sleep =
+    options.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      }));
 
   options.logger?.debug({ url: url.toString() }, `Fetching ${options.forumLabel} JSON`);
 
-  try {
-    const response = await options.fetchImpl(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "governance-tracking/0.1"
-      },
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `${options.forumLabel} request failed with ${response.status}: ${url}`
-      );
-    }
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let responseReceived = false;
 
     try {
-      return await response.json();
-    } catch (error) {
-      options.logger?.error(
-        { url: url.toString(), error },
-        `Failed to parse ${options.forumLabel} JSON response`
-      );
-      throw new Error(`Invalid JSON response from ${options.forumLabel}: ${url}`);
-    }
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(
-        `${options.forumLabel} request timed out after ${timeoutMs}ms: ${url}`
-      );
-    }
+      const response = await options.fetchImpl(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "governance-tracking/0.1"
+        },
+        signal: controller.signal
+      });
+      responseReceived = true;
 
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+      if (!response.ok) {
+        if (
+          attempt < maxAttempts &&
+          isRetryableDiscourseStatus(response.status)
+        ) {
+          const delayMs = retryDelayMs(
+            response,
+            attempt,
+            baseDelayMs,
+            maxDelayMs
+          );
+
+          options.logger?.debug(
+            {
+              url: url.toString(),
+              status: response.status,
+              attempt,
+              maxAttempts,
+              retryDelayMs: delayMs
+            },
+            `Retrying ${options.forumLabel} request after transient response`
+          );
+          await sleep(delayMs);
+          continue;
+        }
+
+        throw new Error(
+          `${options.forumLabel} request failed with ${response.status}: ${url}`
+        );
+      }
+
+      try {
+        return await response.json();
+      } catch (error) {
+        options.logger?.error(
+          { url: url.toString(), error },
+          `Failed to parse ${options.forumLabel} JSON response`
+        );
+        throw new Error(`Invalid JSON response from ${options.forumLabel}: ${url}`);
+      }
+    } catch (error) {
+      const timedOut = controller.signal.aborted;
+
+      if ((timedOut || !responseReceived) && attempt < maxAttempts) {
+        const delayMs = exponentialRetryDelayMs(
+          attempt,
+          baseDelayMs,
+          maxDelayMs
+        );
+
+        options.logger?.debug(
+          {
+            url: url.toString(),
+            attempt,
+            maxAttempts,
+            retryDelayMs: delayMs,
+            timedOut,
+            error
+          },
+          `Retrying ${options.forumLabel} request after transient network failure`
+        );
+        await sleep(delayMs);
+        continue;
+      }
+
+      if (timedOut) {
+        throw new Error(
+          `${options.forumLabel} request timed out after ${timeoutMs}ms: ${url}`
+        );
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  throw new Error(`${options.forumLabel} request failed: ${url}`);
 }
 
 export function mapDiscourseRecentTopics(
@@ -170,7 +284,6 @@ export function mapDiscourseRecentTopics(
     const publisherName =
       user?.name?.trim() ||
       user?.username.trim() ||
-      topic.last_poster_username?.trim() ||
       "unknown";
 
     return {
@@ -212,9 +325,17 @@ export function mapDiscourseCategories(
     .filter((category) => !category.read_restricted)
     .map((category) => {
       const pathParts: string[] = [];
+      const visitedCategoryIds = new Set<number>();
       let current: DiscourseSiteResponse["categories"][number] | undefined = category;
 
       while (current) {
+        if (visitedCategoryIds.has(current.id)) {
+          throw new Error(
+            `Invalid Discourse category hierarchy: cycle detected at category ${current.id}.`
+          );
+        }
+
+        visitedCategoryIds.add(current.id);
         pathParts.unshift(current.slug);
         const parentId: number | undefined = current.parent_category_id ?? undefined;
         current = parentId ? categoriesById.get(parentId) : undefined;

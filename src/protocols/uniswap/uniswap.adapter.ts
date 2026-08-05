@@ -5,10 +5,8 @@ import type {
   ProtocolAdapter,
   RawGovernanceItem
 } from "../types.js";
-import {
-  UniswapForumClient,
-  type UniswapForumTopicPage
-} from "./uniswapForum.client.js";
+import { collectDiscourseTopicPages } from "../discourse/discoursePagination.js";
+import { UniswapForumClient } from "./uniswapForum.client.js";
 import { normalizeUniswapForumItem } from "./uniswap.normalizer.js";
 
 export interface UniswapAdapterOptions {
@@ -61,32 +59,89 @@ export class UniswapAdapter implements ProtocolAdapter {
 
     const fetchedAt = new Date().toISOString();
     const itemsBySourceId = new Map<string, RawGovernanceItem>();
+    const feedFailures: Array<{
+      feed: string;
+      error: unknown;
+    }> = [];
+    let successfulFeedCount = 0;
 
-    await this.fetchTopicPages({
-      fetchedAt,
-      itemsBySourceId,
-      maxPages: this.maxPages,
-      fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
-      paginationLimitMessage:
-        "Reached Uniswap global latest pagination limit before exhausting pages"
-    });
-
-    const categories = await this.client.fetchCategories();
-
-    for (const category of categories) {
-      await this.fetchTopicPages({
+    try {
+      await collectDiscourseTopicPages({
+        protocol: this.protocol,
+        sourceType: this.source.type,
         fetchedAt,
         itemsBySourceId,
-        maxPages: this.categoryMaxPages,
-        fetchPage: (page) => this.client.fetchCategoryTopicPage(category, { page }),
-        logContext: {
-          categoryId: category.id,
-          categoryName: category.name,
-          categoryPath: category.path
-        },
+        maxPages: this.maxPages,
+        fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
+        logger: this.logger,
         paginationLimitMessage:
-          "Reached Uniswap category pagination limit before exhausting pages"
+          "Reached Uniswap global latest pagination limit before exhausting pages",
+        laterPageFailureMessage:
+          "Stopped Uniswap global latest pagination after a later page failed"
       });
+      successfulFeedCount += 1;
+    } catch (error) {
+      feedFailures.push({ feed: "global latest", error });
+    }
+
+    let categories: Awaited<
+      ReturnType<UniswapForumClient["fetchCategories"]>
+    > = [];
+
+    try {
+      categories = await this.client.fetchCategories();
+    } catch (error) {
+      feedFailures.push({ feed: "category discovery", error });
+    }
+
+    for (const category of categories) {
+      try {
+        await collectDiscourseTopicPages({
+          protocol: this.protocol,
+          sourceType: this.source.type,
+          fetchedAt,
+          itemsBySourceId,
+          maxPages: this.categoryMaxPages,
+          fetchPage: (page) =>
+            this.client.fetchCategoryTopicPage(category, { page }),
+          logger: this.logger,
+          logContext: {
+            categoryId: category.id,
+            categoryName: category.name,
+            categoryPath: category.path
+          },
+          paginationLimitMessage:
+            "Reached Uniswap category pagination limit before exhausting pages",
+          laterPageFailureMessage:
+            "Stopped Uniswap category pagination after a later page failed"
+        });
+        successfulFeedCount += 1;
+      } catch (error) {
+        feedFailures.push({
+          feed: `category ${category.id} (${category.name})`,
+          error
+        });
+      }
+    }
+
+    if (successfulFeedCount === 0) {
+      throw new Error(
+        `Uniswap forum fetch failed because no governance feed could be read: ${feedFailures
+          .map(({ feed, error }) => `${feed}: ${errorMessage(error)}`)
+          .join("; ")}`
+      );
+    }
+
+    if (feedFailures.length > 0) {
+      this.logger?.warn(
+        {
+          protocol: this.protocol,
+          failedFeedCount: feedFailures.length,
+          successfulFeedCount,
+          failures: feedFailures
+        },
+        "Uniswap forum fetch completed with partial feed failures"
+      );
     }
 
     return [...itemsBySourceId.values()];
@@ -95,52 +150,8 @@ export class UniswapAdapter implements ProtocolAdapter {
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem {
     return normalizeUniswapForumItem(item);
   }
+}
 
-  private async fetchTopicPages(options: {
-    fetchedAt: string;
-    itemsBySourceId: Map<string, RawGovernanceItem>;
-    maxPages: number;
-    fetchPage: (
-      page: number
-    ) => Promise<Pick<UniswapForumTopicPage, "topics" | "hasMore">>;
-    logContext?: Record<string, unknown>;
-    paginationLimitMessage: string;
-  }): Promise<void> {
-    const { fetchedAt, itemsBySourceId, fetchPage } = options;
-
-    for (let page = 0; page < options.maxPages; page += 1) {
-      const topicPage = await fetchPage(page);
-      const pageItems = topicPage.topics.map((topic) => ({
-        protocol: this.protocol,
-        sourceType: this.source.type,
-        sourceId: topic.sourceId,
-        title: topic.title,
-        publisherName: topic.publisherName,
-        sourceUrl: topic.sourceUrl,
-        publishedAt: topic.publishedAt,
-        fetchedAt,
-        raw: topic.raw
-      }));
-
-      for (const item of pageItems) {
-        if (!itemsBySourceId.has(item.sourceId)) {
-          itemsBySourceId.set(item.sourceId, item);
-        }
-      }
-
-      if (pageItems.length === 0 || !topicPage.hasMore) {
-        return;
-      }
-    }
-
-    this.logger?.info(
-      {
-        protocol: this.protocol,
-        maxPages: options.maxPages,
-        fetchedCount: itemsBySourceId.size,
-        ...options.logContext
-      },
-      options.paginationLimitMessage
-    );
-  }
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

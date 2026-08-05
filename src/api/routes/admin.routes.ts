@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { notifyPendingProposals } from "../../notifications/proposalNotifications.js";
 import type { AppContext } from "../../server.js";
 
 export function createAdminRouter(context: AppContext): Router {
@@ -10,20 +9,6 @@ export function createAdminRouter(context: AppContext): Router {
       const result = await context.fetchJob.run(
         request.params.protocol.trim().toLowerCase()
       );
-      response.json(result);
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  router.post("/notify-pending", async (_request, response, next) => {
-    try {
-      const result = await notifyPendingProposals(
-        context.proposalRepository,
-        context.notificationService,
-        context.logger
-      );
-
       response.json(result);
     } catch (error) {
       next(error);

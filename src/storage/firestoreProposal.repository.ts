@@ -8,10 +8,12 @@ import {
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
   ProposalRepository,
+  ProposalNotificationStateUpdater,
   UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
 import {
+  applyProposalNotificationState,
   buildStoredProposal,
   hasMeaningfulProposalChange,
   proposalIdFromSourceIdentity
@@ -52,6 +54,10 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
 
   if (proposal.notificationError) {
     cleaned.notificationError = proposal.notificationError;
+  }
+
+  if (proposal.notificationDeliveries) {
+    cleaned.notificationDeliveries = proposal.notificationDeliveries;
   }
 
   return cleaned;
@@ -169,6 +175,15 @@ export class FirestoreProposalRepository implements ProposalRepository {
     return cleanStoredProposal(snapshot.data() as StoredProposal);
   }
 
+  async existsForProtocol(protocol: string): Promise<boolean> {
+    const snapshot = await this.collection
+      .where("protocol", "==", protocol)
+      .limit(1)
+      .get();
+
+    return snapshot.docs.length > 0;
+  }
+
   async findBySourceIdentity(
     protocol: string,
     sourceType: string,
@@ -255,32 +270,51 @@ export class FirestoreProposalRepository implements ProposalRepository {
       .slice(0, limit);
   }
 
+  async countByNotificationStatus(
+    status: StoredProposal["notificationStatus"]
+  ): Promise<number> {
+    const snapshot = await this.collection
+      .where("notificationStatus", "==", status)
+      .count()
+      .get();
+
+    return snapshot.data().count;
+  }
+
+  async updateNotificationState(
+    id: string,
+    updater: ProposalNotificationStateUpdater
+  ): Promise<StoredProposal | null> {
+    const ref = this.collection.doc(id);
+
+    return this.db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+
+      if (!snapshot.exists) {
+        return null;
+      }
+
+      const existing = cleanStoredProposal(snapshot.data() as StoredProposal);
+      const updated = applyProposalNotificationState(
+        existing,
+        updater(existing)
+      );
+
+      transaction.set(ref, cleanStoredProposal(updated));
+
+      return cleanStoredProposal(updated);
+    });
+  }
+
   async updateNotificationStatus(
     id: string,
     status: StoredProposal["notificationStatus"],
     error?: string
   ): Promise<StoredProposal | null> {
-    const ref = this.collection.doc(id);
-    const snapshot = await ref.get();
-
-    if (!snapshot.exists) {
-      return null;
-    }
-
-    const existing = snapshot.data() as StoredProposal;
-    const updated: StoredProposal = {
-      ...existing,
+    return this.updateNotificationState(id, (proposal) => ({
       notificationStatus: status,
       notificationError: error,
-      updatedAt: new Date().toISOString()
-    };
-
-    if (!error) {
-      delete updated.notificationError;
-    }
-
-    await ref.set(cleanStoredProposal(updated));
-
-    return cleanStoredProposal(updated);
+      notificationDeliveries: proposal.notificationDeliveries
+    }));
   }
 }

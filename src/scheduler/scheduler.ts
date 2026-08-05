@@ -24,6 +24,15 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
     throw new Error(`Invalid ADMIN_STATUS_CRON: ${env.adminStatusCron}`);
   }
 
+  if (
+    context.notificationService.enabled &&
+    !cron.validate(env.notificationRetryCron)
+  ) {
+    throw new Error(
+      `Invalid NOTIFICATION_RETRY_CRON: ${env.notificationRetryCron}`
+    );
+  }
+
   const scheduledTasks: ScheduledTask[] = [];
   const scheduledProtocols = context.protocolRegistry
     .list()
@@ -45,6 +54,42 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
             logger.error({ error, protocol }, "Scheduled governance fetch failed");
           });
         }
+      })
+    );
+  }
+
+  if (context.notificationService.enabled) {
+    logger.info(
+      { cron: env.notificationRetryCron },
+      "Starting automatic notification recovery scheduler"
+    );
+
+    scheduledTasks.push(
+      cron.schedule(env.notificationRetryCron, () => {
+        context.notificationDispatcher
+          .recoverOutstanding()
+          .then((result) => {
+            if (result.candidateCount > 0 || result.skippedBecauseRunning) {
+              logger.info(
+                {
+                  candidateCount: result.candidateCount,
+                  attemptedProposalCount: result.attemptedProposalCount,
+                  attemptedRecipientCount: result.attemptedRecipientCount,
+                  recoveredCount: result.recoveredCount,
+                  stillPendingCount: result.stillPendingCount,
+                  stillFailedCount: result.stillFailedCount,
+                  skippedBecauseRunning: result.skippedBecauseRunning
+                },
+                "Finished automatic notification recovery"
+              );
+            }
+          })
+          .catch((error) => {
+            logger.error(
+              { error },
+              "Scheduled notification recovery failed"
+            );
+          });
       })
     );
   }

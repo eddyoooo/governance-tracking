@@ -10,6 +10,7 @@ export interface TelegramAdminStatusNotifierOptions {
 }
 
 export const DEFAULT_TELEGRAM_ADMIN_STATUS_TIMEOUT_MS = 15_000;
+const MAX_TELEGRAM_ADMIN_ERROR_LENGTH = 1_000;
 
 export class TelegramAdminStatusDeliveryError extends Error {
   constructor(readonly status?: number, readonly responseBody?: string) {
@@ -81,11 +82,9 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
         })
       });
 
-      if (!response.ok) {
-        const responseBody = this.redact(
-          await response.text().catch(() => "")
-        );
+      const responseBody = await this.readApiFailure(response);
 
+      if (responseBody !== null) {
         this.logger?.error(
           {
             notificationService: this.name,
@@ -122,10 +121,40 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
   }
 
   private redact(value: string): string {
-    return [this.botToken, this.adminUserId].reduce(
+    const redacted = [this.botToken, this.adminUserId].reduce(
       (redacted, sensitiveValue) =>
         redacted.split(sensitiveValue).join("[redacted]"),
       value
     );
+
+    return redacted.length <= MAX_TELEGRAM_ADMIN_ERROR_LENGTH
+      ? redacted
+      : `${redacted.slice(0, MAX_TELEGRAM_ADMIN_ERROR_LENGTH - 3)}...`;
+  }
+
+  private async readApiFailure(response: Response): Promise<string | null> {
+    const isJson = response.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .includes("application/json");
+
+    if (response.ok && !isJson) {
+      return null;
+    }
+
+    const rawResponseBody = await response.text().catch(() => "");
+    const responseBody = this.redact(rawResponseBody);
+
+    if (!response.ok) {
+      return responseBody;
+    }
+
+    try {
+      const payload = JSON.parse(rawResponseBody) as { ok?: unknown };
+
+      return payload.ok === true ? null : responseBody;
+    } catch {
+      return responseBody;
+    }
   }
 }

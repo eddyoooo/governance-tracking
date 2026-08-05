@@ -34,6 +34,25 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
         problems: []
       }))
     },
+    notificationService: {
+      name: "test-notifications",
+      enabled: false,
+      getRecipients: jest.fn(() => []),
+      send: jest.fn(async () => undefined)
+    },
+    notificationDispatcher: {
+      recoverOutstanding: jest.fn(async () => ({
+        candidateCount: 0,
+        attemptedProposalCount: 0,
+        attemptedRecipientCount: 0,
+        recoveredCount: 0,
+        stillPendingCount: 0,
+        stillFailedCount: 0,
+        skippedCount: 0,
+        errors: [],
+        skippedBecauseRunning: false
+      }))
+    },
     proposalRepository: {},
     fetchRunRepository: {},
     protocolRegistry: {
@@ -145,6 +164,130 @@ describe("scheduler", () => {
       "Invalid ADMIN_STATUS_CRON: not-a-cron"
     );
     expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("throws before scheduling when the notification retry cron is invalid", () => {
+    const context = createContext({
+      NOTIFICATION_RETRY_CRON: "not-a-cron"
+    });
+    context.notificationService.enabled = true;
+    validateMock.mockImplementation((cron: string) => cron !== "not-a-cron");
+
+    expect(() => startScheduler(context as never)).toThrow(
+      "Invalid NOTIFICATION_RETRY_CRON: not-a-cron"
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("schedules and executes automatic notification recovery when Telegram is enabled", async () => {
+    let recoveryCallback: (() => void) | undefined;
+    const context = createContext({
+      NOTIFICATION_RETRY_CRON: "*/15 * * * *"
+    });
+    context.notificationService.enabled = true;
+    context.notificationDispatcher.recoverOutstanding.mockResolvedValueOnce({
+      candidateCount: 2,
+      attemptedProposalCount: 1,
+      attemptedRecipientCount: 1,
+      recoveredCount: 1,
+      stillPendingCount: 0,
+      stillFailedCount: 1,
+      skippedCount: 0,
+      errors: [],
+      skippedBecauseRunning: false
+    });
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === "*/15 * * * *") {
+        recoveryCallback = callback;
+      }
+
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+
+    expect(validateMock).toHaveBeenCalledWith("*/15 * * * *");
+    expect(scheduleMock).toHaveBeenCalledWith(
+      "*/15 * * * *",
+      expect.any(Function)
+    );
+    expect(context.logger.info).toHaveBeenCalledWith(
+      { cron: "*/15 * * * *" },
+      "Starting automatic notification recovery scheduler"
+    );
+
+    recoveryCallback?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(
+      context.notificationDispatcher.recoverOutstanding
+    ).toHaveBeenCalledTimes(1);
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateCount: 2,
+        attemptedRecipientCount: 1,
+        recoveredCount: 1,
+        stillFailedCount: 1
+      }),
+      "Finished automatic notification recovery"
+    );
+  });
+
+  it("keeps an empty notification recovery cycle quiet", async () => {
+    let recoveryCallback: (() => void) | undefined;
+    const context = createContext();
+    context.notificationService.enabled = true;
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === context.env.notificationRetryCron) {
+        recoveryCallback = callback;
+      }
+
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    recoveryCallback?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(
+      context.notificationDispatcher.recoverOutstanding
+    ).toHaveBeenCalledTimes(1);
+    expect(context.logger.info).not.toHaveBeenCalledWith(
+      expect.any(Object),
+      "Finished automatic notification recovery"
+    );
+  });
+
+  it("logs automatic notification recovery failures without stopping other schedules", async () => {
+    let recoveryCallback: (() => void) | undefined;
+    const context = createContext();
+    const error = new Error("Firestore recovery read failed");
+    context.notificationService.enabled = true;
+    context.notificationDispatcher.recoverOutstanding.mockRejectedValueOnce(
+      error as never
+    );
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === context.env.notificationRetryCron) {
+        recoveryCallback = callback;
+      }
+
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    recoveryCallback?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(context.logger.error).toHaveBeenCalledWith(
+      { error },
+      "Scheduled notification recovery failed"
+    );
   });
 
   it("schedules daily admin status reports when enabled", async () => {

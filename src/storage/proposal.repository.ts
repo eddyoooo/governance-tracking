@@ -1,4 +1,5 @@
 import type {
+  NotificationDelivery,
   NormalizedGovernanceItem,
   NotificationStatus,
   StoredProposal
@@ -14,6 +15,16 @@ export interface UpsertResult {
   updated: boolean;
 }
 
+export interface ProposalNotificationState {
+  notificationStatus: NotificationStatus;
+  notificationError?: string;
+  notificationDeliveries?: Record<string, NotificationDelivery>;
+}
+
+export type ProposalNotificationStateUpdater = (
+  proposal: StoredProposal
+) => ProposalNotificationState;
+
 export interface ProposalRepository {
   upsert(
     proposal: NormalizedGovernanceItem,
@@ -25,6 +36,7 @@ export interface ProposalRepository {
   ): Promise<UpsertResult[]>;
   findAll(): Promise<StoredProposal[]>;
   findById(id: string): Promise<StoredProposal | null>;
+  existsForProtocol(protocol: string): Promise<boolean>;
   findBySourceIdentity(
     protocol: string,
     sourceType: string,
@@ -34,6 +46,11 @@ export interface ProposalRepository {
     status: NotificationStatus,
     limit?: number
   ): Promise<StoredProposal[]>;
+  countByNotificationStatus(status: NotificationStatus): Promise<number>;
+  updateNotificationState(
+    id: string,
+    updater: ProposalNotificationStateUpdater
+  ): Promise<StoredProposal | null>;
   updateNotificationStatus(
     id: string,
     status: NotificationStatus,

@@ -15,6 +15,7 @@ export interface FetchRun {
   fetchedCount: number;
   allowlistedCount: number;
   storedNewCount: number;
+  baselineSeededCount?: number;
   updatedExistingCount: number;
   unchangedExistingCount: number;
   skippedCount: number;
@@ -27,6 +28,8 @@ export interface FetchRunRepository {
   upsert(run: FetchRun): Promise<void>;
   findById(id: string): Promise<FetchRun | null>;
   findAll(limit?: number): Promise<FetchRun[]>;
+  findLatestByProtocol(protocol: string): Promise<FetchRun | null>;
+  findLatestSuccessfulByProtocol(protocol: string): Promise<FetchRun | null>;
 }
 
 export class MemoryFetchRunRepository implements FetchRunRepository {
@@ -52,6 +55,28 @@ export class MemoryFetchRunRepository implements FetchRunRepository {
         return -compared;
       })
       .slice(0, limit);
+  }
+
+  async findLatestByProtocol(protocol: string): Promise<FetchRun | null> {
+    return (
+      [...this.runs.values()]
+        .filter((run) => run.protocol === protocol)
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
+  }
+
+  async findLatestSuccessfulByProtocol(
+    protocol: string
+  ): Promise<FetchRun | null> {
+    return (
+      [...this.runs.values()]
+        .filter(
+          (run) => run.protocol === protocol && run.status === "success"
+        )
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
   }
 }
 
@@ -83,5 +108,32 @@ export class FirestoreFetchRunRepository implements FetchRunRepository {
       .get();
 
     return snapshot.docs.map((doc) => doc.data() as FetchRun);
+  }
+
+  async findLatestByProtocol(protocol: string): Promise<FetchRun | null> {
+    // This single-field fallback avoids a composite index. It is used only when
+    // the bounded cross-protocol latest-run query did not contain this protocol.
+    const snapshot = await this.collection.where("protocol", "==", protocol).get();
+
+    return (
+      snapshot.docs
+        .map((doc) => doc.data() as FetchRun)
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
+  }
+
+  async findLatestSuccessfulByProtocol(
+    protocol: string
+  ): Promise<FetchRun | null> {
+    const snapshot = await this.collection.where("protocol", "==", protocol).get();
+
+    return (
+      snapshot.docs
+        .map((doc) => doc.data() as FetchRun)
+        .filter((run) => run.status === "success")
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
   }
 }

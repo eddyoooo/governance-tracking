@@ -137,7 +137,7 @@ describe("LidoForumClient", () => {
     expect(topics[0].publisherName).toBe("Original Publisher");
   });
 
-  it("falls back from display name to username, last poster, and unknown", async () => {
+  it("falls back from display name to username without treating a last commenter as the publisher", async () => {
     const payload = {
       users: [{ id: 1, username: "username-only", name: "   " }],
       topic_list: {
@@ -175,12 +175,12 @@ describe("LidoForumClient", () => {
 
     expect(topics.map((topic) => topic.publisherName)).toEqual([
       "username-only",
-      "last-poster",
+      "unknown",
       "unknown"
     ]);
   });
 
-  it("uses last_poster_username when poster metadata points to a missing user", async () => {
+  it("uses unknown when original-poster metadata points to a missing user", async () => {
     const payload = {
       users: [],
       topic_list: {
@@ -206,7 +206,7 @@ describe("LidoForumClient", () => {
 
     expect(topics[0]).toMatchObject({
       sourceId: "42",
-      publisherName: "fallback-user"
+      publisherName: "unknown"
     });
     expect(topics[0].raw).toMatchObject({
       publisher: undefined

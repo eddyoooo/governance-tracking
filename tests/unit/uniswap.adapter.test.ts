@@ -40,6 +40,21 @@ function createAdapterOptions(
   };
 }
 
+function createUniswapTopic(
+  sourceId: string,
+  title = `Uniswap topic ${sourceId}`
+) {
+  return {
+    sourceId,
+    title,
+    slug: `uniswap-topic-${sourceId}`,
+    publisherName: "UniswapLabs",
+    sourceUrl: `https://gov.uniswap.org/t/uniswap-topic-${sourceId}/${sourceId}`,
+    publishedAt: "2026-06-19T17:04:30.632Z",
+    raw: { id: Number(sourceId) }
+  };
+}
+
 describe("UniswapAdapter", () => {
   it("keeps the real Uniswap publisher allowlist on the adapter", () => {
     const adapter = new UniswapAdapter(createAdapterOptions());
@@ -292,6 +307,94 @@ describe("UniswapAdapter", () => {
       }),
       "Reached Uniswap category pagination limit before exhausting pages"
     );
+  });
+
+  it("keeps global recent topics when one Uniswap category is unavailable", async () => {
+    const logger = createSilentLogger();
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => ({
+        page: 0,
+        topics: [createUniswapTopic("26170")],
+        hasMore: false
+      })),
+      fetchCategories: jest.fn(async () => [
+        {
+          id: 5,
+          name: "Requests for Comment",
+          slug: "proposal-discussion",
+          path: "/c/proposal-discussion/5/l/latest.json"
+        }
+      ]),
+      fetchCategoryTopicPage: jest.fn(async () => {
+        throw new Error("Uniswap category returned 503");
+      })
+    };
+    const adapter = new UniswapAdapter(
+      createAdapterOptions({ client: client as never, logger })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({ sourceId: "26170" })
+    ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocol: "uniswap",
+        failedFeedCount: 1,
+        successfulFeedCount: 1
+      }),
+      "Uniswap forum fetch completed with partial feed failures"
+    );
+  });
+
+  it("uses Uniswap category feeds when global latest is unavailable", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => {
+        throw new Error("Uniswap global latest unavailable");
+      }),
+      fetchCategories: jest.fn(async () => [
+        {
+          id: 9,
+          name: "Temperature Check",
+          slug: "temperature-check",
+          path: "/c/temperature-check/9/l/latest.json"
+        }
+      ]),
+      fetchCategoryTopicPage: jest.fn(async () => ({
+        page: 0,
+        topics: [createUniswapTopic("26171")],
+        hasMore: false
+      }))
+    };
+    const adapter = new UniswapAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({
+        sourceId: "26171",
+        publisherName: "UniswapLabs"
+      })
+    ]);
+  });
+
+  it("fails the Uniswap run when no global or category feed can be read", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => {
+        throw new Error("global unavailable");
+      }),
+      fetchCategories: jest.fn(async () => {
+        throw new Error("category discovery unavailable");
+      }),
+      fetchCategoryTopicPage: jest.fn()
+    };
+    const adapter = new UniswapAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    await expect(adapter.fetchRecent()).rejects.toThrow(
+      "Uniswap forum fetch failed because no governance feed could be read"
+    );
+    expect(client.fetchCategoryTopicPage).not.toHaveBeenCalled();
   });
 
   it("normalizes raw items through the Uniswap normalizer", () => {

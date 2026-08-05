@@ -1,5 +1,19 @@
 export type GovernanceSourceType = "forum" | "snapshot" | "onchain";
 export type NotificationStatus = "pending" | "sent" | "skipped" | "failed";
+export type NotificationDeliveryStatus = NotificationStatus;
+
+export interface NotificationDelivery {
+  recipientKey: string;
+  recipientMaskedId: string;
+  status: NotificationDeliveryStatus;
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+  lastAttemptAt?: string;
+  nextRetryAt?: string;
+  sentAt?: string;
+  lastError?: string;
+}
 
 export interface GovernanceSource {
   protocol: string;
@@ -38,6 +52,7 @@ export interface StoredProposal extends NormalizedGovernanceItem {
   lastSeenAt: string;
   notificationStatus: NotificationStatus;
   notificationError?: string;
+  notificationDeliveries?: Record<string, NotificationDelivery>;
   createdAt: string;
   updatedAt: string;
 }

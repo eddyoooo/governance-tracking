@@ -1,88 +1,38 @@
 # Platform Manual
 
-Compact operator playbook for the current monitor-only governance tracking service.
+Quick operator guide for the Lido, Aave, and Uniswap governance monitor. The service polls governance forums, filters by trusted publishers, stores new proposals, sends direct Telegram alerts, retries failed recipients automatically, and reports source and system health to the Telegram admin.
+
+Detailed architecture and configuration are in [README.md](./README.md).
 
 ```bash
 API=http://localhost:3000
 ```
 
-## Go-Live Checklist
+Use Node.js 22 or newer locally. The production Docker image uses Node.js 24 LTS.
 
-Run before deploying or restarting production:
+## Preflight
+
+Run before every production deployment:
 
 ```bash
+npm install
 npm run check
 DEMO_STEP_DELAY_MS=0 npm run demo
 docker build -t governance-tracker-bot .
 ```
 
-Expected result: build/typecheck/tests pass, the demo completes without Firebase, and the production Docker image builds.
+Expected:
 
-After the production service starts:
+- TypeScript build and strict typecheck pass.
+- All normal unit, regression, repository, and API integration tests pass.
+- Coverage remains above the enforced global thresholds.
+- The live Telegram E2E test remains skipped unless explicitly requested.
+- The credential-free demo completes for Lido, Aave, and Uniswap.
+- The production Docker image builds.
 
-```bash
-curl -s "$API/health" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
-```
+## Local Start
 
-Expected result: the health endpoint returns `ok: true`, each manual fetch returns a successful run, fetch-run records exist, source-activity records exist for all enabled protocols, and the admin status endpoint sends the operator Telegram health report.
-
-Production note: if more than one backend replica is running, keep `ENABLE_SCHEDULER=true` on only one worker when possible. Firestore proposal upserts are transaction-backed, but multiple schedulers still create duplicate polling work and extra fetch-run audit records.
-
-Network-safety note: live forum fetches and Telegram sends have request timeouts. A stuck Discourse or Telegram request should fail the relevant run/report clearly instead of hanging the monitor indefinitely.
-
-## Fast Colleague Demo
-
-Run the full terminal walkthrough:
-
-```bash
-DEMO_STEP_DELAY_MS=750 npm run demo
-```
-
-What to point out:
-
-- Lido, Aave, and Uniswap are fetched through the same monitor pipeline.
-- Only allowlisted publishers are stored.
-- Non-allowlisted items are counted as skipped.
-- New allowlisted proposals trigger notification handling.
-- Duplicate fetches do not create duplicate proposals or rewrite unchanged documents.
-- Fetch-run audit records show exactly what happened.
-- Source-activity records show whether each raw forum source is still active.
-
-API version of the same story:
-
-```bash
-npm run dev
-```
-
-Then in another terminal:
-
-```bash
-curl -s "$API/health"
-curl -s -X POST "$API/api/admin/fetch/lido"
-curl -s -X POST "$API/api/admin/fetch/aave"
-curl -s -X POST "$API/api/admin/fetch/uniswap"
-curl -s "$API/api/admin/fetch-runs"
-curl -s "$API/api/admin/source-activity"
-curl -s -X POST "$API/api/admin/notify-pending"
-curl -s -X POST "$API/api/admin/status/send"
-```
-
-## 1. Start Locally
-
-Use memory mode when you want to run without Firebase:
-
-```bash
-npm install
-npm run dev
-```
-
-Recommended local `.env` values:
+Use these `.env` values for a credential-free local API:
 
 ```bash
 NODE_ENV=development
@@ -90,65 +40,72 @@ PORT=3000
 STORAGE_MODE=memory
 DEMO_MODE=true
 ENABLE_SCHEDULER=false
-ENABLE_SOURCE_ACTIVITY_ALERTS=true
 API_AUTH_ENABLED=false
 ENABLE_TELEGRAM_NOTIFICATIONS=false
 ENABLE_ADMIN_STATUS_REPORTS=false
+LOG_LEVEL=info
 ```
 
-Expected result: the API starts on port `3000`, stores data in memory, does not require Firebase, and does not run the scheduler.
-
-`PORT` must be between `1` and `65535`. `LOG_LEVEL` can be `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.
-
-## 2. Run The Terminal Demo
+Start:
 
 ```bash
-npm run demo
+NODE_ENV=development \
+STORAGE_MODE=memory \
+DEMO_MODE=true \
+ENABLE_SCHEDULER=false \
+ENABLE_TELEGRAM_NOTIFICATIONS=false \
+ENABLE_ADMIN_STATUS_REPORTS=false \
+API_AUTH_ENABLED=false \
+npm run dev
 ```
 
-Expected result: a step-by-step terminal walkthrough of the real monitor flow.
+Memory-mode data exists only inside this process and disappears on restart.
 
-What it demonstrates:
+## Terminal Demo
 
-- Lido fetches from locally saved proposal-category payload samples.
-- Aave fetches from locally saved global latest and category/subcategory payload samples.
-- Aave allowlist matching uses real Discourse usernames: `LlamaRisk`, `TokenLogic`, `Certora`, `kpk`, `karpatkey_TokenLogic`, `AaveLabs`, and `stani`.
-- Uniswap fetches from locally saved global latest and public category/subcategory payload samples.
-- Uniswap allowlist matching uses stable profile usernames such as `haydenadams`, `devinwalsh`, `kenneth`, `nataliara`, `GFXlabs`, and `UniswapFoundation`, while stored proposal output may show display names such as `Hayden Adams`, `Devin`, `Ken Ng`, or `GFX Labs`.
-- Allowlisted publishers are stored.
-- Non-allowlisted publishers are skipped.
-- New proposals trigger notification handling.
-- Duplicate fetches do not create duplicate proposals.
-- Unchanged repeat sightings are counted without rewriting proposal documents.
-- Stored proposal snapshots are printed directly from the repository.
-- Fetch-run audit records are printed directly from the repository.
-- Source-activity watchdog records are printed directly from the repository.
+Normal walkthrough:
 
-Fast mode:
+```bash
+DEMO_STEP_DELAY_MS=750 npm run demo
+```
+
+Fast walkthrough:
 
 ```bash
 DEMO_STEP_DELAY_MS=0 npm run demo
 ```
 
-Telegram demo mode: set `ENABLE_TELEGRAM_NOTIFICATIONS=true`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ADMIN_USER_ID`, then run `npm run demo`. Demo proposal notifications are forced to the admin user only and deliberately ignore `TELEGRAM_ALLOWED_USER_IDS`.
+The demo uses locally saved real forum samples and memory storage. It shows:
 
-Admin status demo mode: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_ID`, then run:
+- Lido, Aave, and Uniswap using the shared fetch pipeline.
+- Protocol-specific publisher allowlists.
+- Non-allowlisted topics being skipped.
+- New allowlisted proposals being normalized and stored.
+- Duplicate topics not creating duplicate records.
+- Unchanged topics not causing Firestore-style write churn.
+- Fetch-run audit records.
+- Silent-migration source-activity records.
+- Notification status and masked per-recipient delivery state.
+
+The scripted demo begins from an established baseline so its revealed fixtures behave like genuinely new discoveries. It never requires Firebase.
+
+If Telegram proposal notifications are enabled, demo messages are forced to `TELEGRAM_ADMIN_USER_ID` only. Production recipients in `TELEGRAM_ALLOWED_USER_IDS` are not used by the demo.
+
+Send the final admin health report during the demo:
 
 ```bash
 npm run demo:admin
 ```
 
-Expected result: the normal terminal demo runs, then the final operator status report is sent to the configured Telegram admin.
+## API Checks
 
-Plain `npm run demo` keeps the admin status demo off even if production admin reports are enabled in `.env`.
-
-## 3. Health Check
+### Health
 
 ```bash
 curl -s "$API/health"
 ```
 
-Expected result:
+Expected:
 
 ```json
 {
@@ -158,9 +115,9 @@ Expected result:
 }
 ```
 
-This endpoint does not call Lido, Aave, or Uniswap.
+This reads runtime state only. It does not call a forum.
 
-## 4. Manual Fetch
+### Manual Fetch
 
 ```bash
 curl -s -X POST "$API/api/admin/fetch/lido"
@@ -168,213 +125,149 @@ curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 ```
 
-Expected result:
+Each call runs the same pipeline as the scheduler. Production mode calls the live forum; memory/demo mode uses local samples.
 
-```json
-{
-  "protocol": "lido",
-  "fetchedCount": 30,
-  "allowlistedCount": 3,
-  "storedNewCount": 1,
-  "updatedExistingCount": 0,
-  "unchangedExistingCount": 2,
-  "skippedCount": 27,
-  "notificationSentCount": 1,
-  "notificationFailedCount": 0,
-  "errors": []
-}
-```
+Important result fields:
 
-These endpoints call the protocol adapters. In memory/demo mode, adapters use local payload samples. In Firestore production mode, adapters call the live forums. Lido uses the proposal category feed, while Aave and Uniswap scan global latest plus discovered public category/subcategory feeds.
+- `fetchedCount`: unique raw topics inspected.
+- `allowlistedCount`: topics matching the protocol publisher allowlist.
+- `storedNewCount`: allowlisted proposals inserted for the first time.
+- `baselineSeededCount`: historical proposals stored silently during first-run seeding or after an allowlist expansion.
+- `updatedExistingCount`: known proposals with meaningful source changes.
+- `unchangedExistingCount`: known identical proposals not rewritten.
+- `skippedCount`: non-allowlisted topics.
+- `notificationSentCount`: newly discovered proposals delivered during this fetch.
+- `notificationFailedCount`: newly discovered proposals with at least one initial recipient failure.
+- `errors`: non-fatal notification errors, or the persisted failure reason for a failed run.
 
-Count meanings:
+On an empty database, the first successful fetch for each protocol that meets `SOURCE_ACTIVITY_MIN_FETCHED_COUNT` establishes a silent baseline. Historical allowlisted proposals are stored with notifications skipped. An empty or interrupted first fetch remains in seeding mode; later discoveries notify only after a valid baseline completes.
 
-- `fetchedCount`: all source items inspected.
-- `allowlistedCount`: fetched items whose publisher matched the allowlist.
-- `storedNewCount`: allowlisted items stored for the first time.
-- `updatedExistingCount`: existing items changed in meaningful source fields.
-- `unchangedExistingCount`: existing items were seen again but not rewritten.
-- `skippedCount`: fetched items ignored because the publisher was not allowlisted.
-- `notificationSentCount`: new proposal notifications sent during the run.
-- `notificationFailedCount`: notification attempts that failed.
+When a publisher is added to an established allowlist, any of that publisher's topics dated at or before the previous successful protocol poll are stored silently instead of producing historical alerts. Topics newer than the previous successful poll notify normally.
 
-For unchanged repeat sightings, the stored proposal is not rewritten, so `lastSeenAt`, `fetchedAt`, and `updatedAt` stay at the last meaningful insert/update time.
-
-## 5. Source Activity
-
-```bash
-curl -s "$API/api/admin/source-activity"
-```
-
-Expected result: latest source freshness records for each protocol.
-
-```json
-{
-  "sourceActivity": [
-    {
-      "protocol": "aave",
-      "sourceType": "forum",
-      "latestRawSourceId": "25170",
-      "latestRawPublishedAt": "2026-07-01T00:00:00.000Z",
-      "lastFetchedCount": 120,
-      "consecutiveStaleRuns": 0,
-      "status": "healthy"
-    }
-  ]
-}
-```
-
-This endpoint reads stored watchdog records only. It does not call protocol forums. The watchdog uses all raw fetched forum items, before allowlist filtering, so it can flag silent forum migrations or stale category feeds even when no allowlisted publisher has posted.
-
-## 6. Fetch-Run Audit
+### Fetch Runs
 
 ```bash
 curl -s "$API/api/admin/fetch-runs"
 ```
 
-Expected result: latest stored fetch-run audit records, newest first.
+Expected: newest stored fetch-run audit records. This reads Firestore or memory and does not call forums.
 
-```json
-{
-  "fetchRuns": [
-    {
-      "id": "fetchRun_lido_abc123",
-      "protocol": "lido",
-      "status": "success",
-      "fetchedCount": 30,
-      "storedNewCount": 1,
-      "skippedCount": 27,
-      "errors": []
-    }
-  ]
-}
-```
-
-This endpoint reads stored fetch-run records only. It does not call protocol forums.
-
-## 7. Retry Pending Notifications
+### Source Activity
 
 ```bash
-curl -s -X POST "$API/api/admin/notify-pending"
+curl -s "$API/api/admin/source-activity"
 ```
 
-Expected result:
+Expected: one latest source-activity record per fetched protocol. The watchdog evaluates all raw topics before allowlist filtering, allowing it to flag an old forum that still responds but no longer receives activity.
 
-```json
-{
-  "pendingCount": 0,
-  "sentCount": 0,
-  "failedCount": 0,
-  "skippedCount": 0,
-  "errors": []
-}
+### Admin Status
+
+```bash
+curl -s -X POST "$API/api/admin/status/send"
 ```
 
-If Telegram is disabled, pending proposals are marked `skipped`. If Telegram is enabled, the service attempts to send each pending proposal to every allowed Telegram user and marks proposals `sent` or `failed`.
+Expected: the configured Telegram admin receives the same status report used by the daily cron. The response contains `sent`, `healthy`, and `problems`.
 
-## 8. Auth Check
+The report shows:
 
-Set:
+- Latest fetch status per enabled protocol.
+- Current exact pending and failed proposal counts.
+- Masked failed recipient IDs, attempts, next retry time, and last error.
+- Raw source freshness and silent-migration warnings.
+- Enabled protocols with an empty publisher allowlist.
+- Storage and scheduler mode.
+
+Historical fetch failures remain in `fetchRuns`, but they do not keep the current report unhealthy after the latest run and proposal delivery state recover.
+
+## Automatic Notification Recovery
+
+There is no manual retry or acknowledgement endpoint.
+
+With `ENABLE_SCHEDULER=true` and `ENABLE_TELEGRAM_NOTIFICATIONS=true`, `NOTIFICATION_RETRY_CRON` checks unresolved deliveries every 15 minutes by default.
+
+Retry delays are:
+
+- First failure: 15 minutes.
+- Second failure: 1 hour.
+- Third failure: 6 hours.
+- Later failures: 24 hours.
+
+Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` marks that delivery skipped and also allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
+
+The daily admin report continues to say `ATTENTION REQUIRED` while unresolved state remains.
+
+## API Auth
+
+When enabled, every endpoint requires the token:
 
 ```bash
 API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
 ```
 
-Use HTTPS in production. Request logs redact auth headers and known secret fields, but the token should still be treated like a password.
-
-Without token:
-
-```bash
-curl -i "$API/health"
-```
-
-Expected result: `401`.
-
-With token:
-
 ```bash
 curl -s "$API/health" \
   -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected result: normal health response.
+Without a token, expect `401`. With the wrong token, expect `403`. Use HTTPS whenever the API is reachable over a network.
 
-Alternative header:
+## Telegram Tests
 
-```bash
-curl -s "$API/health" \
-  -H "x-api-token: $API_AUTH_TOKEN"
+Every direct-message recipient must open the bot and send `/start` once.
+
+Production proposal notifications fan out to every ID in `TELEGRAM_ALLOWED_USER_IDS`.
+
+The production message remains:
+
+```text
+NEW GOVERNANCE ITEM TRACKED
+Protocol: <protocol>
+Source: <source type>
+Publisher: <publisher>
+Title: <title>
+Link: <source URL>
 ```
 
-## 9. Telegram Test
+The heading is bold and all caps.
 
-Production Telegram notifications are direct user messages, not group/channel messages. Each recipient must open the bot and send `/start` once. The production monitor sends proposal notifications only to numeric IDs listed in `TELEGRAM_ALLOWED_USER_IDS`.
-
-Demo/test Telegram sends are different: they go only to `TELEGRAM_ADMIN_USER_ID` so teammate recipients are not spammed. This does not change production proposal alerts, which still fan out to every configured production recipient.
-
-Set:
+Test and demo messages go only to `TELEGRAM_ADMIN_USER_ID`:
 
 ```bash
-TELEGRAM_BOT_TOKEN=replace-with-token
-TELEGRAM_ADMIN_USER_ID=1549323073
 TELEGRAM_E2E_ENABLED=true
 TELEGRAM_TEST_SEND_DELAY_MS=3000
-```
-
-Send real test messages:
-
-```bash
 npm run telegram:test-send
 ```
 
-Expected result: only `TELEGRAM_ADMIN_USER_ID` receives multiple governance notification messages based on locally saved Lido, Aave, and Uniswap proposal samples. Messages start with bold all-caps `NEW GOVERNANCE ITEM TRACKED`.
+Expected: the admin receives real Lido, Aave, and Uniswap sample notifications with three seconds between messages. Teammate production recipients are not contacted.
 
-Run the real Telegram E2E test:
+Real Telegram E2E:
 
 ```bash
 npm run test:e2e:telegram
 ```
 
-Expected result: pending proposals are seeded in memory, sent through the real Telegram service to `TELEGRAM_ADMIN_USER_ID` only, and marked `sent`.
+Expected: proposals are inserted into a memory repository, delivered to the admin only, and verified as `sent`.
 
-Normal `npm test` and `npm run check` do not send Telegram messages. The live E2E path only runs through this dedicated command.
+`npm test` and `npm run check` never send live Telegram messages.
 
-## 10. Daily Admin Status
+## Scheduled Production Flow
 
-The admin status report is a separate daily Telegram message for the operator. It uses the same bot token as proposal notifications, but sends only to `TELEGRAM_ADMIN_USER_ID`.
-
-Set:
+Default schedule:
 
 ```bash
-ENABLE_ADMIN_STATUS_REPORTS=true
-TELEGRAM_ADMIN_USER_ID=1549323073
-ADMIN_STATUS_CRON=0 9 * * *
-ENABLE_SCHEDULER=true
-ENABLE_SOURCE_ACTIVITY_ALERTS=true
-SOURCE_ACTIVITY_WARNING_DAYS=14
-SOURCE_ACTIVITY_CRITICAL_DAYS=30
-SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
+FETCH_INTERVAL_CRON="0 8 * * *"
+NOTIFICATION_RETRY_CRON="*/15 * * * *"
+ADMIN_STATUS_CRON="0 9 * * *"
 ```
 
-Expected result: once per day at `09:00` server time, the admin receives a compact status message with latest fetch results, source-activity freshness, pending/failed notification counts, enabled protocols, and any detected problems.
+At `08:00`, all enabled protocols fetch. Every 15 minutes, unresolved notification recipients are retried when due. At `09:00`, the admin receives current system health.
 
-Send the same report immediately after a restart:
+Cron uses the container/server timezone. Run only one scheduler-enabled replica where practical to avoid duplicate polling and audit runs.
 
-```bash
-curl -s -X POST "$API/api/admin/status/send" \
-  -H "Authorization: Bearer $API_AUTH_TOKEN"
-```
+Forum requests retry transient network failures, timeouts, and `408`, `429`, or `5xx` responses up to three attempts. Invalid JSON and definitive client errors are not retried. If a later page or one redundant Aave/Uniswap category feed fails after recent topics were obtained, the monitor preserves the usable data and continues. A protocol run fails when no usable governance feed can be read.
 
-Expected result: Telegram receives the admin report right away. If one status subsection cannot be read, the message should still arrive with `ATTENTION REQUIRED` and the failing subsection listed.
-
-One-off demo command:
-
-```bash
-npm run demo:admin
-```
-
-## 11. Tests
+## Tests
 
 Run all normal tests:
 
@@ -382,13 +275,15 @@ Run all normal tests:
 npm test
 ```
 
-Run full verification:
+Run the complete local quality gate:
 
 ```bash
 npm run check
 ```
 
-Expected result: build passes, strict typecheck passes, and all unit/integration tests pass. Normal tests use fixtures/mocks and do not call live forums or Telegram.
+`npm run check` runs the production build, strict unused-symbol typecheck, and every normal Jest/Supertest test.
+
+`npm test` also collects coverage and fails below 92% statements, 80% branches, 90% functions, or 92% lines. It never sends live Telegram messages.
 
 Watch mode:
 
@@ -396,91 +291,54 @@ Watch mode:
 npm run test:watch
 ```
 
-## 12. Firestore Run
+## Docker Production
 
-Set:
-
-```bash
-NODE_ENV=production
-STORAGE_MODE=firestore
-DEMO_MODE=false
-ENABLE_SCHEDULER=true
-FETCH_INTERVAL_CRON=0 8 * * *
-ENABLE_SOURCE_ACTIVITY_ALERTS=true
-SOURCE_ACTIVITY_WARNING_DAYS=14
-SOURCE_ACTIVITY_CRITICAL_DAYS=30
-SOURCE_ACTIVITY_MIN_FETCHED_COUNT=1
-API_AUTH_ENABLED=true
-API_AUTH_TOKEN=replace-with-long-random-secret
-FIREBASE_PROJECT_ID=replace-with-project-id
-FIREBASE_CLIENT_EMAIL=replace-with-client-email
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace\n-----END PRIVATE KEY-----\n"
-```
-
-Run:
-
-```bash
-npm run build
-npm run start
-```
-
-Expected result: proposals are stored in Firestore `proposals`, fetch runs are stored in Firestore `fetchRuns`, source freshness is stored in Firestore `sourceActivity`, and the scheduler polls enabled protocols once daily at `08:00` server time by default. The admin status report runs at `09:00`, giving the daily fetch time to complete first.
-
-## 13. Docker
-
-Build the production image:
+Build:
 
 ```bash
 docker build -t governance-tracker-bot .
 ```
 
-Run the production container with runtime env vars:
+Run with the production `-e` values documented in the README:
 
 ```bash
 docker run -d \
-  -p 3000:3000 \
+  -p 127.0.0.1:3001:3000 \
   --name governance-tracker-bot \
   --restart unless-stopped \
-  -e NODE_ENV=production \
-  -e STORAGE_MODE=firestore \
-  -e DEMO_MODE=false \
-  -e ENABLE_SCHEDULER=true \
-  -e API_AUTH_ENABLED=true \
-  -e API_AUTH_TOKEN="replace-with-long-random-secret" \
-  -e FIREBASE_PROJECT_ID="replace-with-project-id" \
-  -e FIREBASE_CLIENT_EMAIL="replace-with-client-email" \
-  -e FIREBASE_PRIVATE_KEY="replace-with-private-key" \
-  -e ENABLE_TELEGRAM_NOTIFICATIONS=true \
-  -e TELEGRAM_BOT_TOKEN="replace-with-telegram-bot-token" \
-  -e TELEGRAM_ALLOWED_USER_IDS='["1549323073"]' \
-  -e ENABLE_ADMIN_STATUS_REPORTS=true \
-  -e TELEGRAM_ADMIN_USER_ID="1549323073" \
+  [runtime -e variables...] \
   governance-tracker-bot
 ```
 
-Useful Docker commands:
+Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally.
+
+Do not use the local pretty multi-line `.env` directly with `--env-file`; Docker requires every value, including JSON publisher arrays, on one physical line.
+
+Useful commands:
 
 ```bash
 docker ps -a
 docker images
-docker build -t governance-tracker-bot .
-docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
 docker logs -f governance-tracker-bot
+docker restart governance-tracker-bot
 docker stop governance-tracker-bot
 docker rm governance-tracker-bot
-docker restart governance-tracker-bot
+docker image prune
 ```
 
-## 14. What No Longer Exists
+## Firestore
 
-The platform no longer exposes dashboard-oriented endpoints:
+Production structured state:
 
-```text
-GET /api/proposals
-GET /api/proposals/:id
-GET /api/proposals/source/:protocol/:sourceType/:sourceId
-GET /api/protocols
-GET /api/debug/*
-```
+- `proposals/{proposalId}`: normalized proposals and recipient delivery state.
+- `fetchRuns/{runId}`: immutable operational audit history.
+- `sourceActivity/{protocol}`: latest raw forum activity and watchdog state.
+- `protocolState/{protocol}`: cold-start baseline state.
 
-To inspect proposals in production, use the Firestore `proposals` collection. To inspect proposals during a demo, use `npm run demo`, which prints the repository snapshot directly.
+No Firebase Storage archive is used.
+
+The monitor’s notification count and failure-detail queries use single-field Firestore queries and aggregate counts; no custom composite index is required for the admin status report.
+
+## Removed Surfaces
+
+The monitor has no dashboard, public proposal browser, debug API, manual notification retry endpoint, or manual failed-notification acknowledgement endpoint. Inspect production proposals directly in Firestore and use the operational endpoints above for health and audit data.

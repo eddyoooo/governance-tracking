@@ -16,6 +16,7 @@ import {
   type FetchRunRepository
 } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
+import { MemoryProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import {
   MemorySourceActivityRepository,
   type SourceActivityRepository
@@ -41,6 +42,28 @@ class RecordingFetchRunRepository implements FetchRunRepository {
 
   async findAll(): Promise<FetchRun[]> {
     return [...this.runs.values()];
+  }
+
+  async findLatestByProtocol(protocol: string): Promise<FetchRun | null> {
+    return (
+      [...this.runs.values()]
+        .filter((run) => run.protocol === protocol)
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
+  }
+
+  async findLatestSuccessfulByProtocol(
+    protocol: string
+  ): Promise<FetchRun | null> {
+    return (
+      [...this.runs.values()]
+        .filter(
+          (run) => run.protocol === protocol && run.status === "success"
+        )
+        .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
+      null
+    );
   }
 }
 
@@ -69,6 +92,14 @@ class AlwaysFailingFetchRunRepository implements FetchRunRepository {
   async findAll(): Promise<FetchRun[]> {
     return [];
   }
+
+  async findLatestByProtocol(): Promise<null> {
+    return null;
+  }
+
+  async findLatestSuccessfulByProtocol(): Promise<null> {
+    return null;
+  }
 }
 
 class RecordingNotificationService implements NotificationService {
@@ -87,7 +118,14 @@ class RecordingNotificationService implements NotificationService {
     this.fail = options.fail ?? false;
   }
 
-  async send(message: NotificationMessage): Promise<void> {
+  getRecipients() {
+    return [{ key: "recipient-1", maskedId: "*****1111" }];
+  }
+
+  async send(
+    message: NotificationMessage,
+    _recipientKeys?: readonly string[]
+  ): Promise<void> {
     this.messages.push(message);
 
     if (this.fail) {
@@ -131,6 +169,7 @@ function createJob(
     "findByProtocol" in sourceActivityRepositoryOrNotificationService
       ? notificationService
       : sourceActivityRepositoryOrNotificationService;
+  const protocolStateRepository = new MemoryProtocolStateRepository();
 
   return {
     job: new FetchProtocolGovernanceJob(
@@ -141,6 +180,7 @@ function createJob(
       createSilentLogger(),
       {
         notificationService: resolvedNotificationService,
+        protocolStateRepository,
         sourceActivityConfig: {
           warningDays: 365,
           criticalDays: 730,
@@ -150,7 +190,8 @@ function createJob(
     ),
     proposalRepository,
     fetchRunRepository,
-    sourceActivityRepository
+    sourceActivityRepository,
+    protocolStateRepository
   };
 }
 
@@ -181,6 +222,7 @@ describe("FetchProtocolGovernanceJob", () => {
       fetchedCount: 2,
       allowlistedCount: 1,
       storedNewCount: 1,
+      baselineSeededCount: 1,
       updatedExistingCount: 0,
       skippedCount: 1,
       notificationSentCount: 0,
@@ -196,6 +238,7 @@ describe("FetchProtocolGovernanceJob", () => {
       fetchedCount: 2,
       allowlistedCount: 1,
       storedNewCount: 1,
+      baselineSeededCount: 1,
       updatedExistingCount: 0,
       skippedCount: 1
     });
@@ -210,6 +253,351 @@ describe("FetchProtocolGovernanceJob", () => {
       latestRawSourceId: "1001",
       lastFetchedCount: 2,
       status: "healthy"
+    });
+  });
+
+  it.each(["lido", "aave", "uniswap"] as const)(
+    "silently seeds an empty %s database, then notifies only later discoveries",
+    async (protocol) => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-06-05T08:00:00.000Z"));
+      const oldItem = createRawGovernanceItem({
+        protocol,
+        sourceId: "1001",
+        title: `${protocol} baseline item`,
+        publishedAt: "2026-06-04T10:00:00.000Z"
+      });
+      const newItem = createRawGovernanceItem({
+        protocol,
+        sourceId: "1002",
+        title: `${protocol} newly discovered item`,
+        publishedAt: "2026-06-05T12:00:00.000Z"
+      });
+      let includeNewItem = false;
+      const notificationService = new RecordingNotificationService();
+      const { job, proposalRepository, protocolStateRepository } = createJob(
+        createFakeProtocolAdapter({
+          protocol,
+          fetchRecent: jest.fn(async () =>
+            includeNewItem ? [oldItem, newItem] : [oldItem]
+          )
+        }),
+        new MemoryProposalRepository(),
+        new RecordingFetchRunRepository(),
+        notificationService
+      );
+
+      const baseline = await job.run(protocol);
+      includeNewItem = true;
+      jest.setSystemTime(new Date("2026-06-06T08:00:00.000Z"));
+      const discovery = await job.run(protocol);
+
+      expect(baseline).toMatchObject({
+        storedNewCount: 1,
+        baselineSeededCount: 1,
+        notificationSentCount: 0,
+        notificationFailedCount: 0
+      });
+      expect(discovery).toMatchObject({
+        storedNewCount: 1,
+        baselineSeededCount: 0,
+        unchangedExistingCount: 1,
+        notificationSentCount: 1,
+        notificationFailedCount: 0
+      });
+      expect(notificationService.messages.map((message) => message.title)).toEqual([
+        `${protocol} newly discovered item`
+      ]);
+      expect(
+        (await proposalRepository.findBySourceIdentity(
+          protocol,
+          "forum",
+          "1001"
+        ))?.notificationStatus
+      ).toBe("skipped");
+      expect(
+        (await proposalRepository.findBySourceIdentity(
+          protocol,
+          "forum",
+          "1002"
+        ))?.notificationStatus
+      ).toBe("sent");
+      await expect(
+        protocolStateRepository.findByProtocol(protocol)
+      ).resolves.toMatchObject({
+        baselineStatus: "complete",
+        baselineCompletedAt: expect.any(String)
+      });
+    }
+  );
+
+  it("treats an existing protocol dataset as an already-established baseline", async () => {
+    const proposalRepository = new MemoryProposalRepository();
+    const existingRaw = createRawGovernanceItem({
+      sourceId: "1001",
+      title: "Existing record"
+    });
+    await proposalRepository.upsert(
+      createFakeProtocolAdapter().normalize(existingRaw),
+      {
+        notificationStatusForNew: "skipped"
+      }
+    );
+    const notificationService = new RecordingNotificationService();
+    const { job, protocolStateRepository } = createJob(
+      createFakeProtocolAdapter({
+        items: [
+          existingRaw,
+          createRawGovernanceItem({
+            sourceId: "1002",
+            title: "Actually new record"
+          })
+        ]
+      }),
+      proposalRepository,
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      storedNewCount: 1,
+      baselineSeededCount: 0,
+      unchangedExistingCount: 1,
+      notificationSentCount: 1
+    });
+    expect(notificationService.messages.map((message) => message.title)).toEqual([
+      "Actually new record"
+    ]);
+    await expect(
+      protocolStateRepository.findByProtocol("lido")
+    ).resolves.toMatchObject({
+      baselineStatus: "complete"
+    });
+  });
+
+  it.each([
+    {
+      label: "silently stores historical items introduced by an allowlist expansion",
+      publishedAt: "2026-07-22T12:00:00.000Z",
+      expectedStatus: "skipped",
+      expectedSeededCount: 1,
+      expectedSentCount: 0
+    },
+    {
+      label: "notifies items published after the previous successful poll",
+      publishedAt: "2026-07-23T12:00:00.000Z",
+      expectedStatus: "sent",
+      expectedSeededCount: 0,
+      expectedSentCount: 1
+    }
+  ])(
+    "$label",
+    async ({
+      publishedAt,
+      expectedStatus,
+      expectedSeededCount,
+      expectedSentCount
+    }) => {
+      const fetchRunRepository = new RecordingFetchRunRepository();
+      await fetchRunRepository.upsert({
+        id: "previous-success",
+        protocol: "uniswap",
+        startedAt: "2026-07-23T07:55:00.000Z",
+        finishedAt: "2026-07-23T08:00:00.000Z",
+        status: "success",
+        fetchedCount: 435,
+        allowlistedCount: 46,
+        storedNewCount: 0,
+        baselineSeededCount: 0,
+        updatedExistingCount: 0,
+        unchangedExistingCount: 46,
+        skippedCount: 389,
+        notificationSentCount: 0,
+        notificationFailedCount: 0,
+        errors: []
+      });
+      const notificationService = new RecordingNotificationService();
+      const { job, proposalRepository, protocolStateRepository } = createJob(
+        createFakeProtocolAdapter({
+          protocol: "uniswap",
+          items: [
+            createRawGovernanceItem({
+              protocol: "uniswap",
+              sourceId: "26168",
+              publisherName: "Uniswap Labs",
+              title: "Protocol Fee Expansion",
+              publishedAt
+            })
+          ],
+          publisherAllowlist: ["UniswapLabs"]
+        }),
+        new MemoryProposalRepository(),
+        fetchRunRepository,
+        notificationService
+      );
+      await protocolStateRepository.initializeBaseline("uniswap", true);
+
+      const result = await job.run("uniswap");
+      const stored = await proposalRepository.findBySourceIdentity(
+        "uniswap",
+        "forum",
+        "26168"
+      );
+
+      expect(result).toMatchObject({
+        storedNewCount: 1,
+        baselineSeededCount: expectedSeededCount,
+        notificationSentCount: expectedSentCount,
+        notificationFailedCount: 0
+      });
+      expect(stored?.notificationStatus).toBe(expectedStatus);
+      expect(notificationService.messages).toHaveLength(expectedSentCount);
+    }
+  );
+
+  it("uses the previous successful poll rather than a newer failed run when deciding notification freshness", async () => {
+    const fetchRunRepository = new RecordingFetchRunRepository();
+    const baseRun = {
+      protocol: "uniswap",
+      fetchedCount: 435,
+      allowlistedCount: 46,
+      storedNewCount: 0,
+      baselineSeededCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 46,
+      skippedCount: 389,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    };
+    await fetchRunRepository.upsert({
+      ...baseRun,
+      id: "previous-success",
+      startedAt: "2026-07-22T07:55:00.000Z",
+      finishedAt: "2026-07-22T08:00:00.000Z",
+      status: "success"
+    });
+    await fetchRunRepository.upsert({
+      ...baseRun,
+      id: "newer-failure",
+      startedAt: "2026-07-23T07:55:00.000Z",
+      finishedAt: "2026-07-23T08:00:00.000Z",
+      status: "failed",
+      errors: ["Forum unavailable"]
+    });
+    const notificationService = new RecordingNotificationService();
+    const { job, protocolStateRepository } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "uniswap",
+        items: [
+          createRawGovernanceItem({
+            protocol: "uniswap",
+            sourceId: "26169",
+            publisherName: "Uniswap Labs",
+            publishedAt: "2026-07-22T12:00:00.000Z"
+          })
+        ],
+        publisherAllowlist: ["UniswapLabs"]
+      }),
+      new MemoryProposalRepository(),
+      fetchRunRepository,
+      notificationService
+    );
+    await protocolStateRepository.initializeBaseline("uniswap", true);
+
+    await expect(job.run("uniswap")).resolves.toMatchObject({
+      storedNewCount: 1,
+      baselineSeededCount: 0,
+      notificationSentCount: 1
+    });
+    expect(notificationService.messages).toHaveLength(1);
+  });
+
+  it("keeps an interrupted initial baseline in seeding mode until a full fetch succeeds", async () => {
+    const fetchRecent = jest
+      .fn<() => Promise<RawGovernanceItem[]>>()
+      .mockRejectedValueOnce(new Error("Forum temporarily unavailable"))
+      .mockResolvedValueOnce([createRawGovernanceItem()]);
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository, protocolStateRepository } = createJob(
+      createFakeProtocolAdapter({ fetchRecent }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    await expect(job.run("lido")).rejects.toThrow(
+      "Forum temporarily unavailable"
+    );
+    await expect(
+      protocolStateRepository.findByProtocol("lido")
+    ).resolves.toMatchObject({
+      baselineStatus: "seeding"
+    });
+
+    const recovered = await job.run("lido");
+
+    expect(recovered).toMatchObject({
+      storedNewCount: 1,
+      baselineSeededCount: 1,
+      notificationSentCount: 0
+    });
+    expect(notificationService.messages).toEqual([]);
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "skipped"
+    });
+    await expect(
+      protocolStateRepository.findByProtocol("lido")
+    ).resolves.toMatchObject({
+      baselineStatus: "complete"
+    });
+  });
+
+  it("does not complete an empty first baseline when the source minimum is not met", async () => {
+    const fetchRecent = jest
+      .fn<() => Promise<RawGovernanceItem[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([createRawGovernanceItem()]);
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository, protocolStateRepository } = createJob(
+      createFakeProtocolAdapter({ fetchRecent }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    const emptyRun = await job.run("lido");
+
+    expect(emptyRun).toMatchObject({
+      fetchedCount: 0,
+      storedNewCount: 0,
+      baselineSeededCount: 0,
+      notificationSentCount: 0
+    });
+    await expect(
+      protocolStateRepository.findByProtocol("lido")
+    ).resolves.toMatchObject({
+      baselineStatus: "seeding"
+    });
+
+    const healthyRun = await job.run("lido");
+
+    expect(healthyRun).toMatchObject({
+      fetchedCount: 1,
+      storedNewCount: 1,
+      baselineSeededCount: 1,
+      notificationSentCount: 0
+    });
+    expect(notificationService.messages).toEqual([]);
+    expect((await proposalRepository.findAll())[0]).toMatchObject({
+      notificationStatus: "skipped"
+    });
+    await expect(
+      protocolStateRepository.findByProtocol("lido")
+    ).resolves.toMatchObject({
+      baselineStatus: "complete"
     });
   });
 
@@ -369,7 +757,7 @@ describe("FetchProtocolGovernanceJob", () => {
       sourceId: "1001",
       fetchedAt: "2026-06-05T00:15:00.000Z"
     });
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter({
         items: [
           createRawGovernanceItem({
@@ -384,6 +772,7 @@ describe("FetchProtocolGovernanceJob", () => {
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const result = await job.run("lido");
     const proposals = await proposalRepository.findAll();
@@ -414,7 +803,6 @@ describe("FetchProtocolGovernanceJob", () => {
       new RecordingFetchRunRepository(),
       notificationService
     );
-
     const result = await job.run("lido");
 
     expect(result).toMatchObject({
@@ -430,12 +818,13 @@ describe("FetchProtocolGovernanceJob", () => {
 
   it("sends Telegram-style notifications only for newly inserted proposals", async () => {
     const notificationService = new RecordingNotificationService();
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const first = await job.run("lido");
     const second = await job.run("lido");
@@ -471,12 +860,13 @@ describe("FetchProtocolGovernanceJob", () => {
       fetchImpl,
       logger: createSilentLogger()
     });
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const first = await job.run("lido");
     const second = await job.run("lido");
@@ -515,12 +905,13 @@ describe("FetchProtocolGovernanceJob", () => {
       fetchImpl,
       logger: createSilentLogger()
     });
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const result = await job.run("lido");
     const bodies = fetchImpl.mock.calls.map(
@@ -534,13 +925,16 @@ describe("FetchProtocolGovernanceJob", () => {
       notificationSentCount: 0,
       notificationFailedCount: 1,
       errors: [
-        "Telegram notification failed for 1 of 2 allowed recipients: recipient 2 failed with 403: blocked"
+        expect.stringContaining(
+          "Telegram delivery unresolved for 1 recipient(s)"
+        )
       ]
     });
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "failed",
-      notificationError:
-        "Telegram notification failed for 1 of 2 allowed recipients: recipient 2 failed with 403: blocked"
+      notificationError: expect.stringContaining(
+        "recipient 2 (*****2222) failed with 403: blocked"
+      )
     });
   });
 
@@ -579,12 +973,13 @@ describe("FetchProtocolGovernanceJob", () => {
 
   it("marks notification failures without failing the fetch run", async () => {
     const notificationService = new RecordingNotificationService({ fail: true });
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const result = await job.run("lido");
 
@@ -592,22 +987,27 @@ describe("FetchProtocolGovernanceJob", () => {
       storedNewCount: 1,
       notificationSentCount: 0,
       notificationFailedCount: 1,
-      errors: ["Telegram exploded"]
+      errors: [
+        expect.stringContaining(
+          "Telegram delivery unresolved for 1 recipient(s)"
+        )
+      ]
     });
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "failed",
-      notificationError: "Telegram exploded"
+      notificationError: expect.stringContaining("Telegram exploded")
     });
   });
 
   it("does not retry failed proposal notifications during ordinary duplicate fetches", async () => {
     const notificationService = new RecordingNotificationService({ fail: true });
-    const { job, proposalRepository } = createJob(
+    const { job, proposalRepository, protocolStateRepository } = createJob(
       createFakeProtocolAdapter(),
       new MemoryProposalRepository(),
       new RecordingFetchRunRepository(),
       notificationService
     );
+    await protocolStateRepository.initializeBaseline("lido", true);
 
     const first = await job.run("lido");
     const second = await job.run("lido");
@@ -624,7 +1024,7 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(notificationService.messages).toHaveLength(1);
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "failed",
-      notificationError: "Telegram exploded"
+      notificationError: expect.stringContaining("Telegram exploded")
     });
   });
 

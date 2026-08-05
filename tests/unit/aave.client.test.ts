@@ -208,7 +208,7 @@ describe("AaveForumClient", () => {
     expect(page.topics).toHaveLength(6);
   });
 
-  it("trims blank display names and falls back to username or last poster", async () => {
+  it("trims blank display names and does not use a last commenter as the publisher", async () => {
     const payload = {
       users: [{ id: 1, username: "aave-username", name: "   " }],
       topic_list: {
@@ -240,7 +240,7 @@ describe("AaveForumClient", () => {
 
     expect(topics.map((topic) => topic.publisherName)).toEqual([
       "aave-username",
-      "last-poster"
+      "unknown"
     ]);
   });
 
@@ -298,6 +298,36 @@ describe("AaveForumClient", () => {
 
     await expect(client.fetchCategories()).rejects.toThrow(
       "Invalid Aave site response."
+    );
+  });
+
+  it("rejects malformed category topic responses with category context", async () => {
+    const logger = {
+      debug: jest.fn(),
+      error: jest.fn()
+    };
+    const client = new AaveForumClient({
+      baseUrl: "https://governance.aave.com",
+      apiBaseUrl: "https://governance.aave.com",
+      fetchImpl: jsonFetch({ topic_list: { topics: "broken" } }),
+      logger
+    });
+    const category = {
+      id: 4,
+      name: "Governance",
+      slug: "governance",
+      path: "/c/governance/4/l/latest.json"
+    };
+
+    await expect(
+      client.fetchCategoryTopicPage(category)
+    ).rejects.toThrow("Invalid Aave category topics response.");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category,
+        issues: expect.any(Array)
+      }),
+      "Failed to validate Aave category topics response"
     );
   });
 

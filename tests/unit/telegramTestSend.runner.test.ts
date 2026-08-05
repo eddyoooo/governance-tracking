@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import type {
   NotificationMessage,
   NotificationService
@@ -7,7 +7,8 @@ import {
   createAdminOnlyTelegramTestNotificationService,
   DEFAULT_TELEGRAM_TEST_SEND_DELAY_MS,
   parseTelegramTestSendDelayMs,
-  sendTelegramTestNotifications
+  sendTelegramTestNotifications,
+  sleep as sleepForTelegramTest
 } from "../../src/telegramTestSend.runner.js";
 
 class RecordingNotificationService implements NotificationService {
@@ -15,7 +16,14 @@ class RecordingNotificationService implements NotificationService {
   readonly enabled = true;
   readonly messages: NotificationMessage[] = [];
 
-  async send(message: NotificationMessage): Promise<void> {
+  getRecipients() {
+    return [{ key: "admin", maskedId: "*****3073" }];
+  }
+
+  async send(
+    message: NotificationMessage,
+    _recipientKeys?: readonly string[]
+  ): Promise<void> {
     this.messages.push(message);
   }
 }
@@ -31,6 +39,10 @@ function message(title: string): NotificationMessage {
 }
 
 describe("Telegram test-send runner", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("parses the default 3 second delay", () => {
     expect(parseTelegramTestSendDelayMs(undefined)).toBe(
       DEFAULT_TELEGRAM_TEST_SEND_DELAY_MS
@@ -92,6 +104,31 @@ describe("Telegram test-send runner", () => {
       "two"
     ]);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("uses the default delay when the runner does not receive an override", async () => {
+    const notificationService = new RecordingNotificationService();
+    const sleep = jest.fn<() => Promise<void>>(async () => undefined);
+
+    await sendTelegramTestNotifications({
+      notificationService,
+      notifications: [message("one"), message("two")],
+      sleep
+    });
+
+    expect(sleep).toHaveBeenCalledWith(DEFAULT_TELEGRAM_TEST_SEND_DELAY_MS);
+  });
+
+  it("resolves the real sleep helper only after its timer elapses", async () => {
+    jest.useFakeTimers();
+    const completion = jest.fn();
+    const pending = sleepForTelegramTest(25).then(completion);
+
+    await jest.advanceTimersByTimeAsync(24);
+    expect(completion).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(completion).toHaveBeenCalledTimes(1);
   });
 
   it("creates an admin-only Telegram service for live test sends", async () => {

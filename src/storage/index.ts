@@ -11,6 +11,11 @@ import { FirestoreProposalRepository } from "./firestoreProposal.repository.js";
 import { MemoryProposalRepository } from "./memoryProposal.repository.js";
 import type { ProposalRepository } from "./proposal.repository.js";
 import {
+  FirestoreProtocolStateRepository,
+  MemoryProtocolStateRepository,
+  type ProtocolStateRepository
+} from "./protocolState.repository.js";
+import {
   FirestoreSourceActivityRepository,
   MemorySourceActivityRepository,
   type SourceActivityRepository
@@ -20,6 +25,7 @@ export interface Repositories {
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
   sourceActivityRepository: SourceActivityRepository;
+  protocolStateRepository: ProtocolStateRepository;
 }
 
 export function createRepositories(env: Env, logger: Logger): Repositories {
@@ -29,7 +35,8 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
     return {
       proposalRepository: new MemoryProposalRepository(),
       fetchRunRepository: new MemoryFetchRunRepository(),
-      sourceActivityRepository: new MemorySourceActivityRepository()
+      sourceActivityRepository: new MemorySourceActivityRepository(),
+      protocolStateRepository: new MemoryProtocolStateRepository()
     };
   }
 
@@ -39,6 +46,7 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
   return {
     proposalRepository: new FirestoreProposalRepository(db),
     fetchRunRepository: new FirestoreFetchRunRepository(db),
-    sourceActivityRepository: new FirestoreSourceActivityRepository(db)
+    sourceActivityRepository: new FirestoreSourceActivityRepository(db),
+    protocolStateRepository: new FirestoreProtocolStateRepository(db)
   };
 }

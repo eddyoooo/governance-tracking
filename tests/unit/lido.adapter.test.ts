@@ -127,6 +127,108 @@ describe("LidoAdapter", () => {
     expect(items.map((item) => item.sourceId)).toEqual(["1001", "1002"]);
   });
 
+  it("deduplicates a topic repeated across adjacent Discourse pages", async () => {
+    const repeatedTopic = {
+      sourceId: "1001",
+      title: "Repeated pinned topic",
+      slug: "repeated-pinned-topic",
+      publisherName: "Allowed Publisher",
+      sourceUrl: "https://research.lido.fi/t/repeated-pinned-topic/1001",
+      publishedAt: "2026-05-01T10:00:00.000Z",
+      raw: { id: 1001 }
+    };
+    const client = {
+      fetchRecentTopicPage: jest
+        .fn()
+        .mockResolvedValueOnce({
+          page: 0,
+          topics: [repeatedTopic],
+          hasMore: true
+        })
+        .mockResolvedValueOnce({
+          page: 1,
+          topics: [
+            repeatedTopic,
+            {
+              ...repeatedTopic,
+              sourceId: "1002",
+              title: "Unique second-page topic",
+              slug: "unique-second-page-topic",
+              sourceUrl:
+                "https://research.lido.fi/t/unique-second-page-topic/1002",
+              raw: { id: 1002 }
+            }
+          ],
+          hasMore: false
+        })
+    };
+    const adapter = new LidoAdapter(
+      createAdapterOptions({
+        client: client as never
+      })
+    );
+
+    const items = await adapter.fetchRecent();
+
+    expect(items.map((item) => item.sourceId)).toEqual(["1001", "1002"]);
+    expect(client.fetchRecentTopicPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains Lido page-zero topics when a later pagination request fails", async () => {
+    const logger = createSilentLogger();
+    const client = {
+      fetchRecentTopicPage: jest
+        .fn()
+        .mockResolvedValueOnce({
+          page: 0,
+          topics: [
+            {
+              sourceId: "1003",
+              title: "Newest Lido proposal",
+              slug: "newest-lido-proposal",
+              publisherName: "Allowed Publisher",
+              sourceUrl:
+                "https://research.lido.fi/t/newest-lido-proposal/1003",
+              publishedAt: "2026-05-03T10:00:00.000Z",
+              raw: { id: 1003 }
+            }
+          ],
+          hasMore: true
+        })
+        .mockRejectedValueOnce(new Error("Lido page one rate limited"))
+    };
+    const adapter = new LidoAdapter(
+      createAdapterOptions({ client: client as never, logger })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({ sourceId: "1003" })
+    ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocol: "lido",
+        failedPage: 1,
+        fetchedCount: 1
+      }),
+      "Stopped Lido proposal pagination after a later page failed"
+    );
+  });
+
+  it("fails the Lido run when its first proposal page cannot be read", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => {
+        throw new Error("Lido page zero unavailable");
+      })
+    };
+    const adapter = new LidoAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    await expect(adapter.fetchRecent()).rejects.toThrow(
+      "Lido page zero unavailable"
+    );
+  });
+
   it("stops at the configured max page count and logs an info message", async () => {
     const logger = createSilentLogger();
     const client = {

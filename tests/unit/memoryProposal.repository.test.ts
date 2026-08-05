@@ -111,6 +111,31 @@ describe("MemoryProposalRepository", () => {
     expect(await repository.findById("accidental_new_id")).toBeNull();
   });
 
+  it("rejects an untrusted adapter id on first insert and stores the canonical source id", async () => {
+    const repository = new MemoryProposalRepository();
+    const normalized = normalizeLidoForumItem(createRawGovernanceItem());
+
+    const result = await repository.upsert({
+      ...normalized,
+      id: "non_canonical_adapter_id"
+    });
+
+    expect(result.proposal.id).toBe(normalized.id);
+    await expect(repository.findById(normalized.id)).resolves.toEqual(
+      result.proposal
+    );
+    await expect(
+      repository.findById("non_canonical_adapter_id")
+    ).resolves.toBeNull();
+    await expect(
+      repository.findBySourceIdentity(
+        normalized.protocol,
+        normalized.sourceType,
+        normalized.sourceId
+      )
+    ).resolves.toEqual(result.proposal);
+  });
+
   it("sets notification status for new proposals and preserves it on updates", async () => {
     const repository = new MemoryProposalRepository();
     const normalized = normalizeLidoForumItem(createRawGovernanceItem());
@@ -243,6 +268,73 @@ describe("MemoryProposalRepository", () => {
     await expect(
       repository.findBySourceIdentity("lido", "forum", "missing")
     ).resolves.toBeNull();
+  });
+
+  it("checks protocol existence and counts current notification states exactly", async () => {
+    const repository = new MemoryProposalRepository();
+    const lido = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "1001", protocol: "lido" })
+    );
+    const aave = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "1002", protocol: "aave" })
+    );
+
+    await repository.upsert(lido, { notificationStatusForNew: "pending" });
+    await repository.upsert(aave, { notificationStatusForNew: "skipped" });
+    await repository.updateNotificationStatus(lido.id, "failed", "Telegram failed");
+
+    await expect(repository.existsForProtocol("lido")).resolves.toBe(true);
+    await expect(repository.existsForProtocol("aave")).resolves.toBe(true);
+    await expect(repository.existsForProtocol("uniswap")).resolves.toBe(false);
+    await expect(
+      repository.countByNotificationStatus("failed")
+    ).resolves.toBe(1);
+    await expect(
+      repository.countByNotificationStatus("skipped")
+    ).resolves.toBe(1);
+    await expect(
+      repository.countByNotificationStatus("pending")
+    ).resolves.toBe(0);
+  });
+
+  it("updates recipient delivery state without losing proposal lifecycle data", async () => {
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const inserted = await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+
+    const updated = await repository.updateNotificationState(
+      proposal.id,
+      () => ({
+        notificationStatus: "failed",
+        notificationError: "Telegram failed",
+        notificationDeliveries: {
+          recipientHash: {
+            recipientKey: "recipientHash",
+            recipientMaskedId: "*****1111",
+            status: "failed",
+            attemptCount: 1,
+            createdAt: inserted.proposal.createdAt,
+            updatedAt: inserted.proposal.updatedAt,
+            lastError: "Telegram failed"
+          }
+        }
+      })
+    );
+
+    expect(updated).toMatchObject({
+      id: inserted.proposal.id,
+      firstSeenAt: inserted.proposal.firstSeenAt,
+      createdAt: inserted.proposal.createdAt,
+      notificationStatus: "failed",
+      notificationDeliveries: {
+        recipientHash: {
+          status: "failed",
+          attemptCount: 1
+        }
+      }
+    });
   });
 
   it("finds pending notifications and clears notification errors after success", async () => {

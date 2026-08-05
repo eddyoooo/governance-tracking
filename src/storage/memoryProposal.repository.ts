@@ -1,10 +1,12 @@
 import type { NormalizedGovernanceItem, StoredProposal } from "../protocols/types.js";
 import type {
   ProposalRepository,
+  ProposalNotificationStateUpdater,
   UpsertProposalOptions,
   UpsertResult
 } from "./proposal.repository.js";
 import {
+  applyProposalNotificationState,
   buildStoredProposal,
   hasMeaningfulProposalChange,
   proposalIdFromSourceIdentity
@@ -67,6 +69,12 @@ export class MemoryProposalRepository implements ProposalRepository {
     return this.proposals.get(id) ?? null;
   }
 
+  async existsForProtocol(protocol: string): Promise<boolean> {
+    return [...this.proposals.values()].some(
+      (proposal) => proposal.protocol === protocol
+    );
+  }
+
   async findBySourceIdentity(
     protocol: string,
     sourceType: string,
@@ -88,10 +96,17 @@ export class MemoryProposalRepository implements ProposalRepository {
       .slice(0, limit);
   }
 
-  async updateNotificationStatus(
+  async countByNotificationStatus(
+    status: StoredProposal["notificationStatus"]
+  ): Promise<number> {
+    return [...this.proposals.values()].filter(
+      (proposal) => proposal.notificationStatus === status
+    ).length;
+  }
+
+  async updateNotificationState(
     id: string,
-    status: StoredProposal["notificationStatus"],
-    error?: string
+    updater: ProposalNotificationStateUpdater
   ): Promise<StoredProposal | null> {
     const existing = await this.findById(id);
 
@@ -99,19 +114,21 @@ export class MemoryProposalRepository implements ProposalRepository {
       return null;
     }
 
-    const updated: StoredProposal = {
-      ...existing,
-      notificationStatus: status,
-      notificationError: error,
-      updatedAt: new Date().toISOString()
-    };
-
-    if (!error) {
-      delete updated.notificationError;
-    }
-
+    const updated = applyProposalNotificationState(existing, updater(existing));
     this.proposals.set(updated.id, updated);
 
     return updated;
+  }
+
+  async updateNotificationStatus(
+    id: string,
+    status: StoredProposal["notificationStatus"],
+    error?: string
+  ): Promise<StoredProposal | null> {
+    return this.updateNotificationState(id, (proposal) => ({
+      notificationStatus: status,
+      notificationError: error,
+      notificationDeliveries: proposal.notificationDeliveries
+    }));
   }
 }

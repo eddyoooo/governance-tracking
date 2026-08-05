@@ -2,7 +2,8 @@ import { describe, expect, it } from "@jest/globals";
 import { loadEnv } from "../../src/config/env.js";
 import { telegramTestNotificationFixtures } from "../../src/demoFixtures/telegramNotification.fixture.js";
 import {
-  notifyPendingProposals,
+  createTelegramRecipientKey,
+  ProposalNotificationDispatcher,
   TelegramNotificationService
 } from "../../src/notifications/index.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
@@ -47,10 +48,22 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
         allowedUserIds: [env.telegramAdminUserId],
         logger: createSilentLogger()
       });
+      const dispatcher = new ProposalNotificationDispatcher(
+        repository,
+        notificationService,
+        createSilentLogger()
+      );
       const uniquePublisherCount = new Set(
         telegramTestNotificationFixtures.map((fixture) => fixture.publisherName)
       ).size;
 
+      expect(env.telegramAdminUserId).toBe("1549323073");
+      expect(notificationService.getRecipients()).toEqual([
+        {
+          key: createTelegramRecipientKey("1549323073"),
+          maskedId: "******3073"
+        }
+      ]);
       expect(uniquePublisherCount).toBeGreaterThan(1);
 
       const proposals = telegramTestNotificationFixtures.map((fixture) => {
@@ -83,25 +96,23 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
         return normalizeLidoForumItem(rawItem);
       });
 
-      for (const proposal of proposals) {
-        await repository.upsert(proposal, {
+      for (const [index, proposal] of proposals.entries()) {
+        const stored = await repository.upsert(proposal, {
           notificationStatusForNew: "pending"
         });
+
+        await expect(
+          dispatcher.notifyNewProposal(stored.proposal)
+        ).resolves.toEqual({
+          status: "sent"
+        });
+
+        if (index < proposals.length - 1) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, env.telegramTestSendDelayMs)
+          );
+        }
       }
-
-      const result = await notifyPendingProposals(
-        repository,
-        notificationService,
-        createSilentLogger()
-      );
-
-      expect(result).toEqual({
-        pendingCount: proposals.length,
-        sentCount: proposals.length,
-        failedCount: 0,
-        skippedCount: 0,
-        errors: []
-      });
 
       for (const proposal of proposals) {
         await expect(repository.findById(proposal.id)).resolves.toMatchObject({
@@ -109,6 +120,8 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
         });
       }
     },
-    30_000
+    telegramTestNotificationFixtures.length *
+        telegramE2EEnv.telegramTestSendDelayMs +
+      30_000
   );
 });

@@ -6,8 +6,14 @@ export interface NotificationMessage {
   sourceUrl: string;
 }
 
+export interface NotificationRecipient {
+  key: string;
+  maskedId: string;
+}
+
 export interface NotificationService {
   readonly name: string;
   readonly enabled: boolean;
-  send(message: NotificationMessage): Promise<void>;
+  getRecipients(): readonly NotificationRecipient[];
+  send(message: NotificationMessage, recipientKeys?: readonly string[]): Promise<void>;
 }

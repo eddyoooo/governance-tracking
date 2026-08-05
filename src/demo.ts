@@ -8,7 +8,6 @@ import {
   ScriptedLidoDemoAdapter
 } from "./demoFixtures/scriptedLidoDemo.adapter.js";
 import type { FetchProtocolResult } from "./jobs/fetchProtocolGovernance.job.js";
-import { notifyPendingProposals } from "./notifications/proposalNotifications.js";
 import { AaveAdapter } from "./protocols/aave/aave.adapter.js";
 import { createAaveDemoClient } from "./protocols/aave/aave.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
@@ -84,6 +83,7 @@ function summarizeFetch(result: FetchProtocolResult) {
     fetchedCount: result.fetchedCount,
     allowlistedCount: result.allowlistedCount,
     storedNewCount: result.storedNewCount,
+    baselineSeededCount: result.baselineSeededCount,
     updatedExistingCount: result.updatedExistingCount,
     unchangedExistingCount: result.unchangedExistingCount,
     skippedCount: result.skippedCount,
@@ -105,6 +105,14 @@ function summarizeProposal(proposal: StoredProposal | null) {
     publisherName: proposal.publisherName,
     notificationStatus: proposal.notificationStatus,
     notificationError: proposal.notificationError,
+    notificationRecipients: Object.values(
+      proposal.notificationDeliveries ?? {}
+    ).map((delivery) => ({
+      recipient: delivery.recipientMaskedId,
+      status: delivery.status,
+      attempts: delivery.attemptCount,
+      nextRetryAt: delivery.nextRetryAt
+    })),
     firstSeenAt: proposal.firstSeenAt,
     lastSeenAt: proposal.lastSeenAt,
     updatedAt: proposal.updatedAt,
@@ -120,6 +128,7 @@ function summarizeFetchRuns(fetchRuns: FetchRun[]) {
     fetchedCount: run.fetchedCount,
     allowlistedCount: run.allowlistedCount,
     storedNewCount: run.storedNewCount,
+    baselineSeededCount: run.baselineSeededCount ?? 0,
     updatedExistingCount: run.updatedExistingCount,
     unchangedExistingCount: run.unchangedExistingCount,
     skippedCount: run.skippedCount,
@@ -215,10 +224,23 @@ async function main(): Promise<void> {
     env,
     protocolRegistry: createDemoRegistry(lidoAdapter, aaveAdapter, uniswapAdapter)
   });
+  await Promise.all(
+    context.protocolRegistry
+      .list()
+      .map((adapter) =>
+        context.protocolStateRepository.initializeBaseline(
+          adapter.protocol,
+          true
+        )
+      )
+  );
 
   console.log("Governance monitor demo");
   console.log(
     "Using memory storage plus locally saved Lido, Aave, and Uniswap forum samples."
+  );
+  console.log(
+    "The scripted records are treated as discoveries after an established baseline."
   );
   console.log(
     env.enableTelegramNotifications
@@ -354,17 +376,6 @@ async function main(): Promise<void> {
       count: storedProposals.length,
       proposals: storedProposals.map(summarizeProposal)
     }),
-    stepDelayMs
-  );
-
-  await runStep(
-    "Notify pending retry",
-    async () =>
-      notifyPendingProposals(
-        context.proposalRepository,
-        context.notificationService,
-        context.logger
-      ),
     stepDelayMs
   );
 

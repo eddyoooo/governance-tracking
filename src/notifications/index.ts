@@ -30,16 +30,19 @@ export function createNotificationService(
 
 export type {
   NotificationMessage,
+  NotificationRecipient,
   NotificationService
 } from "./notification.service.js";
 export { NoopNotificationService } from "./noopNotification.service.js";
 export {
+  createTelegramRecipientKey,
   formatTelegramGovernanceMessage,
   TelegramNotificationDeliveryError,
   TelegramNotificationService
 } from "./telegramNotification.service.js";
 export {
   buildProposalNotificationMessage,
-  notifyPendingProposals,
-  notifyProposal
+  notificationRetryAt,
+  NOTIFICATION_RECOVERY_BATCH_SIZE,
+  ProposalNotificationDispatcher
 } from "./proposalNotifications.js";

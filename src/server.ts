@@ -13,6 +13,7 @@ import {
 } from "./jobs/fetchProtocolGovernance.job.js";
 import {
   createNotificationService,
+  ProposalNotificationDispatcher,
   type NotificationService
 } from "./notifications/index.js";
 import { createProtocolRegistry, type ProtocolRegistry } from "./protocols/registry.js";
@@ -26,6 +27,7 @@ import { createHealthRouter } from "./api/routes/health.routes.js";
 import { requireApiAuth } from "./api/middleware/auth.middleware.js";
 import type { FetchRunRepository } from "./storage/fetchRun.repository.js";
 import type { ProposalRepository } from "./storage/proposal.repository.js";
+import type { ProtocolStateRepository } from "./storage/protocolState.repository.js";
 import type { SourceActivityRepository } from "./storage/sourceActivity.repository.js";
 
 export interface AppContext {
@@ -34,8 +36,10 @@ export interface AppContext {
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
   sourceActivityRepository: SourceActivityRepository;
+  protocolStateRepository: ProtocolStateRepository;
   protocolRegistry: ProtocolRegistry;
   notificationService: NotificationService;
+  notificationDispatcher: ProposalNotificationDispatcher;
   adminStatusReporter: AdminStatusReporter;
   fetchJob: FetchProtocolGovernanceJob;
 }
@@ -46,6 +50,7 @@ export interface CreateAppOptions {
   repositories?: Repositories;
   protocolRegistry?: ProtocolRegistry;
   notificationService?: NotificationService;
+  notificationDispatcher?: ProposalNotificationDispatcher;
   adminStatusReporter?: AdminStatusReporter;
   fetchJob?: FetchProtocolGovernanceJob;
 }
@@ -73,6 +78,14 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
   const notificationService =
     options.notificationService ?? createNotificationService(runtimeEnv, logger);
+  const protocolStateRepository = repositories.protocolStateRepository;
+  const notificationDispatcher =
+    options.notificationDispatcher ??
+    new ProposalNotificationDispatcher(
+      repositories.proposalRepository,
+      notificationService,
+      logger
+    );
   const adminStatusReporter =
     options.adminStatusReporter ??
     createAdminStatusReporter({
@@ -93,6 +106,8 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       logger,
       {
         notificationService,
+        notificationDispatcher,
+        protocolStateRepository,
         sourceActivityConfig:
           FetchProtocolGovernanceJob.sourceActivityConfigFromEnv(runtimeEnv)
       }
@@ -103,8 +118,10 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     proposalRepository: repositories.proposalRepository,
     fetchRunRepository: repositories.fetchRunRepository,
     sourceActivityRepository: repositories.sourceActivityRepository,
+    protocolStateRepository,
     protocolRegistry,
     notificationService,
+    notificationDispatcher,
     adminStatusReporter,
     fetchJob
   };
@@ -127,7 +144,6 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       routes: [
         "GET /health",
         "POST /api/admin/fetch/:protocol",
-        "POST /api/admin/notify-pending",
         "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
         "GET /api/admin/source-activity"
@@ -163,7 +179,12 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       }
 
       logger.error({ error }, "Request failed");
-      response.status(500).json({ error: message });
+      response.status(500).json({
+        error:
+          runtimeEnv.nodeEnv === "production"
+            ? "Internal server error."
+            : message
+      });
     }
   );
 

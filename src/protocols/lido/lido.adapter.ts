@@ -5,6 +5,7 @@ import type {
   ProtocolAdapter,
   RawGovernanceItem
 } from "../types.js";
+import { collectDiscourseTopicPages } from "../discourse/discoursePagination.js";
 import { LidoForumClient } from "./lidoForum.client.js";
 import { normalizeLidoForumItem } from "./lido.normalizer.js";
 
@@ -54,35 +55,23 @@ export class LidoAdapter implements ProtocolAdapter {
     }
 
     const fetchedAt = new Date().toISOString();
-    const items: RawGovernanceItem[] = [];
+    const itemsBySourceId = new Map<string, RawGovernanceItem>();
 
-    for (let page = 0; page < this.maxPages; page += 1) {
-      const topicPage = await this.client.fetchRecentTopicPage({ page });
-      const pageItems = topicPage.topics.map((topic) => ({
-        protocol: this.protocol,
-        sourceType: this.source.type,
-        sourceId: topic.sourceId,
-        title: topic.title,
-        publisherName: topic.publisherName,
-        sourceUrl: topic.sourceUrl,
-        publishedAt: topic.publishedAt,
-        fetchedAt,
-        raw: topic.raw
-      }));
+    await collectDiscourseTopicPages({
+      protocol: this.protocol,
+      sourceType: this.source.type,
+      fetchedAt,
+      itemsBySourceId,
+      maxPages: this.maxPages,
+      fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
+      logger: this.logger,
+      paginationLimitMessage:
+        "Reached Lido proposal pagination limit before exhausting pages",
+      laterPageFailureMessage:
+        "Stopped Lido proposal pagination after a later page failed"
+    });
 
-      items.push(...pageItems);
-
-      if (pageItems.length === 0 || !topicPage.hasMore) {
-        return items;
-      }
-    }
-
-    this.logger?.info(
-      { protocol: this.protocol, maxPages: this.maxPages, fetchedCount: items.length },
-      "Reached Lido proposal pagination limit before exhausting pages"
-    );
-
-    return items;
+    return [...itemsBySourceId.values()];
   }
 
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem {

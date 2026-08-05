@@ -3,6 +3,7 @@ import {
   buildAdminStatusReport,
   createAdminStatusReporter,
   DailyAdminStatusReporter,
+  formatAdminStatusMessage,
   type AdminStatusNotifier
 } from "../../src/adminStatus/adminStatus.service.js";
 import {
@@ -45,10 +46,15 @@ function createNotificationLookupFailureRepository(
     upsertMany: jest.fn(),
     findAll: jest.fn(),
     findById: jest.fn(),
+    existsForProtocol: jest.fn(),
     findBySourceIdentity: jest.fn(),
     findByNotificationStatus: jest.fn(async () => {
       throw new Error(message);
     }),
+    countByNotificationStatus: jest.fn(async () => {
+      throw new Error(message);
+    }),
+    updateNotificationState: jest.fn(),
     updateNotificationStatus: jest.fn()
   } as unknown as ProposalRepository;
 }
@@ -141,6 +147,7 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Scheduler: enabled");
     expect(result.message).toContain("Enabled protocols: lido, aave, uniswap");
     expect(result.message).toContain("- lido: success");
+    expect(result.message).toContain("silently seeded 0");
     expect(result.message).toContain("Source activity:");
     expect(result.message).toContain("- lido: healthy");
     expect(result.message).toContain("Problems:\n- None detected.");
@@ -170,7 +177,7 @@ describe("admin status reports", () => {
     await proposalRepository.updateNotificationStatus(
       failedProposal.id,
       "failed",
-      "Telegram unavailable"
+      'Telegram notification failed for 1 of 2 allowed recipients: recipient 2 failed with 400: {"ok":false,"description":"Bad Request: chat not found"}'
     );
     await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
     await sourceActivityRepository.upsert(
@@ -182,7 +189,10 @@ describe("admin status reports", () => {
     );
 
     const result = await buildAdminStatusReport({
-      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      env: testEnv({
+        ENABLE_SCHEDULER: "true",
+        TELEGRAM_ALLOWED_USER_IDS: JSON.stringify(["111111111", "222222222"])
+      }),
       protocolRegistry: createRegistry() as never,
       fetchRunRepository,
       proposalRepository,
@@ -194,16 +204,200 @@ describe("admin status reports", () => {
       expect.arrayContaining([
         "aave latest fetch is failed: Aave forum unavailable",
         "No fetch run has been recorded for uniswap.",
-        "aave fetch failed at 2026-07-01T09:00:00.000Z: Aave forum unavailable",
-        "aave had 2 notification failure(s) in fetch run fetchRun_aave_failed.",
-        "1 proposal notification(s) are marked failed.",
+        "1 proposal notification(s) have unresolved recipient deliveries.",
         "aave source activity is critical: Newest raw source item is 35 day(s) old.",
         "No source activity record has been recorded for uniswap."
       ])
     );
     expect(result.message).toContain("Status: ATTENTION REQUIRED");
     expect(result.message).toContain("Failed notifications: 1");
+    expect(result.message).toContain("Failed notification details:");
+    expect(result.message).toContain("lido/forum/failed-notification");
+    expect(result.message).toContain("recipient 2 (*****2222)");
+    expect(result.message).toContain("Bad Request: chat not found");
     expect(result.message).toContain("Aave forum unavailable");
+    expect(result.message).not.toContain("222222222");
+  });
+
+  it("does not keep reporting historical fetch notification failures after current state recovers", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(
+      createRun({
+        id: "fetchRun_aave_old_failure",
+        protocol: "aave",
+        startedAt: "2026-06-30T08:59:00.000Z",
+        finishedAt: "2026-06-30T09:00:00.000Z",
+        status: "failed",
+        notificationFailedCount: 2,
+        errors: ["Historical Telegram failure"]
+      })
+    );
+    await fetchRunRepository.upsert(
+      createRun({
+        id: "fetchRun_aave_current",
+        protocol: "aave",
+        notificationFailedCount: 0,
+        errors: []
+      })
+    );
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
+    await sourceActivityRepository.upsert(
+      createSourceActivity({ protocol: "uniswap" })
+    );
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository,
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.problems).toEqual([]);
+    expect(result.message).toContain("Failed notifications: 0");
+    expect(result.message).not.toContain("Historical Telegram failure");
+    expect(result.message).not.toContain("had 2 notification failure");
+  });
+
+  it("recovers a protocol's latest run when many manual runs push it outside the shared audit window", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+    const findLatestByProtocol = jest.spyOn(
+      fetchRunRepository,
+      "findLatestByProtocol"
+    );
+
+    await fetchRunRepository.upsert(
+      createRun({
+        id: "aave-outside-window",
+        protocol: "aave",
+        startedAt: "2026-07-01T08:00:00.000Z"
+      })
+    );
+    await fetchRunRepository.upsert(
+      createRun({
+        id: "uniswap-outside-window",
+        protocol: "uniswap",
+        startedAt: "2026-07-01T08:00:00.000Z"
+      })
+    );
+
+    for (let index = 0; index < 60; index += 1) {
+      await fetchRunRepository.upsert(
+        createRun({
+          id: `lido-manual-${index}`,
+          protocol: "lido",
+          startedAt: `2026-07-02T${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00.000Z`
+        })
+      );
+    }
+
+    for (const protocol of ["lido", "aave", "uniswap"]) {
+      await sourceActivityRepository.upsert(createSourceActivity({ protocol }));
+    }
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository,
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.message).toContain("- aave: success");
+    expect(result.message).toContain("- uniswap: success");
+    expect(findLatestByProtocol).toHaveBeenCalledWith("aave");
+    expect(findLatestByProtocol).toHaveBeenCalledWith("uniswap");
+  });
+
+  it("describes unresolved recipients with masked ids, attempts, and retry timing", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        sourceId: "recipient-detail",
+        title: "Recipient-specific recovery"
+      })
+    );
+
+    for (const protocol of ["lido", "aave", "uniswap"]) {
+      await fetchRunRepository.upsert(createRun({ protocol }));
+      await sourceActivityRepository.upsert(createSourceActivity({ protocol }));
+    }
+    await proposalRepository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    await proposalRepository.updateNotificationState(proposal.id, () => ({
+      notificationStatus: "failed",
+      notificationError: "One recipient remains unresolved.",
+      notificationDeliveries: {
+        opaqueRecipientKey: {
+          recipientKey: "opaqueRecipientKey",
+          recipientMaskedId: "******3073",
+          status: "failed",
+          attemptCount: 3,
+          createdAt: "2026-07-01T08:00:00.000Z",
+          updatedAt: "2026-07-01T08:45:00.000Z",
+          lastAttemptAt: "2026-07-01T08:45:00.000Z",
+          nextRetryAt: "2026-07-01T14:45:00.000Z",
+          lastError: "Telegram returned 403: bot was blocked"
+        }
+      }
+    }));
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository,
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.message).toContain("recipient ******3073");
+    expect(result.message).toContain("attempts 3");
+    expect(result.message).toContain(
+      "next retry 2026-07-01T14:45:00.000Z"
+    );
+    expect(result.message).toContain("Telegram returned 403: bot was blocked");
+    expect(result.message).not.toMatch(/\b1549323073\b/);
+  });
+
+  it("keeps Telegram admin reports below the safe message limit", () => {
+    const message = formatAdminStatusMessage({
+      env: testEnv(),
+      enabledProtocols: ["lido", "aave", "uniswap"],
+      latestByProtocol: new Map(),
+      sourceActivityByProtocol: new Map(),
+      pendingNotificationCount: 100,
+      failedNotificationCount: 100,
+      failedNotifications: [],
+      healthy: false,
+      problems: Array.from(
+        { length: 100 },
+        (_, index) =>
+          `Problem ${index}: ${"detailed operational failure ".repeat(8)}`
+      ),
+      checkedAt: "2026-07-24T09:00:00.000Z"
+    });
+
+    expect(message.length).toBeLessThanOrEqual(3900);
+    expect(message).toContain("<b>GOVERNANCE MONITOR DAILY STATUS</b>");
+    expect(
+      message.endsWith(
+        "Report truncated. Inspect Firestore and application logs for full details."
+      )
+    ).toBe(true);
   });
 
   it("reports unhealthy when no protocol adapters are enabled", async () => {
@@ -224,6 +418,37 @@ describe("admin status reports", () => {
     expect(result.problems).toContain("No protocol adapters are enabled.");
     expect(result.message).toContain("Status: ATTENTION REQUIRED");
     expect(result.message).toContain("Enabled protocols: none");
+  });
+
+  it("reports an enabled protocol with an empty publisher allowlist", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: {
+        list: jest.fn(() => [
+          createFakeProtocolAdapter({
+            protocol: "lido",
+            publisherAllowlist: []
+          })
+        ])
+      } as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toContain(
+      "lido is enabled but its publisher allowlist is empty."
+    );
+    expect(result.message).toContain(
+      "lido is enabled but its publisher allowlist is empty."
+    );
   });
 
   it("does not fail the daily report on missing source-activity records when alerts are disabled", async () => {
@@ -272,14 +497,77 @@ describe("admin status reports", () => {
     expect(result.healthy).toBe(false);
     expect(result.problems).toEqual(
       expect.arrayContaining([
-        "Unable to read pending notification queue: Firestore index missing",
-        "Unable to read failed notification queue: Firestore index missing"
+        "Unable to read pending notification count: Firestore index missing",
+        "Unable to read failed notification count: Firestore index missing",
+        "Unable to read failed notification details: Firestore index missing"
       ])
     );
     expect(result.message).toContain("Status: ATTENTION REQUIRED");
     expect(result.message).toContain("Pending notifications: unknown");
     expect(result.message).toContain("Failed notifications: unknown");
     expect(result.message).toContain("- lido: success");
+  });
+
+  it("marks pending notification work as attention required", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
+    await proposalRepository.upsert(
+      normalizeLidoForumItem(createRawGovernanceItem()),
+      { notificationStatusForNew: "pending" }
+    );
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({
+        ENABLE_SCHEDULER: "true",
+        ENABLE_SOURCE_ACTIVITY_ALERTS: "true"
+      }),
+      protocolRegistry: {
+        list: jest.fn(() => [createFakeProtocolAdapter({ protocol: "lido" })])
+      } as never,
+      fetchRunRepository,
+      proposalRepository,
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toContain(
+      "1 proposal notification(s) are pending automatic delivery."
+    );
+    expect(result.message).toContain("Pending notifications: 1");
+  });
+
+  it("reports a failed per-protocol latest-run fallback without hiding it", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    jest.spyOn(fetchRunRepository, "findAll").mockResolvedValue([]);
+    jest
+      .spyOn(fetchRunRepository, "findLatestByProtocol")
+      .mockRejectedValue(new Error("Firestore read unavailable"));
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({
+        ENABLE_SCHEDULER: "true",
+        ENABLE_SOURCE_ACTIVITY_ALERTS: "false"
+      }),
+      protocolRegistry: {
+        list: jest.fn(() => [createFakeProtocolAdapter({ protocol: "lido" })])
+      } as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository()
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.problems).toEqual(
+      expect.arrayContaining([
+        "Unable to read latest lido fetch run: Firestore read unavailable",
+        "No fetch run has been recorded for lido."
+      ])
+    );
+    expect(result.message).toContain("Status: ATTENTION REQUIRED");
   });
 
   it("sends a fallback attention report if status report construction throws unexpectedly", async () => {
@@ -415,6 +703,40 @@ describe("admin status reports", () => {
     expect(reporter.enabled).toBe(false);
   });
 
+  it("returns a healthy empty result from the noop reporter", async () => {
+    const reporter = createAdminStatusReporter({
+      env: testEnv({ ENABLE_ADMIN_STATUS_REPORTS: "false" }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository: new MemoryFetchRunRepository(),
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository(),
+      logger: createSilentLogger()
+    });
+
+    await expect(reporter.sendDailyStatusReport()).resolves.toEqual({
+      healthy: true,
+      message: "",
+      problems: []
+    });
+  });
+
+  it("creates an enabled admin reporter when its dedicated credentials exist", () => {
+    const reporter = createAdminStatusReporter({
+      env: testEnv({
+        ENABLE_ADMIN_STATUS_REPORTS: "true",
+        TELEGRAM_BOT_TOKEN: "admin-token",
+        TELEGRAM_ADMIN_USER_ID: "1549323073"
+      }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository: new MemoryFetchRunRepository(),
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository(),
+      logger: createSilentLogger()
+    });
+
+    expect(reporter.enabled).toBe(true);
+  });
+
   it("fails clearly when admin reports are enabled without Telegram credentials", () => {
     expect(() =>
       createAdminStatusReporter({
@@ -468,6 +790,69 @@ describe("admin status reports", () => {
       AbortSignal
     );
     expect(String(body.text)).toContain("GOVERNANCE MONITOR DAILY STATUS");
+  });
+
+  it("treats Telegram JSON ok=false as an admin delivery failure even with HTTP 200", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ ok: false, description: "bot was blocked" }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        )
+    );
+    const notifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl,
+      logger: createSilentLogger()
+    });
+
+    await expect(notifier.send("status")).rejects.toMatchObject({
+      name: "TelegramAdminStatusDeliveryError",
+      status: 200,
+      responseBody: JSON.stringify({
+        ok: false,
+        description: "bot was blocked"
+      })
+    });
+    const body = JSON.parse(
+      (fetchImpl.mock.calls[0][1] as RequestInit).body as string
+    ) as { chat_id: string };
+    expect(body.chat_id).toBe("1549323073");
+  });
+
+  it("accepts valid Telegram admin JSON success and rejects malformed JSON success bodies", async () => {
+    const successNotifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl: jest.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          })
+      )
+    });
+    const malformedNotifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl: jest.fn<typeof fetch>(
+        async () =>
+          new Response("<html>proxy error</html>", {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          })
+      )
+    });
+
+    await expect(successNotifier.send("status")).resolves.toBeUndefined();
+    await expect(malformedNotifier.send("status")).rejects.toMatchObject({
+      status: 200,
+      responseBody: "<html>proxy error</html>"
+    });
   });
 
   it("times out stuck Telegram admin status requests", async () => {
@@ -547,5 +932,28 @@ describe("admin status reports", () => {
     expect(serializedLogs).not.toContain("admin-token");
     expect(serializedLogs).not.toContain("1549323073");
     expect(serializedLogs).toContain("[redacted]");
+  });
+
+  it("bounds oversized Telegram admin failure responses before logging or throwing", async () => {
+    const logger = createSilentLogger();
+    const notifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl: jest.fn<typeof fetch>(
+        async () => new Response("x".repeat(5_000), { status: 500 })
+      ),
+      logger
+    });
+
+    const error = await notifier
+      .send("status")
+      .catch((caught) => caught as TelegramAdminStatusDeliveryError);
+
+    expect(error).toBeInstanceOf(TelegramAdminStatusDeliveryError);
+    expect(error.responseBody?.length).toBeLessThanOrEqual(1_000);
+    expect(error.responseBody?.endsWith("...")).toBe(true);
+    expect(JSON.stringify((logger.error as jest.Mock).mock.calls).length).toBeLessThan(
+      1_500
+    );
   });
 });

@@ -110,7 +110,30 @@ describe("shared Discourse forum helpers", () => {
     ]);
   });
 
-  it("maps topics using original-poster metadata and preserves raw future fields", () => {
+  it("rejects cyclic external category hierarchies instead of looping forever", () => {
+    const payload = discourseSiteResponseSchema.parse({
+      categories: [
+        {
+          id: 1,
+          name: "One",
+          slug: "one",
+          parent_category_id: 2
+        },
+        {
+          id: 2,
+          name: "Two",
+          slug: "two",
+          parent_category_id: 1
+        }
+      ]
+    });
+
+    expect(() => mapDiscourseCategories(payload)).toThrow(
+      "Invalid Discourse category hierarchy: cycle detected at category 1."
+    );
+  });
+
+  it("maps topics using original-poster metadata and never mistakes the last commenter for the publisher", () => {
     const payload = discourseRecentTopicsResponseSchema.parse(recentTopicsPayload());
 
     const topics = mapDiscourseRecentTopics(payload, "https://forum.example/");
@@ -136,7 +159,7 @@ describe("shared Discourse forum helpers", () => {
     });
     expect(topics[1]).toMatchObject({
       sourceId: "124",
-      publisherName: "last-poster"
+      publisherName: "unknown"
     });
   });
 
@@ -201,7 +224,8 @@ describe("shared Discourse forum helpers", () => {
       pathname: "/latest.json?page=0",
       forumLabel: "Example forum",
       fetchImpl,
-      timeoutMs: 25
+      timeoutMs: 25,
+      maxAttempts: 1
     });
 
     await Promise.resolve();
@@ -214,17 +238,255 @@ describe("shared Discourse forum helpers", () => {
     jest.useRealTimers();
   });
 
+  it("retries a timed-out request and returns the next successful response", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        async (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal as AbortSignal | undefined;
+            signal?.addEventListener("abort", () => {
+              reject(new Error("request aborted"));
+            });
+          })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ recovered: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const sleep = jest.fn(async () => undefined);
+
+    const request = fetchDiscourseJson({
+      apiBaseUrl: "https://forum.example",
+      pathname: "/latest.json?page=0",
+      forumLabel: "Example forum",
+      fetchImpl,
+      timeoutMs: 25,
+      maxAttempts: 2,
+      retryBaseDelayMs: 10,
+      sleep
+    });
+
+    await jest.advanceTimersByTimeAsync(25);
+
+    await expect(request).resolves.toEqual({ recovered: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(10);
+    jest.useRealTimers();
+  });
+
   it("throws protocol-labelled errors for non-success responses", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () => new Response("not found", { status: 404 })
+    );
+
     await expect(
       fetchDiscourseJson({
         apiBaseUrl: "https://forum.example",
         pathname: "/latest.json?page=0",
         forumLabel: "Example forum",
-        fetchImpl: (async () => new Response("not found", { status: 404 })) as typeof fetch
+        fetchImpl
       })
     ).rejects.toThrow(
       "Example forum request failed with 404: https://forum.example/latest.json?page=0"
     );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries HTTP 429 responses using Retry-After before returning valid JSON", async () => {
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "retry-after": "2" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json?page=0",
+        forumLabel: "Example forum",
+        fetchImpl,
+        sleep
+      })
+    ).resolves.toEqual({ ok: true });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(2_000);
+  });
+
+  it("honors an HTTP-date Retry-After value without exceeding the delay cap", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-26T10:00:00.000Z"));
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response("temporarily unavailable", {
+          status: 503,
+          headers: {
+            "retry-after": "Sun, 26 Jul 2026 10:01:00 GMT"
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        maxRetryDelayMs: 30_000,
+        sleep
+      })
+    ).resolves.toEqual({ ok: true });
+
+    expect(sleep).toHaveBeenCalledWith(30_000);
+    jest.useRealTimers();
+  });
+
+  it("uses bounded exponential delays for transient server failures", async () => {
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ recovered: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        retryBaseDelayMs: 750,
+        maxRetryDelayMs: 1_000,
+        sleep
+      })
+    ).resolves.toEqual({ recovered: true });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[750], [1_000]]);
+  });
+
+  it("fails after the bounded number of transient-response attempts", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () => new Response("still limited", { status: 429 })
+    );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        maxAttempts: 3,
+        retryBaseDelayMs: 10,
+        sleep
+      })
+    ).rejects.toThrow(
+      "Example forum request failed with 429: https://forum.example/latest.json"
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("clamps non-positive max attempts to one request", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () => new Response("unavailable", { status: 503 })
+    );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        maxAttempts: 0,
+        sleep
+      })
+    ).rejects.toThrow("Example forum request failed with 503");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("recovers from a transient network failure", async () => {
+    const networkError = new TypeError("socket disconnected");
+    const fetchImpl = jest
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(networkError)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ recovered: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        retryBaseDelayMs: 10,
+        sleep
+      })
+    ).resolves.toEqual({ recovered: true });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(10);
+  });
+
+  it("propagates a persistent network failure after bounded retries", async () => {
+    const networkError = new TypeError("socket disconnected");
+    const fetchImpl = jest.fn<typeof fetch>(async () => {
+      throw networkError;
+    });
+    const sleep = jest.fn(async () => undefined);
+
+    await expect(
+      fetchDiscourseJson({
+        apiBaseUrl: "https://forum.example",
+        pathname: "/latest.json",
+        forumLabel: "Example forum",
+        fetchImpl,
+        maxAttempts: 3,
+        retryBaseDelayMs: 10,
+        sleep
+      })
+    ).rejects.toBe(networkError);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
   });
 
   it("throws protocol-labelled errors and logs parse failures for invalid JSON", async () => {
@@ -232,17 +494,20 @@ describe("shared Discourse forum helpers", () => {
       debug: jest.fn(),
       error: jest.fn()
     };
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () =>
+        new Response("<html>down</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        })
+    );
 
     await expect(
       fetchDiscourseJson({
         apiBaseUrl: "https://forum.example",
         pathname: "/latest.json?page=0",
         forumLabel: "Example forum",
-        fetchImpl: (async () =>
-          new Response("<html>down</html>", {
-            status: 200,
-            headers: { "content-type": "text/html" }
-          })) as typeof fetch,
+        fetchImpl,
         logger
       })
     ).rejects.toThrow(
@@ -257,5 +522,6 @@ describe("shared Discourse forum helpers", () => {
       }),
       "Failed to parse Example forum JSON response"
     );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

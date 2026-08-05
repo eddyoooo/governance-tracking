@@ -56,6 +56,7 @@ describe("env parsing", () => {
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
+    expect(env.notificationRetryCron).toBe("*/15 * * * *");
     expect(env.enableAdminStatusReports).toBe(false);
     expect(env.telegramAdminUserId).toBe("1549323073");
     expect(env.adminStatusCron).toBe("0 9 * * *");
@@ -154,6 +155,23 @@ describe("env parsing", () => {
     expect(env.apiAuthEnabled).toBe(true);
   });
 
+  it("accepts already-parsed values from programmatic configuration sources", () => {
+    const env = loadEnv({
+      ENABLE_SCHEDULER: true,
+      ENABLE_TELEGRAM_NOTIFICATIONS: false,
+      LIDO_ALLOWED_PUBLISHERS: ["Lido Ops", "  ", "Lido Finance"],
+      TELEGRAM_ALLOWED_USER_IDS: [1549323073, "7615564785", "1549323073"]
+    } as unknown as NodeJS.ProcessEnv);
+
+    expect(env.enableScheduler).toBe(true);
+    expect(env.enableTelegramNotifications).toBe(false);
+    expect(env.lidoAllowedPublishers).toEqual(["Lido Ops", "Lido Finance"]);
+    expect(env.telegramAllowedUserIds).toEqual([
+      "1549323073",
+      "7615564785"
+    ]);
+  });
+
   it("parses and validates source activity watchdog thresholds", () => {
     const env = loadEnv({
       ENABLE_SOURCE_ACTIVITY_ALERTS: "true",
@@ -188,11 +206,13 @@ describe("env parsing", () => {
       TELEGRAM_ALLOWED_USER_IDS: JSON.stringify([123456789, "987654321", "123456789"])
     } as NodeJS.ProcessEnv);
     const commaEnv = loadEnv({
-      TELEGRAM_ALLOWED_USER_IDS: " 123456789,987654321,123456789 "
+      TELEGRAM_ALLOWED_USER_IDS: " 123456789,987654321,123456789 ",
+      NOTIFICATION_RETRY_CRON: "*/30 * * * *"
     } as NodeJS.ProcessEnv);
 
     expect(jsonEnv.telegramAllowedUserIds).toEqual(["123456789", "987654321"]);
     expect(commaEnv.telegramAllowedUserIds).toEqual(["123456789", "987654321"]);
+    expect(commaEnv.notificationRetryCron).toBe("*/30 * * * *");
   });
 
   it("parses and validates Telegram test-send delays", () => {

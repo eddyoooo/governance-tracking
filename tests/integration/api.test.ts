@@ -8,11 +8,11 @@ import type {
   NotificationMessage,
   NotificationService
 } from "../../src/notifications/index.js";
-import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createApp } from "../../src/server.js";
 import { MemoryFetchRunRepository } from "../../src/storage/fetchRun.repository.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
+import { MemoryProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import { MemorySourceActivityRepository } from "../../src/storage/sourceActivity.repository.js";
 import { createLogger } from "../../src/utils/logger.js";
 import {
@@ -27,7 +27,14 @@ class RecordingNotificationService implements NotificationService {
   readonly enabled = true;
   readonly messages: NotificationMessage[] = [];
 
-  async send(message: NotificationMessage): Promise<void> {
+  getRecipients() {
+    return [{ key: "recipient-1", maskedId: "*****1111" }];
+  }
+
+  async send(
+    message: NotificationMessage,
+    _recipientKeys?: readonly string[]
+  ): Promise<void> {
     this.messages.push(message);
   }
 }
@@ -57,7 +64,6 @@ describe("monitor API", () => {
       routes: [
         "GET /health",
         "POST /api/admin/fetch/:protocol",
-        "POST /api/admin/notify-pending",
         "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
         "GET /api/admin/source-activity"
@@ -244,7 +250,8 @@ describe("monitor API", () => {
       repositories: {
         proposalRepository: new MemoryProposalRepository(),
         fetchRunRepository,
-        sourceActivityRepository: new MemorySourceActivityRepository()
+        sourceActivityRepository: new MemorySourceActivityRepository(),
+        protocolStateRepository: new MemoryProtocolStateRepository()
       }
     });
 
@@ -289,7 +296,8 @@ describe("monitor API", () => {
       repositories: {
         proposalRepository: new MemoryProposalRepository(),
         fetchRunRepository: new MemoryFetchRunRepository(),
-        sourceActivityRepository
+        sourceActivityRepository,
+        protocolStateRepository: new MemoryProtocolStateRepository()
       }
     });
 
@@ -348,11 +356,92 @@ describe("monitor API", () => {
     expect(adminStatusReporter.sendDailyStatusReport).not.toHaveBeenCalled();
   });
 
+  it("surfaces operational repository and admin-delivery failures as 500 responses", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    jest
+      .spyOn(fetchRunRepository, "findAll")
+      .mockRejectedValue(new Error("Fetch-run storage unavailable"));
+    const fetchRunApp = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository: new MemoryProposalRepository(),
+        fetchRunRepository,
+        sourceActivityRepository: new MemorySourceActivityRepository(),
+        protocolStateRepository: new MemoryProtocolStateRepository()
+      }
+    }).app;
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+    jest
+      .spyOn(sourceActivityRepository, "findAll")
+      .mockRejectedValue(new Error("Source-activity storage unavailable"));
+    const sourceActivityApp = createApp({
+      env: testEnv(),
+      repositories: {
+        proposalRepository: new MemoryProposalRepository(),
+        fetchRunRepository: new MemoryFetchRunRepository(),
+        sourceActivityRepository,
+        protocolStateRepository: new MemoryProtocolStateRepository()
+      }
+    }).app;
+    const adminStatusApp = createApp({
+      env: testEnv(),
+      adminStatusReporter: {
+        enabled: true,
+        sendDailyStatusReport: jest.fn(async () => {
+          throw new Error("Telegram admin delivery unavailable");
+        })
+      } as never
+    }).app;
+
+    await request(fetchRunApp)
+      .get("/api/admin/fetch-runs")
+      .expect(500)
+      .expect(({ body }) => {
+        expect(body.error).toBe("Fetch-run storage unavailable");
+      });
+    await request(sourceActivityApp)
+      .get("/api/admin/source-activity")
+      .expect(500)
+      .expect(({ body }) => {
+        expect(body.error).toBe("Source-activity storage unavailable");
+      });
+    await request(adminStatusApp)
+      .post("/api/admin/status/send")
+      .expect(500)
+      .expect(({ body }) => {
+        expect(body.error).toBe("Telegram admin delivery unavailable");
+      });
+  });
+
+  it("does not expose unexpected internal error details in production responses", async () => {
+    const sensitiveMessage =
+      "Firestore request failed with credential private-key-fragment";
+    const fetchJob = {
+      run: jest.fn(async () => {
+        throw new Error(sensitiveMessage);
+      })
+    };
+    const { app } = createApp({
+      env: testEnv({
+        NODE_ENV: "production"
+      }),
+      fetchJob: fetchJob as never
+    });
+
+    const response = await request(app)
+      .post("/api/admin/fetch/lido")
+      .expect(500);
+
+    expect(response.body).toEqual({ error: "Internal server error." });
+    expect(response.text).not.toContain(sensitiveMessage);
+    expect(response.text).not.toContain("private-key-fragment");
+  });
+
   it("returns a clear 400 for malformed JSON request bodies", async () => {
     const { app } = createApp({ env: testEnv() });
 
     const response = await request(app)
-      .post("/api/admin/notify-pending")
+      .post("/api/admin/status/send")
       .set("content-type", "application/json")
       .send("{not-json")
       .expect(400);
@@ -369,7 +458,7 @@ describe("monitor API", () => {
     });
 
     const response = await request(app)
-      .post("/api/admin/notify-pending")
+      .post("/api/admin/status/send")
       .set("content-type", "application/json")
       .send("{not-json")
       .expect(401);
@@ -377,36 +466,13 @@ describe("monitor API", () => {
     expect(response.body.error).toBe("Missing API auth token.");
   });
 
-  it("notifies pending proposals through the admin endpoint", async () => {
-    const proposalRepository = new MemoryProposalRepository();
-    const notificationService = new RecordingNotificationService();
-    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+  it("does not expose removed manual notification recovery endpoints", async () => {
+    const { app } = createApp({ env: testEnv() });
 
-    await proposalRepository.upsert(proposal, {
-      notificationStatusForNew: "pending"
-    });
-
-    const { app } = createApp({
-      env: testEnv(),
-      repositories: {
-        proposalRepository,
-        fetchRunRepository: new MemoryFetchRunRepository(),
-        sourceActivityRepository: new MemorySourceActivityRepository()
-      },
-      notificationService
-    });
-
-    const response = await request(app).post("/api/admin/notify-pending").expect(200);
-
-    expect(response.body).toMatchObject({
-      pendingCount: 1,
-      sentCount: 1,
-      failedCount: 0
-    });
-    expect(notificationService.messages).toHaveLength(1);
-    await expect(proposalRepository.findById(proposal.id)).resolves.toMatchObject({
-      notificationStatus: "sent"
-    });
+    await request(app).post("/api/admin/notify-pending").expect(404);
+    await request(app)
+      .post("/api/admin/notifications/failed/proposal-id/acknowledge")
+      .expect(404);
   });
 
   it("protects all monitor routes when API auth is enabled", async () => {
@@ -420,7 +486,6 @@ describe("monitor API", () => {
     await request(app).get("/").expect(401);
     await request(app).get("/health").expect(401);
     await request(app).post("/api/admin/fetch/lido").expect(401);
-    await request(app).post("/api/admin/notify-pending").expect(401);
     await request(app).post("/api/admin/status/send").expect(401);
     await request(app).get("/api/admin/fetch-runs").expect(401);
     await request(app).get("/api/admin/source-activity").expect(401);
@@ -508,6 +573,7 @@ describe("monitor API", () => {
     const proposalRepository = new MemoryProposalRepository();
     const fetchRunRepository = new MemoryFetchRunRepository();
     const sourceActivityRepository = new MemorySourceActivityRepository();
+    const protocolStateRepository = new MemoryProtocolStateRepository();
     const notificationService = new RecordingNotificationService();
     const registry = new ProtocolRegistry();
 
@@ -526,6 +592,11 @@ describe("monitor API", () => {
         publisherAllowlist: ["Allowed Publisher"]
       })
     );
+    await protocolStateRepository.initializeBaseline(
+      "lido",
+      true,
+      "2026-06-01T00:00:00.000Z"
+    );
 
     const fetchJob = new FetchProtocolGovernanceJob(
       registry,
@@ -534,7 +605,8 @@ describe("monitor API", () => {
       sourceActivityRepository,
       createSilentLogger(),
       {
-        notificationService
+        notificationService,
+        protocolStateRepository
       }
     );
     const { app } = createApp({
@@ -542,7 +614,8 @@ describe("monitor API", () => {
       repositories: {
         proposalRepository,
         fetchRunRepository,
-        sourceActivityRepository
+        sourceActivityRepository,
+        protocolStateRepository
       },
       protocolRegistry: registry,
       notificationService,

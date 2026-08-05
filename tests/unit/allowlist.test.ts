@@ -70,6 +70,31 @@ describe("publisher allowlist", () => {
     expect(matchesPublisherAllowlist("Aave Grants DAO", aaveAllowlist)).toBe(false);
   });
 
+  it("matches the canonical Uniswap Labs forum account without matching unrelated Labs accounts", () => {
+    const uniswapAllowlist = [
+      "haydenadams",
+      "eek637",
+      "devinwalsh",
+      "kenneth",
+      "nataliara",
+      "GFXlabs",
+      "UniswapFoundation",
+      "UniswapLabs"
+    ];
+
+    expect(matchesPublisherAllowlist("UniswapLabs", uniswapAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("uniswaplabs", uniswapAllowlist)).toBe(true);
+    expect(matchesPublisherAllowlist("Uniswap Labs", uniswapAllowlist)).toBe(
+      true
+    );
+    expect(matchesPublisherAllowlist("UniswapFoundation", uniswapAllowlist)).toBe(
+      true
+    );
+    expect(matchesPublisherAllowlist("OtherSwapLabs", uniswapAllowlist)).toBe(
+      false
+    );
+  });
+
   it("extracts stable Discourse username aliases from raw publisher payloads", () => {
     const item: RawGovernanceItem = {
       protocol: "uniswap",

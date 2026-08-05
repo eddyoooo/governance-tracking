@@ -6,6 +6,7 @@ import {
   type FetchRun
 } from "../../src/storage/fetchRun.repository.js";
 import { FirestoreProposalRepository } from "../../src/storage/firestoreProposal.repository.js";
+import { FirestoreProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import {
   FirestoreSourceActivityRepository,
   type SourceActivityRecord
@@ -16,6 +17,7 @@ type StoredDocument = Record<string, unknown>;
 
 interface FakeFirestoreOptions {
   failSourceIdentityCompositeIndex?: boolean;
+  sourceIdentityQueryError?: unknown;
 }
 
 class FakeDocumentReference {
@@ -102,13 +104,32 @@ class FakeQuery {
     );
   }
 
+  count() {
+    return {
+      get: async () => {
+        const count = [...this.documents.values()].filter((document) =>
+          this.filters.every(
+            (filter) => document[filter.field] === filter.value
+          )
+        ).length;
+
+        return {
+          data: () => ({ count })
+        };
+      }
+    };
+  }
+
   async get() {
-    if (
-      this.options.failSourceIdentityCompositeIndex &&
-      ["protocol", "sourceType", "sourceId"].every((field) =>
-        this.filters.some((filter) => filter.field === field)
-      )
-    ) {
+    const isSourceIdentityQuery = ["protocol", "sourceType", "sourceId"].every(
+      (field) => this.filters.some((filter) => filter.field === field)
+    );
+
+    if (isSourceIdentityQuery && this.options.sourceIdentityQueryError) {
+      throw this.options.sourceIdentityQueryError;
+    }
+
+    if (this.options.failSourceIdentityCompositeIndex && isSourceIdentityQuery) {
       const error = new Error(
         "The query requires an index for protocol + sourceType + sourceId."
       ) as Error & { code: number; details: string };
@@ -278,6 +299,24 @@ describe("FirestoreProposalRepository", () => {
     await expect(repository.findById("accidental_new_id")).resolves.toBeNull();
   });
 
+  it("stores a canonical source-identity id even when a new adapter supplies a different id", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    const result = await repository.upsert({
+      ...proposal,
+      id: "non_canonical_adapter_id"
+    });
+
+    expect(result.proposal.id).toBe(proposal.id);
+    await expect(repository.findById(proposal.id)).resolves.toEqual(
+      result.proposal
+    );
+    await expect(
+      repository.findById("non_canonical_adapter_id")
+    ).resolves.toBeNull();
+  });
+
   it("falls back to source identity fields for legacy Firestore proposal documents", async () => {
     const proposal = normalizeLidoForumItem(createRawGovernanceItem());
     const repository = new FirestoreProposalRepository(
@@ -337,6 +376,28 @@ describe("FirestoreProposalRepository", () => {
     await expect(
       repository.findBySourceIdentity("lido", "forum", "missing")
     ).resolves.toBeNull();
+  });
+
+  it("does not hide non-index failures from legacy source-identity reads", async () => {
+    const storageError = new Error("Firestore permission denied");
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({}, { sourceIdentityQueryError: storageError })
+    );
+
+    await expect(
+      repository.findBySourceIdentity("lido", "forum", "missing")
+    ).rejects.toBe(storageError);
+  });
+
+  it("does not insert a proposal when the legacy dedupe lookup fails unexpectedly", async () => {
+    const storageError = new Error("Firestore transport unavailable");
+    const repository = new FirestoreProposalRepository(
+      createFakeFirestore({}, { sourceIdentityQueryError: storageError })
+    );
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    await expect(repository.upsert(proposal)).rejects.toBe(storageError);
+    await expect(repository.findById(proposal.id)).resolves.toBeNull();
   });
 
   it("prefers deterministic Firestore proposal documents over legacy source-identity matches", async () => {
@@ -599,6 +660,160 @@ describe("FirestoreProposalRepository", () => {
       repository.updateNotificationStatus("missing", "sent")
     ).resolves.toBeNull();
   });
+
+  it("checks protocol existence and counts notification states without composite indexes", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const lido = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "lido-1", protocol: "lido" })
+    );
+    const aave = normalizeLidoForumItem(
+      createRawGovernanceItem({ sourceId: "aave-1", protocol: "aave" })
+    );
+
+    await repository.upsert(lido, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.upsert(aave, {
+      notificationStatusForNew: "skipped"
+    });
+    await repository.updateNotificationStatus(lido.id, "failed", "Telegram down");
+
+    await expect(repository.existsForProtocol("lido")).resolves.toBe(true);
+    await expect(repository.existsForProtocol("aave")).resolves.toBe(true);
+    await expect(repository.existsForProtocol("uniswap")).resolves.toBe(false);
+    await expect(
+      repository.countByNotificationStatus("failed")
+    ).resolves.toBe(1);
+    await expect(
+      repository.countByNotificationStatus("skipped")
+    ).resolves.toBe(1);
+    await expect(
+      repository.countByNotificationStatus("pending")
+    ).resolves.toBe(0);
+  });
+
+  it("transactionally persists recipient delivery state and clears aggregate errors", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+
+    await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    await repository.updateNotificationState(proposal.id, () => ({
+      notificationStatus: "failed",
+      notificationError: "Telegram failed",
+      notificationDeliveries: {
+        recipientHash: {
+          recipientKey: "recipientHash",
+          recipientMaskedId: "*****1111",
+          status: "failed",
+          attemptCount: 1,
+          createdAt: "2026-07-24T10:00:00.000Z",
+          updatedAt: "2026-07-24T10:00:00.000Z",
+          nextRetryAt: "2026-07-24T10:15:00.000Z",
+          lastError: "Telegram failed"
+        }
+      }
+    }));
+    await repository.updateNotificationState(proposal.id, (stored) => ({
+      notificationStatus: "sent",
+      notificationDeliveries: {
+        recipientHash: {
+          ...stored.notificationDeliveries?.recipientHash!,
+          status: "sent",
+          attemptCount: 2,
+          updatedAt: "2026-07-24T10:15:00.000Z",
+          sentAt: "2026-07-24T10:15:00.000Z"
+        }
+      }
+    }));
+
+    const delivered = await repository.findById(proposal.id);
+
+    expect(delivered).toMatchObject({
+      notificationStatus: "sent",
+      notificationDeliveries: {
+        recipientHash: {
+          recipientMaskedId: "*****1111",
+          status: "sent",
+          attemptCount: 2
+        }
+      }
+    });
+    expect(delivered).not.toHaveProperty("notificationError");
+  });
+});
+
+describe("FirestoreProtocolStateRepository", () => {
+  it("creates a seeding baseline once and completes it idempotently", async () => {
+    const repository = new FirestoreProtocolStateRepository(createFakeFirestore());
+
+    const initial = await repository.initializeBaseline(
+      "lido",
+      false,
+      "2026-07-24T08:00:00.000Z"
+    );
+    const repeated = await repository.initializeBaseline(
+      "lido",
+      true,
+      "2026-07-24T08:05:00.000Z"
+    );
+    const completed = await repository.markBaselineComplete(
+      "lido",
+      "2026-07-24T08:10:00.000Z"
+    );
+    const completedAgain = await repository.markBaselineComplete(
+      "lido",
+      "2026-07-24T08:20:00.000Z"
+    );
+
+    expect(initial).toMatchObject({
+      protocol: "lido",
+      baselineStatus: "seeding",
+      baselineStartedAt: "2026-07-24T08:00:00.000Z"
+    });
+    expect(repeated).toEqual(initial);
+    expect(completed).toMatchObject({
+      baselineStatus: "complete",
+      baselineCompletedAt: "2026-07-24T08:10:00.000Z"
+    });
+    expect(completedAgain).toEqual(completed);
+    await expect(repository.findByProtocol("lido")).resolves.toEqual(completed);
+  });
+
+  it("marks an already-populated protocol complete on first initialization", async () => {
+    const repository = new FirestoreProtocolStateRepository(createFakeFirestore());
+
+    await expect(
+      repository.initializeBaseline(
+        "aave",
+        true,
+        "2026-07-24T09:00:00.000Z"
+      )
+    ).resolves.toMatchObject({
+      protocol: "aave",
+      baselineStatus: "complete",
+      baselineStartedAt: "2026-07-24T09:00:00.000Z",
+      baselineCompletedAt: "2026-07-24T09:00:00.000Z"
+    });
+  });
+
+  it("can complete a missing baseline atomically after an interrupted state write", async () => {
+    const repository = new FirestoreProtocolStateRepository(createFakeFirestore());
+
+    await expect(repository.findByProtocol("uniswap")).resolves.toBeNull();
+    await expect(
+      repository.markBaselineComplete(
+        "uniswap",
+        "2026-07-24T10:00:00.000Z"
+      )
+    ).resolves.toMatchObject({
+      protocol: "uniswap",
+      baselineStatus: "complete",
+      baselineStartedAt: "2026-07-24T10:00:00.000Z",
+      baselineCompletedAt: "2026-07-24T10:00:00.000Z"
+    });
+  });
 });
 
 describe("FirestoreFetchRunRepository", () => {
@@ -669,6 +884,48 @@ describe("FirestoreFetchRunRepository", () => {
       { id: "older" }
     ]);
     await expect(repository.findAll(1)).resolves.toMatchObject([{ id: "newer" }]);
+    await expect(repository.findLatestByProtocol("lido")).resolves.toMatchObject({
+      id: "newer"
+    });
+    await expect(repository.findLatestByProtocol("aave")).resolves.toBeNull();
+  });
+
+  it("finds the latest successful Firestore run without requiring a status composite index", async () => {
+    const repository = new FirestoreFetchRunRepository(createFakeFirestore());
+    const successful: FetchRun = {
+      id: "successful",
+      protocol: "uniswap",
+      startedAt: "2026-06-05T00:00:00.000Z",
+      finishedAt: "2026-06-05T00:01:00.000Z",
+      status: "success",
+      fetchedCount: 10,
+      allowlistedCount: 2,
+      storedNewCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 2,
+      skippedCount: 8,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    };
+    const failed: FetchRun = {
+      ...successful,
+      id: "newer-failed",
+      startedAt: "2026-06-06T00:00:00.000Z",
+      finishedAt: "2026-06-06T00:01:00.000Z",
+      status: "failed",
+      errors: ["Forum unavailable"]
+    };
+
+    await repository.upsert(successful);
+    await repository.upsert(failed);
+
+    await expect(
+      repository.findLatestSuccessfulByProtocol("uniswap")
+    ).resolves.toMatchObject({ id: "successful" });
+    await expect(
+      repository.findLatestSuccessfulByProtocol("aave")
+    ).resolves.toBeNull();
   });
 });
 

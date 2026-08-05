@@ -81,6 +81,68 @@ describe("MemoryFetchRunRepository", () => {
     await expect(repository.findAll(1)).resolves.toMatchObject([{ id: "newer" }]);
   });
 
+  it("finds the latest run for one protocol without being displaced by other protocols", async () => {
+    const repository = new MemoryFetchRunRepository();
+
+    await repository.upsert(
+      createRun({
+        id: "aave-latest",
+        protocol: "aave",
+        startedAt: "2026-06-05T00:00:00.000Z"
+      })
+    );
+    await repository.upsert(
+      createRun({
+        id: "lido-newer-global",
+        protocol: "lido",
+        startedAt: "2026-06-06T00:00:00.000Z"
+      })
+    );
+
+    await expect(repository.findLatestByProtocol("aave")).resolves.toMatchObject({
+      id: "aave-latest"
+    });
+    await expect(repository.findLatestByProtocol("uniswap")).resolves.toBeNull();
+  });
+
+  it("finds the latest successful run while ignoring newer failed and running attempts", async () => {
+    const repository = new MemoryFetchRunRepository();
+
+    await repository.upsert(
+      createRun({
+        id: "successful",
+        protocol: "uniswap",
+        startedAt: "2026-06-05T00:00:00.000Z",
+        finishedAt: "2026-06-05T00:01:00.000Z",
+        status: "success"
+      })
+    );
+    await repository.upsert(
+      createRun({
+        id: "failed",
+        protocol: "uniswap",
+        startedAt: "2026-06-06T00:00:00.000Z",
+        finishedAt: "2026-06-06T00:01:00.000Z",
+        status: "failed"
+      })
+    );
+    await repository.upsert(
+      createRun({
+        id: "running",
+        protocol: "uniswap",
+        startedAt: "2026-06-07T00:00:00.000Z",
+        status: "running"
+      })
+    );
+
+    await expect(
+      repository.findLatestSuccessfulByProtocol("uniswap")
+    ).resolves.toMatchObject({ id: "successful" });
+    await expect(
+      repository.findLatestSuccessfulByProtocol("aave")
+    ).resolves.toBeNull();
+  });
+
   it("clears in-memory fetch run state for repeatable demo runs", async () => {
     const repository = new MemoryFetchRunRepository();
 

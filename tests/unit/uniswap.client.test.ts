@@ -185,6 +185,36 @@ describe("UniswapForumClient", () => {
     );
   });
 
+  it("rejects malformed category topic responses with category context", async () => {
+    const logger = {
+      debug: jest.fn(),
+      error: jest.fn()
+    };
+    const client = new UniswapForumClient({
+      baseUrl: "https://gov.uniswap.org",
+      apiBaseUrl: "https://gov.uniswap.org",
+      fetchImpl: jsonFetch({ topic_list: { topics: "broken" } }),
+      logger
+    });
+    const category = {
+      id: 5,
+      name: "Requests for Comment",
+      slug: "proposal-discussion",
+      path: "/c/proposal-discussion/5/l/latest.json"
+    };
+
+    await expect(
+      client.fetchCategoryTopicPage(category)
+    ).rejects.toThrow("Invalid Uniswap category topics response.");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category,
+        issues: expect.any(Array)
+      }),
+      "Failed to validate Uniswap category topics response"
+    );
+  });
+
   it("throws when the Uniswap endpoint returns a non-success response", async () => {
     const client = new UniswapForumClient({
       baseUrl: "https://gov.uniswap.org",

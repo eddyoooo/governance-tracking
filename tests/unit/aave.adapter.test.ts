@@ -40,6 +40,18 @@ function createAdapterOptions(
   };
 }
 
+function createAaveTopic(sourceId: string, title = `Aave topic ${sourceId}`) {
+  return {
+    sourceId,
+    title,
+    slug: `aave-topic-${sourceId}`,
+    publisherName: "AaveLabs",
+    sourceUrl: `https://governance.aave.com/t/aave-topic-${sourceId}/${sourceId}`,
+    publishedAt: "2026-06-19T12:00:28.625Z",
+    raw: { id: Number(sourceId) }
+  };
+}
+
 describe("AaveAdapter", () => {
   it("keeps the real Aave publisher allowlist on the adapter", () => {
     const adapter = new AaveAdapter(createAdapterOptions());
@@ -406,6 +418,167 @@ describe("AaveAdapter", () => {
         feed: "global"
       }
     });
+  });
+
+  it("keeps global recent topics when category discovery is temporarily unavailable", async () => {
+    const logger = createSilentLogger();
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => ({
+        page: 0,
+        topics: [createAaveTopic("25201")],
+        hasMore: false
+      })),
+      fetchCategories: jest.fn(async () => {
+        throw new Error("Aave site endpoint rate limited");
+      }),
+      fetchCategoryTopicPage: jest.fn()
+    };
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ client: client as never, logger })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({ sourceId: "25201" })
+    ]);
+    expect(client.fetchCategoryTopicPage).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocol: "aave",
+        failedFeedCount: 1,
+        successfulFeedCount: 1
+      }),
+      "Aave forum fetch completed with partial feed failures"
+    );
+  });
+
+  it("uses category feeds when the global latest feed is temporarily unavailable", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => {
+        throw new Error("Aave global latest unavailable");
+      }),
+      fetchCategories: jest.fn(async () => [
+        {
+          id: 7,
+          name: "Risk",
+          slug: "risk",
+          path: "/c/risk/7/l/latest.json"
+        }
+      ]),
+      fetchCategoryTopicPage: jest.fn(async () => ({
+        page: 0,
+        topics: [createAaveTopic("25202")],
+        hasMore: false
+      }))
+    };
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({ sourceId: "25202" })
+    ]);
+  });
+
+  it("continues scanning other categories when one category first page fails", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => ({
+        page: 0,
+        topics: [createAaveTopic("25203")],
+        hasMore: false
+      })),
+      fetchCategories: jest.fn(async () => [
+        {
+          id: 7,
+          name: "Risk",
+          slug: "risk",
+          path: "/c/risk/7/l/latest.json"
+        },
+        {
+          id: 26,
+          name: "Development",
+          slug: "development",
+          path: "/c/development/26/l/latest.json"
+        }
+      ]),
+      fetchCategoryTopicPage: jest.fn(
+        async (category: { id: number }) => {
+          if (category.id === 7) {
+            throw new Error("Aave category returned 429");
+          }
+
+          return {
+            page: 0,
+            topics: [createAaveTopic("25204")],
+            hasMore: false
+          };
+        }
+      )
+    };
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    const items = await adapter.fetchRecent();
+
+    expect(items.map((item) => item.sourceId)).toEqual(["25203", "25204"]);
+    expect(client.fetchCategoryTopicPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains successful earlier pages when a later global page fails", async () => {
+    const logger = createSilentLogger();
+    const client = {
+      fetchRecentTopicPage: jest
+        .fn()
+        .mockResolvedValueOnce({
+          page: 0,
+          topics: [createAaveTopic("25205")],
+          hasMore: true
+        })
+        .mockRejectedValueOnce(new Error("Aave page one returned 503")),
+      fetchCategories: jest.fn(async () => []),
+      fetchCategoryTopicPage: jest.fn()
+    };
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ client: client as never, logger })
+    );
+
+    await expect(adapter.fetchRecent()).resolves.toEqual([
+      expect.objectContaining({ sourceId: "25205" })
+    ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocol: "aave",
+        failedPage: 1,
+        fetchedCount: 1
+      }),
+      "Stopped Aave global latest pagination after a later page failed"
+    );
+  });
+
+  it("fails the Aave run when no global or category governance feed can be read", async () => {
+    const client = {
+      fetchRecentTopicPage: jest.fn(async () => {
+        throw new Error("global unavailable");
+      }),
+      fetchCategories: jest.fn(async () => [
+        {
+          id: 7,
+          name: "Risk",
+          slug: "risk",
+          path: "/c/risk/7/l/latest.json"
+        }
+      ]),
+      fetchCategoryTopicPage: jest.fn(async () => {
+        throw new Error("category unavailable");
+      })
+    };
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ client: client as never })
+    );
+
+    await expect(adapter.fetchRecent()).rejects.toThrow(
+      "Aave forum fetch failed because no governance feed could be read"
+    );
   });
 
   it("normalizes raw items through the Aave normalizer", () => {

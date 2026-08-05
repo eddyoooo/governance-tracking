@@ -1,6 +1,8 @@
 import type { Logger } from "pino";
+import { sha256 } from "../utils/hash.js";
 import type {
   NotificationMessage,
+  NotificationRecipient,
   NotificationService
 } from "./notification.service.js";
 
@@ -12,8 +14,10 @@ export interface TelegramNotificationServiceOptions {
   requestTimeoutMs?: number;
 }
 
-interface TelegramRecipientFailure {
+export interface TelegramRecipientFailure {
   recipientIndex: number;
+  recipientKey: string;
+  recipientMaskedId: string;
   status?: number;
   responseBody?: string;
   errorMessage?: string;
@@ -28,13 +32,15 @@ export class TelegramNotificationDeliveryError extends Error {
   ) {
     const detail = failures
       .map((failure) => {
+        const recipient = `recipient ${failure.recipientIndex} (${failure.recipientMaskedId})`;
+
         if (failure.status) {
-          return `recipient ${failure.recipientIndex} failed with ${failure.status}${
+          return `${recipient} failed with ${failure.status}${
             failure.responseBody ? `: ${failure.responseBody}` : ""
           }`;
         }
 
-        return `recipient ${failure.recipientIndex} failed${
+        return `${recipient} failed${
           failure.errorMessage ? `: ${failure.errorMessage}` : ""
         }`;
       })
@@ -76,6 +82,59 @@ function redactTelegramSensitiveValues(
   );
 }
 
+function truncateDeliveryDetail(value: string): string {
+  const maxLength = 1_000;
+
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 3)}...`;
+}
+
+async function readTelegramApiFailure(
+  response: Response,
+  redact: (value: string) => string
+): Promise<{ status: number; responseBody: string } | null> {
+  const isJson = response.headers
+    .get("content-type")
+    ?.toLowerCase()
+    .includes("application/json");
+
+  if (response.ok && !isJson) {
+    return null;
+  }
+
+  const rawResponseBody = await response.text().catch(() => "");
+  const responseBody = truncateDeliveryDetail(redact(rawResponseBody));
+
+  if (!response.ok) {
+    return { status: response.status, responseBody };
+  }
+
+  try {
+    const payload = JSON.parse(rawResponseBody) as { ok?: unknown };
+
+    return payload.ok === true
+      ? null
+      : { status: response.status, responseBody };
+  } catch {
+    return { status: response.status, responseBody };
+  }
+}
+
+function maskTelegramUserId(value: string): string {
+  const trimmed = value.trim();
+
+  if (trimmed.length <= 4) {
+    return "[redacted]";
+  }
+
+  return `${"*".repeat(trimmed.length - 4)}${trimmed.slice(-4)}`;
+}
+
+export function createTelegramRecipientKey(userId: string): string {
+  return sha256(`telegram:${userId.trim()}`);
+}
+
 export function formatTelegramGovernanceMessage(
   message: NotificationMessage
 ): string {
@@ -94,6 +153,9 @@ export class TelegramNotificationService implements NotificationService {
   readonly enabled = true;
   private readonly botToken: string;
   private readonly allowedUserIds: string[];
+  private readonly recipients: Array<
+    NotificationRecipient & { userId: string; recipientIndex: number }
+  >;
   private readonly fetchImpl: typeof fetch;
   private readonly logger?: Pick<Logger, "debug" | "error">;
   private readonly requestTimeoutMs: number;
@@ -120,27 +182,56 @@ export class TelegramNotificationService implements NotificationService {
 
     this.botToken = botToken;
     this.allowedUserIds = allowedUserIds;
+    this.recipients = allowedUserIds.map((userId, index) => ({
+      key: createTelegramRecipientKey(userId),
+      maskedId: maskTelegramUserId(userId),
+      userId,
+      recipientIndex: index + 1
+    }));
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logger = options.logger;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
   }
 
-  async send(message: NotificationMessage): Promise<void> {
+  getRecipients(): readonly NotificationRecipient[] {
+    return this.recipients.map(({ key, maskedId }) => ({ key, maskedId }));
+  }
+
+  async send(
+    message: NotificationMessage,
+    recipientKeys?: readonly string[]
+  ): Promise<void> {
     const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
     const text = formatTelegramGovernanceMessage(message);
+    const targetKeys = recipientKeys ? new Set(recipientKeys) : null;
+    const targetRecipients = targetKeys
+      ? this.recipients.filter((recipient) => targetKeys.has(recipient.key))
+      : this.recipients;
+
+    if (targetKeys) {
+      const configuredKeys = new Set(this.recipients.map((recipient) => recipient.key));
+      const unknownKeys = [...targetKeys].filter((key) => !configuredKeys.has(key));
+
+      if (unknownKeys.length > 0) {
+        throw new Error(
+          `Telegram notification requested ${unknownKeys.length} unknown recipient key(s).`
+        );
+      }
+    }
 
     this.logger?.debug(
       {
         notificationService: this.name,
-        allowedRecipientCount: this.allowedUserIds.length
+        allowedRecipientCount: this.allowedUserIds.length,
+        targetRecipientCount: targetRecipients.length
       },
       "Sending Telegram governance notification"
     );
 
     const failures: TelegramRecipientFailure[] = [];
 
-    for (const [recipientIndex, recipientUserId] of this.allowedUserIds.entries()) {
+    for (const recipient of targetRecipients) {
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(),
@@ -155,32 +246,37 @@ export class TelegramNotificationService implements NotificationService {
           },
           signal: controller.signal,
           body: JSON.stringify({
-            chat_id: recipientUserId,
+            chat_id: recipient.userId,
             text,
             parse_mode: "HTML",
             disable_web_page_preview: false
           })
         });
 
-        if (!response.ok) {
-          const responseBody = redactTelegramSensitiveValues(
-            await response.text().catch(() => ""),
+        const apiFailure = await readTelegramApiFailure(response, (value) =>
+          redactTelegramSensitiveValues(
+            value,
             this.botToken,
             this.allowedUserIds
-          );
+          )
+        );
+
+        if (apiFailure) {
           const failure = {
-            recipientIndex: recipientIndex + 1,
-            status: response.status,
-            responseBody
+            recipientIndex: recipient.recipientIndex,
+            recipientKey: recipient.key,
+            recipientMaskedId: recipient.maskedId,
+            status: apiFailure.status,
+            responseBody: apiFailure.responseBody
           };
 
           failures.push(failure);
           this.logger?.error(
             {
               notificationService: this.name,
-              recipientIndex: recipientIndex + 1,
-              status: response.status,
-              responseBody
+              recipientIndex: recipient.recipientIndex,
+              status: apiFailure.status,
+              responseBody: apiFailure.responseBody
             },
             "Telegram notification failed for allowed recipient"
           );
@@ -191,13 +287,17 @@ export class TelegramNotificationService implements NotificationService {
           : error instanceof Error
             ? error.message
             : String(error);
-        const errorMessage = redactTelegramSensitiveValues(
-          rawErrorMessage,
-          this.botToken,
-          this.allowedUserIds
+        const errorMessage = truncateDeliveryDetail(
+          redactTelegramSensitiveValues(
+            rawErrorMessage,
+            this.botToken,
+            this.allowedUserIds
+          )
         );
         const failure = {
-          recipientIndex: recipientIndex + 1,
+          recipientIndex: recipient.recipientIndex,
+          recipientKey: recipient.key,
+          recipientMaskedId: recipient.maskedId,
           errorMessage
         };
 
@@ -205,7 +305,7 @@ export class TelegramNotificationService implements NotificationService {
         this.logger?.error(
           {
             notificationService: this.name,
-            recipientIndex: recipientIndex + 1,
+            recipientIndex: recipient.recipientIndex,
             errorMessage
           },
           "Telegram notification request failed for allowed recipient"
@@ -216,7 +316,10 @@ export class TelegramNotificationService implements NotificationService {
     }
 
     if (failures.length > 0) {
-      throw new TelegramNotificationDeliveryError(failures, this.allowedUserIds.length);
+      throw new TelegramNotificationDeliveryError(
+        failures,
+        targetRecipients.length
+      );
     }
   }
 }
