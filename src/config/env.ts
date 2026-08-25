@@ -198,6 +198,19 @@ const rawEnvSchema = z
       .positive()
       .max(5)
       .default(2),
+    COW_FORUM_BASE_URL: z.string().url().default("https://forum.cow.fi"),
+    COW_FORUM_API_BASE_URL: z.string().url().default("https://forum.cow.fi"),
+    COW_ENABLED: booleanFromEnv.default(false),
+    COW_ALLOWED_PUBLISHERS: stringListFromEnv("COW_ALLOWED_PUBLISHERS").default(
+      []
+    ),
+    COW_FETCH_MAX_PAGES: z.coerce.number().int().positive().max(20).default(10),
+    COW_CATEGORY_FETCH_MAX_PAGES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(5)
+      .default(2),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
@@ -246,6 +259,12 @@ const rawEnvSchema = z
     uniswapAllowedPublishers: value.UNISWAP_ALLOWED_PUBLISHERS,
     uniswapFetchMaxPages: value.UNISWAP_FETCH_MAX_PAGES,
     uniswapCategoryFetchMaxPages: value.UNISWAP_CATEGORY_FETCH_MAX_PAGES,
+    cowForumBaseUrl: value.COW_FORUM_BASE_URL,
+    cowForumApiBaseUrl: value.COW_FORUM_API_BASE_URL,
+    cowEnabled: value.COW_ENABLED,
+    cowAllowedPublishers: value.COW_ALLOWED_PUBLISHERS,
+    cowFetchMaxPages: value.COW_FETCH_MAX_PAGES,
+    cowCategoryFetchMaxPages: value.COW_CATEGORY_FETCH_MAX_PAGES,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,

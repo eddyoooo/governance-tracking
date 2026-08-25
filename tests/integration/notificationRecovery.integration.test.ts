@@ -15,6 +15,7 @@ import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
   createSilentLogger,
+  createTelegramApiSuccessResponse,
   testEnv
 } from "../helpers/builders.js";
 
@@ -22,7 +23,7 @@ describe("notification recovery integration", () => {
   it("retries only the failed recipient and clears current admin health automatically", async () => {
     const fetchImpl = jest
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(createTelegramApiSuccessResponse())
       .mockResolvedValueOnce(
         new Response("temporarily unavailable", { status: 503 })
       );
@@ -83,7 +84,7 @@ describe("notification recovery integration", () => {
       failedProposal.notificationDeliveries?.[
         notificationService.getRecipients()[1].key
       ].nextRetryAt as string;
-    fetchImpl.mockResolvedValue(new Response("{}", { status: 200 }));
+    fetchImpl.mockResolvedValue(createTelegramApiSuccessResponse());
 
     await expect(
       job.notificationDispatcher.recoverOutstanding(retryAt)

@@ -2,7 +2,7 @@
 
 Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, tracks raw forum-source freshness, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
 
-The current tracked protocols are Lido, Aave, and Uniswap. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
+The current tracked protocols are Lido, Aave, Uniswap, and CoW DAO. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
 
 For operator commands and expected results, use [PLATFORM_MANUAL.md](./PLATFORM_MANUAL.md).
 
@@ -38,6 +38,7 @@ curl -s "$API/health"
 curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
+curl -s -X POST "$API/api/admin/fetch/cow"
 curl -s "$API/api/admin/fetch-runs"
 curl -s "$API/api/admin/source-activity"
 curl -s -X POST "$API/api/admin/status/send"
@@ -79,18 +80,19 @@ curl -s "$API/health" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch/cow" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected result: all three manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, and Uniswap, and the manual admin status endpoint sends the configured Telegram admin a compact health report. On an empty database, the first successful fetch silently establishes each protocol baseline; only proposals discovered after that baseline generate Telegram alerts.
+Expected result: all four manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, Uniswap, and CoW, and the manual admin status endpoint sends the configured Telegram admin a compact health report. On an empty database, the first successful fetch silently establishes each protocol baseline; only proposals discovered after that baseline generate Telegram alerts.
 
 Production deployment note: if you run multiple backend replicas, prefer enabling `ENABLE_SCHEDULER=true` on only one worker. Firestore proposal upserts are transaction-backed to protect against duplicate proposal records and duplicate new-proposal notifications, but multiple active schedulers can still create duplicate polling load and extra fetch-run audit records.
 
 ## Current Scope
 
-- Fetch recent proposal/forum activity for Lido, Aave, and Uniswap.
+- Fetch recent proposal/forum activity for Lido, Aave, Uniswap, and CoW DAO.
 - Validate Discourse JSON responses with Zod.
 - Bound external forum and Telegram requests with timeouts so a stuck network call does not hang the monitor indefinitely.
 - Filter fetched items by protocol-specific trusted publisher allowlists.
@@ -128,7 +130,7 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 ```text
 Scheduler or admin fetch request
   -> protocol registry
-  -> Lido, Aave, or Uniswap adapter
+  -> Lido, Aave, Uniswap, or CoW adapter
   -> Discourse client
   -> Zod response validation
   -> source-activity watchdog update
@@ -153,7 +155,7 @@ GET https://research.lido.fi/c/proposals/9/l/latest.json?page=<page>
 
 `9` is the Lido forum proposal category id. This keeps Lido polling focused on proposal-category topics instead of all latest forum discussion.
 
-Aave and Uniswap use broader forum coverage because proposal-like activity can appear across multiple public categories and subcategories:
+Aave, Uniswap, and CoW use broader forum coverage because proposal-like activity can appear across multiple public categories and subcategories:
 
 ```text
 GET https://governance.aave.com/latest.json?page=<page>
@@ -163,13 +165,17 @@ GET https://governance.aave.com/c/<category-path>/<category-id>/l/latest.json?pa
 GET https://gov.uniswap.org/latest.json?page=<page>
 GET https://gov.uniswap.org/site.json
 GET https://gov.uniswap.org/c/<category-path>/<category-id>/l/latest.json?page=<page>
+
+GET https://forum.cow.fi/latest.json?page=<page>
+GET https://forum.cow.fi/site.json
+GET https://forum.cow.fi/c/<category-path>/<category-id>/l/latest.json?page=<page>
 ```
 
-The Aave and Uniswap adapters combine global latest pages with discovered public category/subcategory feeds, then deduplicate by Discourse topic id. Lido also deduplicates topics repeated across adjacent proposal pages. For Uniswap, that currently covers public categories discovered from `/site.json`, such as Temperature Check, Requests for Comment, Consensus Check, Delegation Pitch, Governance-Meta, and Service Providers. Private/read-restricted categories are ignored because the public API does not expose them without forum permissions.
+The Aave, Uniswap, and CoW adapters combine global latest pages with every public category/subcategory discovered from `/site.json`, then deduplicate by Discourse topic id. Lido also deduplicates topics repeated across adjacent proposal pages. CoW coverage therefore follows the forum as its public category structure changes and currently includes areas such as Governance, Closed Proposals, Governance Resources, Inactive Proposals, Delegates, Technical, Grants, Treasury, Announcements, and General. Private/read-restricted categories are ignored because the public API does not expose them without forum permissions.
 
 If a forum still reports more pages after the configured page cap, the monitor logs that as an `info` message with the page limit and fetched count. That is coverage telemetry, not a failed fetch.
 
-Transient Discourse network failures, request timeouts, and `408`, `429`, or `5xx` responses are retried up to three attempts with bounded exponential backoff; a valid `Retry-After` header is respected up to 30 seconds. Invalid JSON and definitive client errors are not retried. If page zero succeeds but a later page fails, the adapter preserves the newer topics already fetched. Aave and Uniswap also continue through other public categories when one redundant category feed fails. If no global or category feed can be read, the protocol fetch fails and is surfaced in the fetch run and daily admin status.
+Transient Discourse network failures, request timeouts, and `408`, `429`, or `5xx` responses are retried up to three attempts with bounded exponential backoff; a valid `Retry-After` header is respected up to 30 seconds. Invalid JSON and definitive client errors are not retried. If page zero succeeds but a later page fails, the adapter preserves the newer topics already fetched. Aave, Uniswap, and CoW also continue through other public categories when one redundant category feed fails. If no global or category feed can be read, the protocol fetch fails and is surfaced in the fetch run and daily admin status.
 
 ## Stored Data
 
@@ -384,6 +390,23 @@ UNISWAP_CATEGORY_FETCH_MAX_PAGES=2
 
 Uniswap allowlist entries should use stable Discourse profile usernames. The monitor also checks the raw Discourse username behind a displayed publisher name, so profiles like `devinwalsh` can be tracked even when the stored proposal publisher displays as `Devin`.
 
+CoW DAO configuration:
+
+```bash
+COW_FORUM_BASE_URL=https://forum.cow.fi
+COW_FORUM_API_BASE_URL=https://forum.cow.fi
+COW_ENABLED=true
+COW_ALLOWED_PUBLISHERS='[
+  "moo_keeper",
+  "felixhenneke",
+  "middleway.eth"
+]'
+COW_FETCH_MAX_PAGES=10
+COW_CATEGORY_FETCH_MAX_PAGES=2
+```
+
+CoW allowlist entries use exact Discourse profile usernames. The initial three profiles were verified against the public forum API. Filtering checks both the display name and raw username, so `middleway.eth` remains trackable even when a topic displays the publisher as `Chen`. Treat this as an initial operational allowlist and replace or extend it when the production stakeholder list is finalized.
+
 Telegram direct-user notifications:
 
 ```bash
@@ -412,6 +435,8 @@ Link: <source URL>
 ```
 
 The heading is sent in bold, all caps. Dynamic fields are HTML-escaped before Telegram delivery.
+
+A delivery is considered successful only when Telegram returns a valid JSON response with `ok: true`. HTTP `2xx` responses containing HTML, malformed JSON, an empty body, or `ok: false` remain failed and enter automatic recipient-level recovery instead of being marked sent.
 
 Failed proposal deliveries are retried automatically while the main scheduler is enabled. Backoff is 15 minutes, 1 hour, 6 hours, then 24 hours for later attempts. Recipient state prevents already-successful users from receiving the same proposal again. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` marks that recipient delivery skipped and allows the aggregate proposal status to clear. Legacy failed records that do not identify their failed recipient safely are automatically closed as `skipped` without resending; this prevents both permanent health-report noise and delivery to a guessed recipient.
 
@@ -516,6 +541,7 @@ Security notes:
 | `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/fetch/cow` | Yes | Fetches CoW global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/status/send` | No | Sends the same operator Telegram status report used by the daily admin cron. |
 | `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
 | `GET /api/admin/source-activity` | No | Returns latest raw-source freshness records used by the silent-migration watchdog. |
@@ -539,6 +565,7 @@ Demo mode shows:
 - Non-allowlisted Lido items being skipped.
 - Aave global latest plus category/subcategory coverage.
 - Uniswap global latest plus all discovered public category/subcategory coverage.
+- CoW global latest plus all discovered public category/subcategory coverage.
 - Repeat fetches updating counts without duplicating proposals.
 - Stored proposals printed from the repository.
 - Fetch-run audit records printed from the repository.
@@ -551,11 +578,11 @@ Speed it up:
 DEMO_STEP_DELAY_MS=0 npm run demo
 ```
 
-If Telegram is enabled in `.env`, the demo can send real direct-user Telegram notifications during the new-proposal fetches.
+If Telegram is enabled in `.env`, the demo can send real Telegram notifications during the new-proposal fetches, but only to `TELEGRAM_ADMIN_USER_ID`. It never uses teammate IDs from `TELEGRAM_ALLOWED_USER_IDS`.
 
 ## Docker
 
-The multi-stage production image uses Node.js 24 LTS and contains compiled JavaScript plus production dependencies only.
+The multi-stage production image uses Node.js 24 LTS, runs as the non-root `node` user, and contains compiled JavaScript plus production dependencies only.
 
 Production image:
 
@@ -595,11 +622,12 @@ docker run -d \
   -e LIDO_ENABLED=true \
   -e AAVE_ENABLED=true \
   -e UNISWAP_ENABLED=true \
+  -e COW_ENABLED=true \
   -e LOG_LEVEL=info \
   governance-tracker-bot
 ```
 
-Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, and `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'` if they are not already provided by the deployment environment.
+Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'`, and `-e COW_ALLOWED_PUBLISHERS='["moo_keeper","felixhenneke","middleway.eth"]'` if they are not already provided by the deployment environment. CoW defaults to disabled unless `COW_ENABLED=true` is supplied, making deployment of an older runtime environment backward-safe.
 
 For `FIREBASE_PRIVATE_KEY`, pass escaped newlines, for example `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n`. A deployment secret manager is preferable to pasting secrets into shell history.
 

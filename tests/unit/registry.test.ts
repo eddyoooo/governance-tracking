@@ -20,6 +20,11 @@ const uniswapAllowedPublishers = [
   "GFXlabs",
   "UniswapFoundation"
 ];
+const cowAllowedPublishers = [
+  "moo_keeper",
+  "felixhenneke",
+  "middleway.eth"
+];
 
 describe("ProtocolRegistry", () => {
   it("registers, retrieves, and lists protocol adapters", () => {
@@ -27,16 +32,19 @@ describe("ProtocolRegistry", () => {
     const lido = createFakeProtocolAdapter({ protocol: "lido" });
     const aave = createFakeProtocolAdapter({ protocol: "aave" });
     const uniswap = createFakeProtocolAdapter({ protocol: "uniswap" });
+    const cow = createFakeProtocolAdapter({ protocol: "cow" });
 
     registry.register(lido);
     registry.register(aave);
     registry.register(uniswap);
+    registry.register(cow);
 
     expect(registry.get("lido")).toBe(lido);
     expect(registry.get("aave")).toBe(aave);
     expect(registry.get("uniswap")).toBe(uniswap);
+    expect(registry.get("cow")).toBe(cow);
     expect(registry.get("missing")).toBeUndefined();
-    expect(registry.list()).toEqual([lido, aave, uniswap]);
+    expect(registry.list()).toEqual([lido, aave, uniswap, cow]);
   });
 
   it("replaces adapters registered with the same protocol key", () => {
@@ -71,7 +79,11 @@ describe("ProtocolRegistry", () => {
         UNISWAP_ENABLED: "false",
         UNISWAP_FORUM_BASE_URL: "https://gov.uniswap.org",
         UNISWAP_FORUM_API_BASE_URL: "https://gov.uniswap.org",
-        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers),
+        COW_ENABLED: "false",
+        COW_FORUM_BASE_URL: "https://forum.cow.fi",
+        COW_FORUM_API_BASE_URL: "https://forum.cow.fi",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify(cowAllowedPublishers)
       }),
       createSilentLogger()
     );
@@ -79,6 +91,7 @@ describe("ProtocolRegistry", () => {
     const lido = registry.get("lido");
     const aave = registry.get("aave");
     const uniswap = registry.get("uniswap");
+    const cow = registry.get("cow");
 
     expect(lido).toBeDefined();
     expect(lido).toMatchObject({
@@ -116,6 +129,17 @@ describe("ProtocolRegistry", () => {
         baseUrl: "https://gov.uniswap.org"
       }
     });
+    expect(cow).toMatchObject({
+      protocol: "cow",
+      enabled: false,
+      publisherAllowlist: cowAllowedPublishers,
+      source: {
+        protocol: "cow",
+        type: "forum",
+        name: "CoW DAO Forum",
+        baseUrl: "https://forum.cow.fi"
+      }
+    });
   });
 
   it("uses fixture-backed protocol fetching in demo or memory mode", async () => {
@@ -125,13 +149,16 @@ describe("ProtocolRegistry", () => {
         DEMO_MODE: "true",
         LIDO_ALLOWED_PUBLISHERS: JSON.stringify(["Allowed Publisher"]),
         AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
-        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
+        UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers),
+        COW_ENABLED: "true",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify(cowAllowedPublishers)
       }),
       createSilentLogger()
     );
     const lido = registry.get("lido");
     const aave = registry.get("aave");
     const uniswap = registry.get("uniswap");
+    const cow = registry.get("cow");
 
     await expect(lido?.fetchRecent()).resolves.toMatchObject([
       {
@@ -242,6 +269,37 @@ describe("ProtocolRegistry", () => {
           sourceType: "forum",
           sourceId: "26132",
           publisherName: "Sergei"
+        })
+      ])
+    );
+    const cowItems = await cow?.fetchRecent();
+
+    expect(cowItems).toHaveLength(4);
+    expect(cowItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "cow",
+          sourceType: "forum",
+          sourceId: "3527",
+          publisherName: "MooKeeper"
+        }),
+        expect.objectContaining({
+          protocol: "cow",
+          sourceType: "forum",
+          sourceId: "3520",
+          publisherName: "felixhenneke"
+        }),
+        expect.objectContaining({
+          protocol: "cow",
+          sourceType: "forum",
+          sourceId: "28",
+          publisherName: "Chen"
+        }),
+        expect.objectContaining({
+          protocol: "cow",
+          sourceType: "forum",
+          sourceId: "3494",
+          publisherName: "KPK"
         })
       ])
     );

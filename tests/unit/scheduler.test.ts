@@ -68,6 +68,10 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
         {
           protocol: "uniswap",
           enabled: true
+        },
+        {
+          protocol: "cow",
+          enabled: true
         }
       ])
     }
@@ -115,7 +119,7 @@ describe("scheduler", () => {
     expect(validateMock).toHaveBeenCalledWith("0 8 * * *");
     expect(scheduleMock).toHaveBeenCalledWith("0 8 * * *", expect.any(Function));
     expect(context.logger.info).toHaveBeenCalledWith(
-      { cron: "0 8 * * *", protocols: ["lido", "aave", "uniswap"] },
+      { cron: "0 8 * * *", protocols: ["lido", "aave", "uniswap", "cow"] },
       "Starting governance fetch scheduler"
     );
     handle?.stop();
@@ -135,6 +139,10 @@ describe("scheduler", () => {
       },
       {
         protocol: "uniswap",
+        enabled: false
+      },
+      {
+        protocol: "cow",
         enabled: false
       }
     ]);
@@ -378,7 +386,8 @@ describe("scheduler", () => {
     expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
     expect(context.fetchJob.run).toHaveBeenCalledWith("aave");
     expect(context.fetchJob.run).toHaveBeenCalledWith("uniswap");
-    expect(context.fetchJob.run).toHaveBeenCalledTimes(3);
+    expect(context.fetchJob.run).toHaveBeenCalledWith("cow");
+    expect(context.fetchJob.run).toHaveBeenCalledTimes(4);
   });
 
   it("does not run disabled protocol adapters from the scheduler", async () => {
@@ -396,6 +405,10 @@ describe("scheduler", () => {
       {
         protocol: "uniswap",
         enabled: true
+      },
+      {
+        protocol: "cow",
+        enabled: false
       }
     ]);
     validateMock.mockReturnValue(true);
@@ -411,6 +424,7 @@ describe("scheduler", () => {
     expect(context.fetchJob.run).toHaveBeenCalledWith("lido");
     expect(context.fetchJob.run).not.toHaveBeenCalledWith("aave");
     expect(context.fetchJob.run).toHaveBeenCalledWith("uniswap");
+    expect(context.fetchJob.run).not.toHaveBeenCalledWith("cow");
   });
 
   it("logs scheduled fetch failures without throwing from the callback", async () => {

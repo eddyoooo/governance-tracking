@@ -29,6 +29,16 @@ export function createSilentLogger(): Logger {
   } as unknown as Logger;
 }
 
+export function createTelegramApiSuccessResponse(): Response {
+  return new Response(
+    JSON.stringify({ ok: true, result: { message_id: 1 } }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }
+  );
+}
+
 export function createRawGovernanceItem(
   overrides: Partial<RawGovernanceItem> = {}
 ): RawGovernanceItem {

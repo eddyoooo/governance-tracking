@@ -1,0 +1,21 @@
+{
+  "categories": [
+    { "id": 6, "name": "Governance", "slug": "cow-improvement-proposals-cip", "read_restricted": false },
+    { "id": 13, "name": "Closed Proposals", "slug": "closed-proposals", "parent_category_id": 6, "read_restricted": false },
+    { "id": 14, "name": "Governance Resources", "slug": "governance-resources", "parent_category_id": 6, "read_restricted": false },
+    { "id": 19, "name": "Inactive Proposals", "slug": "inactive-proposals", "parent_category_id": 6, "read_restricted": false },
+    { "id": 25, "name": "Delegates", "slug": "delegates", "parent_category_id": 6, "read_restricted": false },
+    { "id": 2, "name": "Technical", "slug": "tech-spells", "read_restricted": false },
+    { "id": 10, "name": "CoW Grants Program", "slug": "cow-grants-program", "read_restricted": false },
+    { "id": 22, "name": "Funded Grants", "slug": "funded-grants", "parent_category_id": 10, "read_restricted": false },
+    { "id": 23, "name": "Rejected Grants", "slug": "rejected-grants", "parent_category_id": 10, "read_restricted": false },
+    { "id": 24, "name": "Core-Contributor-Grant", "slug": "core-contributor-grant", "parent_category_id": 10, "read_restricted": false },
+    { "id": 26, "name": "Retro Round", "slug": "retro-round", "parent_category_id": 10, "read_restricted": false },
+    { "id": 21, "name": "Treasury", "slug": "treasury-overview-of-cow-dao", "read_restricted": false },
+    { "id": 27, "name": "Announcements", "slug": "announcements", "read_restricted": false },
+    { "id": 5, "name": "General", "slug": "general", "read_restricted": false },
+    { "id": 9, "name": "CoW Ecosystem", "slug": "cow-ecosystem", "parent_category_id": 5, "read_restricted": false },
+    { "id": 1, "name": "Uncategorized", "slug": "governance", "read_restricted": false },
+    { "id": 999, "name": "Private Staff", "slug": "private-staff", "read_restricted": true }
+  ]
+}

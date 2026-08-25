@@ -7,6 +7,7 @@ import {
   TelegramNotificationService
 } from "../../src/notifications/index.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
+import { normalizeCowForumItem } from "../../src/protocols/cow/cow.normalizer.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import { normalizeUniswapForumItem } from "../../src/protocols/uniswap/uniswap.normalizer.js";
@@ -91,6 +92,10 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
 
         if (fixture.protocol === "uniswap") {
           return normalizeUniswapForumItem(rawItem);
+        }
+
+        if (fixture.protocol === "cow") {
+          return normalizeCowForumItem(rawItem);
         }
 
         return normalizeLidoForumItem(rawItem);

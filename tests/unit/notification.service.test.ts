@@ -18,7 +18,8 @@ import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createRawGovernanceItem,
-  createSilentLogger
+  createSilentLogger,
+  createTelegramApiSuccessResponse
 } from "../helpers/builders.js";
 import type {
   NotificationMessage,
@@ -103,7 +104,7 @@ describe("notification services", () => {
     expect(telegramTestNotificationFixtures.length).toBeGreaterThanOrEqual(2);
     expect(new Set(publisherNames).size).toBe(telegramTestNotificationFixtures.length);
     expect(new Set(telegramTestNotificationFixtures.map((fixture) => fixture.protocol))).toEqual(
-      new Set(["lido", "aave", "uniswap"])
+      new Set(["lido", "aave", "uniswap", "cow"])
     );
     expect(publisherNames).toEqual(
       expect.arrayContaining([
@@ -137,10 +138,15 @@ describe("notification services", () => {
         expect(fixture.sourceUrl).toMatch(
           new RegExp(`^https://governance\\.aave\\.com/t/.+/${fixture.sourceId}$`)
         );
-      } else {
+      } else if (fixture.protocol === "uniswap") {
         expect(fixture.protocol).toBe("uniswap");
         expect(fixture.sourceUrl).toMatch(
           new RegExp(`^https://gov\\.uniswap\\.org/t/.+/${fixture.sourceId}$`)
+        );
+      } else {
+        expect(fixture.protocol).toBe("cow");
+        expect(fixture.sourceUrl).toMatch(
+          new RegExp(`^https://forum\\.cow\\.fi/t/.+/${fixture.sourceId}$`)
         );
       }
       expect(new Date(fixture.publishedAt).toISOString()).toBe(fixture.publishedAt);
@@ -190,7 +196,8 @@ describe("notification services", () => {
   it.each([
     ["lido", "Lido"],
     ["aave", "Aave"],
-    ["uniswap", "Uniswap"]
+    ["uniswap", "Uniswap"],
+    ["cow", "CoW"]
   ])(
     "preserves the established customer message contract for %s",
     (protocol, displayedProtocol) => {
@@ -292,7 +299,9 @@ describe("notification services", () => {
   });
 
   it("sends Telegram messages only to configured allowed user ids", async () => {
-    const fetchImpl = jest.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    const fetchImpl = jest.fn<typeof fetch>(async () =>
+      createTelegramApiSuccessResponse()
+    );
     const service = new TelegramNotificationService({
       botToken: "token",
       allowedUserIds: ["111111111", "222222222", "111111111"],
@@ -426,6 +435,38 @@ describe("notification services", () => {
     });
   });
 
+  it("rejects an HTTP 200 non-JSON proxy response instead of marking delivery sent", async () => {
+    const service = new TelegramNotificationService({
+      botToken: "token",
+      allowedUserIds: ["111111111"],
+      fetchImpl: jest.fn<typeof fetch>(
+        async () =>
+          new Response("<html>upstream unavailable</html>", {
+            status: 200,
+            headers: { "content-type": "text/html" }
+          })
+      ),
+      logger: createSilentLogger()
+    });
+
+    await expect(
+      service.send({
+        protocol: "cow",
+        sourceType: "forum",
+        publisherName: "MooKeeper",
+        title: "CoW DAO Monthly Recap: July 2026",
+        sourceUrl: "https://forum.cow.fi/t/cow-dao-monthly-recap-july-2026/3527"
+      })
+    ).rejects.toMatchObject({
+      failures: [
+        expect.objectContaining({
+          status: 200,
+          responseBody: "<html>upstream unavailable</html>"
+        })
+      ]
+    });
+  });
+
   it("does not lose an oversized Telegram ok=false failure while truncating its details", async () => {
     const fetchImpl = jest.fn<typeof fetch>(
       async () =>
@@ -527,7 +568,9 @@ describe("notification services", () => {
 
   it("does not log Telegram bot tokens or allowed user ids while sending succeeds", async () => {
     const logger = createSilentLogger();
-    const fetchImpl = jest.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    const fetchImpl = jest.fn<typeof fetch>(async () =>
+      createTelegramApiSuccessResponse()
+    );
     const service = new TelegramNotificationService({
       botToken: "sensitive-token",
       allowedUserIds: ["999999999"],
@@ -1322,6 +1365,24 @@ describe("notification services", () => {
     expect(key).not.toBe(createTelegramRecipientKey("1549323074"));
   });
 
+  it("fully redacts unusually short but valid Telegram recipient ids", () => {
+    const service = new TelegramNotificationService({
+      botToken: "token",
+      allowedUserIds: ["1"],
+      fetchImpl: jest.fn<typeof fetch>(async () =>
+        createTelegramApiSuccessResponse()
+      ),
+      logger: createSilentLogger()
+    });
+
+    expect(service.getRecipients()).toEqual([
+      {
+        key: createTelegramRecipientKey("1"),
+        maskedId: "[redacted]"
+      }
+    ]);
+  });
+
   it("throws after attempting every allowed recipient when Telegram delivery fails", async () => {
     const fetchImpl = jest
       .fn<typeof fetch>()
@@ -1352,7 +1413,7 @@ describe("notification services", () => {
   it("throws aggregated errors after partial Telegram delivery failures", async () => {
     const fetchImpl = jest
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(createTelegramApiSuccessResponse())
       .mockResolvedValueOnce(new Response("blocked", { status: 403 }));
     const service = new TelegramNotificationService({
       botToken: "token",

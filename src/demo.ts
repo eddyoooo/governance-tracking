@@ -10,6 +10,8 @@ import {
 import type { FetchProtocolResult } from "./jobs/fetchProtocolGovernance.job.js";
 import { AaveAdapter } from "./protocols/aave/aave.adapter.js";
 import { createAaveDemoClient } from "./protocols/aave/aave.demoClient.js";
+import { CowAdapter } from "./protocols/cow/cow.adapter.js";
+import { createCowDemoClient } from "./protocols/cow/cow.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
 import type { StoredProposal } from "./protocols/types.js";
 import { UniswapAdapter } from "./protocols/uniswap/uniswap.adapter.js";
@@ -39,7 +41,13 @@ const DEMO_UNISWAP_ALLOWED_PUBLISHERS = [
   "kenneth",
   "nataliara",
   "GFXlabs",
-  "UniswapFoundation"
+  "UniswapFoundation",
+  "UniswapLabs"
+];
+const DEMO_COW_ALLOWED_PUBLISHERS = [
+  "moo_keeper",
+  "felixhenneke",
+  "middleway.eth"
 ];
 
 function readStepDelayMs(): number {
@@ -155,12 +163,14 @@ function summarizeSourceActivity(records: SourceActivityRecord[]) {
 function createDemoRegistry(
   lidoAdapter: ScriptedLidoDemoAdapter,
   aaveAdapter: AaveAdapter,
-  uniswapAdapter: UniswapAdapter
+  uniswapAdapter: UniswapAdapter,
+  cowAdapter: CowAdapter
 ): ProtocolRegistry {
   const registry = new ProtocolRegistry();
   registry.register(lidoAdapter);
   registry.register(aaveAdapter);
   registry.register(uniswapAdapter);
+  registry.register(cowAdapter);
 
   return registry;
 }
@@ -187,6 +197,10 @@ async function main(): Promise<void> {
     UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_UNISWAP_ALLOWED_PUBLISHERS),
     UNISWAP_FETCH_MAX_PAGES: "10",
     UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
+    COW_ENABLED: "true",
+    COW_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_COW_ALLOWED_PUBLISHERS),
+    COW_FETCH_MAX_PAGES: "10",
+    COW_CATEGORY_FETCH_MAX_PAGES: "2",
     TELEGRAM_ALLOWED_USER_IDS: telegramAllowedUserIdsForDemo(process.env),
     API_AUTH_ENABLED: "false",
     ENABLE_ADMIN_STATUS_REPORTS: adminDemoEnabled ? "true" : "false",
@@ -220,9 +234,26 @@ async function main(): Promise<void> {
       forumApiBaseUrl: env.uniswapForumApiBaseUrl
     })
   });
+  const cowAdapter = new CowAdapter({
+    enabled: env.cowEnabled,
+    forumBaseUrl: env.cowForumBaseUrl,
+    forumApiBaseUrl: env.cowForumApiBaseUrl,
+    allowedPublishers: env.cowAllowedPublishers,
+    maxPages: env.cowFetchMaxPages,
+    categoryMaxPages: env.cowCategoryFetchMaxPages,
+    client: createCowDemoClient({
+      forumBaseUrl: env.cowForumBaseUrl,
+      forumApiBaseUrl: env.cowForumApiBaseUrl
+    })
+  });
   const { context } = createApp({
     env,
-    protocolRegistry: createDemoRegistry(lidoAdapter, aaveAdapter, uniswapAdapter)
+    protocolRegistry: createDemoRegistry(
+      lidoAdapter,
+      aaveAdapter,
+      uniswapAdapter,
+      cowAdapter
+    )
   });
   await Promise.all(
     context.protocolRegistry
@@ -237,7 +268,7 @@ async function main(): Promise<void> {
 
   console.log("Governance monitor demo");
   console.log(
-    "Using memory storage plus locally saved Lido, Aave, and Uniswap forum samples."
+    "Using memory storage plus locally saved Lido, Aave, Uniswap, and CoW forum samples."
   );
   console.log(
     "The scripted records are treated as discoveries after an established baseline."
@@ -267,6 +298,7 @@ async function main(): Promise<void> {
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,
       uniswapAllowedPublishers: env.uniswapAllowedPublishers,
+      cowAllowedPublishers: env.cowAllowedPublishers,
       nonAllowlistedPublisherSample: {
         sourceId: nonAllowlistedDemoFixture.sourceId,
         publisherName: nonAllowlistedDemoFixture.publisherName,
@@ -362,6 +394,18 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  const cowFirstFetch = await runStep(
+    "CoW fetch: scan global latest plus all public category feeds",
+    async () => summarizeFetch(await context.fetchJob.run("cow")),
+    stepDelayMs
+  );
+
+  const cowDuplicateFetch = await runStep(
+    "CoW duplicate fetch: prove existing proposals are not duplicated or rewritten",
+    async () => summarizeFetch(await context.fetchJob.run("cow")),
+    stepDelayMs
+  );
+
   const lidoDuplicateFetch = await runStep(
     "Lido duplicate fetch: prove repeat sightings are unchanged",
     async () => summarizeFetch(await context.fetchJob.run("lido")),
@@ -439,6 +483,10 @@ async function main(): Promise<void> {
     uniswap: {
       firstFetch: uniswapFirstFetch,
       duplicateFetch: uniswapDuplicateFetch
+    },
+    cow: {
+      firstFetch: cowFirstFetch,
+      duplicateFetch: cowDuplicateFetch
     },
     lidoDuplicateFetch,
     storedProposalCount: storedProposals.length,

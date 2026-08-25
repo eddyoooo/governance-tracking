@@ -63,6 +63,10 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
+function formatProtocolLabel(value: string): string {
+  return value.trim().toLowerCase() === "cow" ? "CoW" : titleCase(value);
+}
+
 function escapeTelegramHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -94,15 +98,6 @@ async function readTelegramApiFailure(
   response: Response,
   redact: (value: string) => string
 ): Promise<{ status: number; responseBody: string } | null> {
-  const isJson = response.headers
-    .get("content-type")
-    ?.toLowerCase()
-    .includes("application/json");
-
-  if (response.ok && !isJson) {
-    return null;
-  }
-
   const rawResponseBody = await response.text().catch(() => "");
   const responseBody = truncateDeliveryDetail(redact(rawResponseBody));
 
@@ -140,7 +135,7 @@ export function formatTelegramGovernanceMessage(
 ): string {
   return [
     "<b>NEW GOVERNANCE ITEM TRACKED</b>",
-    `Protocol: ${escapeTelegramHtml(titleCase(message.protocol))}`,
+    `Protocol: ${escapeTelegramHtml(formatProtocolLabel(message.protocol))}`,
     `Source: ${escapeTelegramHtml(titleCase(message.sourceType))}`,
     `Publisher: ${escapeTelegramHtml(message.publisherName)}`,
     `Title: ${escapeTelegramHtml(message.title)}`,

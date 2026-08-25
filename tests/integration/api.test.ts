@@ -8,6 +8,7 @@ import type {
   NotificationMessage,
   NotificationService
 } from "../../src/notifications/index.js";
+import { TelegramNotificationService } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import { createApp } from "../../src/server.js";
 import { MemoryFetchRunRepository } from "../../src/storage/fetchRun.repository.js";
@@ -19,6 +20,7 @@ import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
   createSilentLogger,
+  createTelegramApiSuccessResponse,
   testEnv
 } from "../helpers/builders.js";
 
@@ -154,10 +156,12 @@ describe("monitor API", () => {
     const lido = await request(app).post("/api/admin/fetch/LIDO").expect(200);
     const aave = await request(app).post("/api/admin/fetch/aave").expect(200);
     const uniswap = await request(app).post("/api/admin/fetch/uniswap").expect(200);
+    const cow = await request(app).post("/api/admin/fetch/cow").expect(200);
 
     expect(fetchJob.run).toHaveBeenNthCalledWith(1, "lido");
     expect(fetchJob.run).toHaveBeenNthCalledWith(2, "aave");
     expect(fetchJob.run).toHaveBeenNthCalledWith(3, "uniswap");
+    expect(fetchJob.run).toHaveBeenNthCalledWith(4, "cow");
     expect(lido.body).toMatchObject({
       protocol: "lido",
       fetchedCount: 2,
@@ -176,6 +180,232 @@ describe("monitor API", () => {
       storedNewCount: 1,
       skippedCount: 1
     });
+    expect(cow.body).toMatchObject({
+      protocol: "cow",
+      fetchedCount: 2,
+      storedNewCount: 1,
+      skippedCount: 1
+    });
+  });
+
+  it("runs the real CoW fixture pipeline through the API without duplicates", async () => {
+    const notificationService = new RecordingNotificationService();
+    const { app, context } = createApp({
+      env: testEnv({
+        COW_ENABLED: "true",
+        SOURCE_ACTIVITY_WARNING_DAYS: "3650",
+        SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify([
+          "moo_keeper",
+          "felixhenneke",
+          "middleway.eth"
+        ])
+      }),
+      notificationService
+    });
+    await context.protocolStateRepository.initializeBaseline("cow", true);
+
+    const first = await request(app).post("/api/admin/fetch/cow").expect(200);
+    const second = await request(app).post("/api/admin/fetch/cow").expect(200);
+
+    expect(first.body).toMatchObject({
+      protocol: "cow",
+      fetchedCount: 4,
+      allowlistedCount: 3,
+      storedNewCount: 3,
+      unchangedExistingCount: 0,
+      skippedCount: 1,
+      notificationSentCount: 3,
+      notificationFailedCount: 0,
+      errors: []
+    });
+    expect(second.body).toMatchObject({
+      protocol: "cow",
+      fetchedCount: 4,
+      allowlistedCount: 3,
+      storedNewCount: 0,
+      unchangedExistingCount: 3,
+      skippedCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    });
+    expect(notificationService.messages).toHaveLength(3);
+    expect(notificationService.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ protocol: "cow", publisherName: "MooKeeper" }),
+        expect.objectContaining({
+          protocol: "cow",
+          publisherName: "felixhenneke"
+        }),
+        expect.objectContaining({ protocol: "cow", publisherName: "Chen" })
+      ])
+    );
+    await expect(
+      context.proposalRepository.findBySourceIdentity("cow", "forum", "3494")
+    ).resolves.toBeNull();
+    await expect(context.proposalRepository.findAll()).resolves.toHaveLength(3);
+  });
+
+  it("silently establishes the real CoW fixture baseline before allowing future alerts", async () => {
+    const notificationService = new RecordingNotificationService();
+    const { app, context } = createApp({
+      env: testEnv({
+        COW_ENABLED: "true",
+        SOURCE_ACTIVITY_WARNING_DAYS: "3650",
+        SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify([
+          "moo_keeper",
+          "felixhenneke",
+          "middleway.eth"
+        ])
+      }),
+      notificationService
+    });
+
+    const baseline = await request(app).post("/api/admin/fetch/cow").expect(200);
+    const repeated = await request(app).post("/api/admin/fetch/cow").expect(200);
+    const proposals = await context.proposalRepository.findAll();
+
+    expect(baseline.body).toMatchObject({
+      protocol: "cow",
+      fetchedCount: 4,
+      allowlistedCount: 3,
+      storedNewCount: 3,
+      baselineSeededCount: 3,
+      unchangedExistingCount: 0,
+      skippedCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    });
+    expect(repeated.body).toMatchObject({
+      protocol: "cow",
+      fetchedCount: 4,
+      allowlistedCount: 3,
+      storedNewCount: 0,
+      baselineSeededCount: 0,
+      unchangedExistingCount: 3,
+      skippedCount: 1,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    });
+    expect(notificationService.messages).toEqual([]);
+    expect(proposals).toHaveLength(3);
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "cow",
+          publisherName: "MooKeeper",
+          notificationStatus: "skipped"
+        }),
+        expect.objectContaining({
+          protocol: "cow",
+          publisherName: "felixhenneke",
+          notificationStatus: "skipped"
+        }),
+        expect.objectContaining({
+          protocol: "cow",
+          publisherName: "Chen",
+          notificationStatus: "skipped"
+        })
+      ])
+    );
+    await expect(
+      context.protocolStateRepository.findByProtocol("cow")
+    ).resolves.toMatchObject({ baselineStatus: "complete" });
+    await expect(
+      context.sourceActivityRepository.findByProtocol("cow")
+    ).resolves.toMatchObject({
+      protocol: "cow",
+      latestRawSourceId: "3527",
+      lastFetchedCount: 4,
+      status: "healthy"
+    });
+  });
+
+  it("keeps CoW notifications failed until Telegram returns a real success acknowledgement", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(
+      async () =>
+        new Response("<html>proxy accepted the request</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        })
+    );
+    const notificationService = new TelegramNotificationService({
+      botToken: "test-token",
+      allowedUserIds: ["111111111"],
+      fetchImpl,
+      logger: createSilentLogger()
+    });
+    const { app, context } = createApp({
+      env: testEnv({
+        COW_ENABLED: "true",
+        SOURCE_ACTIVITY_WARNING_DAYS: "3650",
+        SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify([
+          "moo_keeper",
+          "felixhenneke",
+          "middleway.eth"
+        ])
+      }),
+      notificationService
+    });
+    await context.protocolStateRepository.initializeBaseline("cow", true);
+
+    const failedFetch = await request(app)
+      .post("/api/admin/fetch/cow")
+      .expect(200);
+    const failedProposals = await context.proposalRepository.findAll();
+
+    expect(failedFetch.body).toMatchObject({
+      protocol: "cow",
+      storedNewCount: 3,
+      notificationSentCount: 0,
+      notificationFailedCount: 3
+    });
+    expect(failedFetch.body.errors).toHaveLength(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(failedProposals).toHaveLength(3);
+    expect(
+      failedProposals.every(
+        (proposal) =>
+          proposal.notificationStatus === "failed" &&
+          Object.values(proposal.notificationDeliveries ?? {}).every(
+            (delivery) =>
+              delivery.status === "failed" && Boolean(delivery.nextRetryAt)
+          )
+      )
+    ).toBe(true);
+
+    fetchImpl.mockImplementation(async () => createTelegramApiSuccessResponse());
+    const latestRetryAt = failedProposals
+      .flatMap((proposal) =>
+        Object.values(proposal.notificationDeliveries ?? {}).map(
+          (delivery) => delivery.nextRetryAt ?? ""
+        )
+      )
+      .sort()
+      .at(-1);
+    const recovery = await context.notificationDispatcher.recoverOutstanding(
+      latestRetryAt ?? new Date().toISOString()
+    );
+
+    expect(recovery).toMatchObject({
+      candidateCount: 3,
+      attemptedProposalCount: 3,
+      attemptedRecipientCount: 3,
+      recoveredCount: 3,
+      stillFailedCount: 0,
+      errors: []
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(
+      (await context.proposalRepository.findAll()).every(
+        (proposal) => proposal.notificationStatus === "sent"
+      )
+    ).toBe(true);
   });
 
   it("maps admin fetch errors to stable HTTP statuses", async () => {

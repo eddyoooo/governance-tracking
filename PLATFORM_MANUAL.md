@@ -1,6 +1,6 @@
 # Platform Manual
 
-Quick operator guide for the Lido, Aave, and Uniswap governance monitor. The service polls governance forums, filters by trusted publishers, stores new proposals, sends direct Telegram alerts, retries failed recipients automatically, and reports source and system health to the Telegram admin.
+Quick operator guide for the Lido, Aave, Uniswap, and CoW DAO governance monitor. The service polls governance forums, filters by trusted publishers, stores new proposals, sends direct Telegram alerts, retries failed recipients automatically, and reports source and system health to the Telegram admin.
 
 Detailed architecture and configuration are in [README.md](./README.md).
 
@@ -27,7 +27,7 @@ Expected:
 - All normal unit, regression, repository, and API integration tests pass.
 - Coverage remains above the enforced global thresholds.
 - The live Telegram E2E test remains skipped unless explicitly requested.
-- The credential-free demo completes for Lido, Aave, and Uniswap.
+- The credential-free demo completes for Lido, Aave, Uniswap, and CoW.
 - The production Docker image builds.
 
 ## Local Start
@@ -77,7 +77,7 @@ DEMO_STEP_DELAY_MS=0 npm run demo
 
 The demo uses locally saved real forum samples and memory storage. It shows:
 
-- Lido, Aave, and Uniswap using the shared fetch pipeline.
+- Lido, Aave, Uniswap, and CoW using the shared fetch pipeline.
 - Protocol-specific publisher allowlists.
 - Non-allowlisted topics being skipped.
 - New allowlisted proposals being normalized and stored.
@@ -123,6 +123,7 @@ This reads runtime state only. It does not call a forum.
 curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
+curl -s -X POST "$API/api/admin/fetch/cow"
 ```
 
 Each call runs the same pipeline as the scheduler. Production mode calls the live forum; memory/demo mode uses local samples.
@@ -194,6 +195,8 @@ Retry delays are:
 
 Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` marks that delivery skipped and also allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
 
+The monitor accepts delivery only after Telegram returns valid JSON with `ok: true`. A misleading HTTP `2xx` proxy page, malformed response, empty response, or Telegram `ok: false` response stays unresolved and is retried automatically.
+
 The daily admin report continues to say `ATTENTION REQUIRED` while unresolved state remains.
 
 ## API Auth
@@ -239,7 +242,7 @@ TELEGRAM_TEST_SEND_DELAY_MS=3000
 npm run telegram:test-send
 ```
 
-Expected: the admin receives real Lido, Aave, and Uniswap sample notifications with three seconds between messages. Teammate production recipients are not contacted.
+Expected: the admin receives real Lido, Aave, Uniswap, and CoW sample notifications with three seconds between messages. Teammate production recipients are not contacted.
 
 Real Telegram E2E:
 
@@ -265,7 +268,7 @@ At `08:00`, all enabled protocols fetch. Every 15 minutes, unresolved notificati
 
 Cron uses the container/server timezone. Run only one scheduler-enabled replica where practical to avoid duplicate polling and audit runs.
 
-Forum requests retry transient network failures, timeouts, and `408`, `429`, or `5xx` responses up to three attempts. Invalid JSON and definitive client errors are not retried. If a later page or one redundant Aave/Uniswap category feed fails after recent topics were obtained, the monitor preserves the usable data and continues. A protocol run fails when no usable governance feed can be read.
+Forum requests retry transient network failures, timeouts, and `408`, `429`, or `5xx` responses up to three attempts. Invalid JSON and definitive client errors are not retried. If a later page or one redundant Aave/Uniswap/CoW category feed fails after recent topics were obtained, the monitor preserves the usable data and continues. A protocol run fails when no usable governance feed can be read.
 
 ## Tests
 
@@ -283,7 +286,7 @@ npm run check
 
 `npm run check` runs the production build, strict unused-symbol typecheck, and every normal Jest/Supertest test.
 
-`npm test` also collects coverage and fails below 92% statements, 80% branches, 90% functions, or 92% lines. It never sends live Telegram messages.
+`npm test` also collects coverage and fails below 97% statements, 88% branches, 96% functions, or 97% lines. It never sends live Telegram messages.
 
 Watch mode:
 
@@ -298,6 +301,8 @@ Build:
 ```bash
 docker build -t governance-tracker-bot .
 ```
+
+The production container runs as the non-root `node` user.
 
 Run with the production `-e` values documented in the README:
 

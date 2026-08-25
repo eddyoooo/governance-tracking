@@ -32,6 +32,7 @@ describe("Docker configuration", () => {
     expect(dockerfile).toContain("FROM node:24-alpine AS base");
     expect(dockerfile).not.toContain("node:20");
     expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');
+    expect(dockerfile).toContain("USER node");
     expect(dockerfile).not.toContain("AS dev");
     expect(dockerfile).not.toContain('CMD ["npm", "run", "dev"]');
     expect(dockerfile).not.toContain("COPY .env");

@@ -25,6 +25,7 @@ import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
   createSilentLogger,
+  createTelegramApiSuccessResponse,
   testEnv
 } from "../helpers/builders.js";
 
@@ -151,6 +152,52 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Source activity:");
     expect(result.message).toContain("- lido: healthy");
     expect(result.message).toContain("Problems:\n- None detected.");
+  });
+
+  it("includes an enabled healthy CoW adapter in the daily operator report", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const proposalRepository = new MemoryProposalRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(createRun({ protocol: "cow" }));
+    await sourceActivityRepository.upsert(
+      createSourceActivity({ protocol: "cow", latestRawSourceId: "3527" })
+    );
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({
+        ENABLE_SCHEDULER: "true",
+        STORAGE_MODE: "firestore",
+        DEMO_MODE: "false",
+        COW_ENABLED: "true",
+        COW_ALLOWED_PUBLISHERS: JSON.stringify([
+          "moo_keeper",
+          "felixhenneke",
+          "middleway.eth"
+        ])
+      }),
+      protocolRegistry: {
+        list: jest.fn(() => [
+          createFakeProtocolAdapter({
+            protocol: "cow",
+            publisherAllowlist: [
+              "moo_keeper",
+              "felixhenneke",
+              "middleway.eth"
+            ]
+          })
+        ])
+      } as never,
+      fetchRunRepository,
+      proposalRepository,
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.problems).toEqual([]);
+    expect(result.message).toContain("Enabled protocols: cow");
+    expect(result.message).toContain("- cow: success");
+    expect(result.message).toContain("- cow: healthy; latest raw 3527");
   });
 
   it("reports missing fetches, failed fetches, and failed notification state", async () => {
@@ -756,7 +803,9 @@ describe("admin status reports", () => {
   });
 
   it("sends Telegram admin reports only to the configured admin user", async () => {
-    const fetchImpl = jest.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    const fetchImpl = jest.fn<typeof fetch>(async () =>
+      createTelegramApiSuccessResponse()
+    );
     const notifier = new TelegramAdminStatusNotifier({
       botToken: "admin-token",
       adminUserId: "1549323073",
@@ -852,6 +901,27 @@ describe("admin status reports", () => {
     await expect(malformedNotifier.send("status")).rejects.toMatchObject({
       status: 200,
       responseBody: "<html>proxy error</html>"
+    });
+  });
+
+  it("rejects an HTTP 200 non-JSON proxy response for the daily admin report", async () => {
+    const notifier = new TelegramAdminStatusNotifier({
+      botToken: "admin-token",
+      adminUserId: "1549323073",
+      fetchImpl: jest.fn<typeof fetch>(
+        async () =>
+          new Response("<html>upstream unavailable</html>", {
+            status: 200,
+            headers: { "content-type": "text/html" }
+          })
+      ),
+      logger: createSilentLogger()
+    });
+
+    await expect(notifier.send("status")).rejects.toMatchObject({
+      name: "TelegramAdminStatusDeliveryError",
+      status: 200,
+      responseBody: "<html>upstream unavailable</html>"
     });
   });
 

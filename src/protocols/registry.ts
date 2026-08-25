@@ -7,6 +7,8 @@ import { LidoAdapter } from "./lido/lido.adapter.js";
 import { createLidoDemoClient } from "./lido/lido.demoClient.js";
 import { UniswapAdapter } from "./uniswap/uniswap.adapter.js";
 import { createUniswapDemoClient } from "./uniswap/uniswap.demoClient.js";
+import { CowAdapter } from "./cow/cow.adapter.js";
+import { createCowDemoClient } from "./cow/cow.demoClient.js";
 import type { ProtocolAdapter } from "./types.js";
 
 export class ProtocolRegistry {
@@ -48,6 +50,13 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
         logger
       })
     : undefined;
+  const cowClient = isMemoryMode(env)
+    ? createCowDemoClient({
+        forumBaseUrl: env.cowForumBaseUrl,
+        forumApiBaseUrl: env.cowForumApiBaseUrl,
+        logger
+      })
+    : undefined;
 
   registry.register(
     new LidoAdapter({
@@ -82,6 +91,18 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       categoryMaxPages: env.uniswapCategoryFetchMaxPages,
       logger,
       client: uniswapClient
+    })
+  );
+  registry.register(
+    new CowAdapter({
+      enabled: env.cowEnabled,
+      forumBaseUrl: env.cowForumBaseUrl,
+      forumApiBaseUrl: env.cowForumApiBaseUrl,
+      allowedPublishers: env.cowAllowedPublishers,
+      maxPages: env.cowFetchMaxPages,
+      categoryMaxPages: env.cowCategoryFetchMaxPages,
+      logger,
+      client: cowClient
     })
   );
 

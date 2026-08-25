@@ -10,6 +10,7 @@ import {
   sendTelegramTestNotifications,
   sleep as sleepForTelegramTest
 } from "../../src/telegramTestSend.runner.js";
+import { createTelegramApiSuccessResponse } from "../helpers/builders.js";
 
 class RecordingNotificationService implements NotificationService {
   readonly name = "recording";
@@ -133,7 +134,7 @@ describe("Telegram test-send runner", () => {
 
   it("creates an admin-only Telegram service for live test sends", async () => {
     const fetchImpl = jest.fn<typeof fetch>(
-      async () => new Response("{}", { status: 200 })
+      async () => createTelegramApiSuccessResponse()
     );
     const service = createAdminOnlyTelegramTestNotificationService({
       botToken: "test-token",

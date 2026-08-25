@@ -19,6 +19,11 @@ const uniswapAllowedPublishers = [
   "GFXlabs",
   "UniswapFoundation"
 ];
+const cowAllowedPublishers = [
+  "moo_keeper",
+  "felixhenneke",
+  "middleway.eth"
+];
 
 describe("env parsing", () => {
   it("parses defaults and comma-separated allowlists for backwards compatibility", () => {
@@ -28,6 +33,8 @@ describe("env parsing", () => {
         " LlamaRisk, TokenLogic, Certora, kpk, karpatkey_TokenLogic, AaveLabs, stani ",
       UNISWAP_ALLOWED_PUBLISHERS:
         " haydenadams, eek637, devinwalsh, kenneth, nataliara, GFXlabs, UniswapFoundation ",
+      COW_ALLOWED_PUBLISHERS:
+        " moo_keeper, felixhenneke, middleway.eth ",
       FIREBASE_PRIVATE_KEY: "line1\\nline2"
     } as NodeJS.ProcessEnv);
 
@@ -53,6 +60,12 @@ describe("env parsing", () => {
     expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
     expect(env.uniswapFetchMaxPages).toBe(10);
     expect(env.uniswapCategoryFetchMaxPages).toBe(2);
+    expect(env.cowForumBaseUrl).toBe("https://forum.cow.fi");
+    expect(env.cowForumApiBaseUrl).toBe("https://forum.cow.fi");
+    expect(env.cowEnabled).toBe(false);
+    expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
+    expect(env.cowFetchMaxPages).toBe(10);
+    expect(env.cowCategoryFetchMaxPages).toBe(2);
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
@@ -72,7 +85,8 @@ describe("env parsing", () => {
         "Lido Ecosystem Foundation - Operations Team"
       ]),
       AAVE_ALLOWED_PUBLISHERS: JSON.stringify(aaveAllowedPublishers),
-      UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers)
+      UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(uniswapAllowedPublishers),
+      COW_ALLOWED_PUBLISHERS: JSON.stringify(cowAllowedPublishers)
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoAllowedPublishers).toEqual([
@@ -82,6 +96,7 @@ describe("env parsing", () => {
     ]);
     expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
     expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
+    expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
   });
 
   it("parses multiline JSON array allowlists", () => {
@@ -113,6 +128,12 @@ describe("env parsing", () => {
         UNISWAP_ALLOWED_PUBLISHERS: "[not-json"
       } as NodeJS.ProcessEnv)
     ).toThrow("Invalid JSON array in UNISWAP_ALLOWED_PUBLISHERS.");
+
+    expect(() =>
+      loadEnv({
+        COW_ALLOWED_PUBLISHERS: "[not-json"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("Invalid JSON array in COW_ALLOWED_PUBLISHERS.");
   });
 
   it("rejects JSON allowlists that are not arrays of strings", () => {
@@ -136,6 +157,7 @@ describe("env parsing", () => {
       LIDO_ENABLED: "FALSE",
       AAVE_ENABLED: "FALSE",
       UNISWAP_ENABLED: "FALSE",
+      COW_ENABLED: "TRUE",
       ENABLE_TELEGRAM_NOTIFICATIONS: "true",
       ENABLE_ADMIN_STATUS_REPORTS: "true",
       ENABLE_SOURCE_ACTIVITY_ALERTS: "false",
@@ -148,6 +170,7 @@ describe("env parsing", () => {
     expect(env.lidoEnabled).toBe(false);
     expect(env.aaveEnabled).toBe(false);
     expect(env.uniswapEnabled).toBe(false);
+    expect(env.cowEnabled).toBe(true);
     expect(env.enableTelegramNotifications).toBe(true);
     expect(env.enableAdminStatusReports).toBe(true);
     expect(env.enableSourceActivityAlerts).toBe(false);
@@ -363,7 +386,9 @@ describe("env parsing", () => {
       AAVE_FETCH_MAX_PAGES: "6",
       AAVE_CATEGORY_FETCH_MAX_PAGES: "3",
       UNISWAP_FETCH_MAX_PAGES: "8",
-      UNISWAP_CATEGORY_FETCH_MAX_PAGES: "4"
+      UNISWAP_CATEGORY_FETCH_MAX_PAGES: "4",
+      COW_FETCH_MAX_PAGES: "9",
+      COW_CATEGORY_FETCH_MAX_PAGES: "3"
     } as NodeJS.ProcessEnv);
 
     expect(env.lidoFetchMaxPages).toBe(7);
@@ -371,10 +396,24 @@ describe("env parsing", () => {
     expect(env.aaveCategoryFetchMaxPages).toBe(3);
     expect(env.uniswapFetchMaxPages).toBe(8);
     expect(env.uniswapCategoryFetchMaxPages).toBe(4);
+    expect(env.cowFetchMaxPages).toBe(9);
+    expect(env.cowCategoryFetchMaxPages).toBe(3);
 
     expect(() =>
       loadEnv({
         LIDO_FETCH_MAX_PAGES: "0"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        COW_FETCH_MAX_PAGES: "21"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        COW_CATEGORY_FETCH_MAX_PAGES: "0"
       } as NodeJS.ProcessEnv)
     ).toThrow();
 

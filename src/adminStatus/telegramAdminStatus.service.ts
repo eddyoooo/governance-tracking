@@ -133,15 +133,6 @@ export class TelegramAdminStatusNotifier implements AdminStatusNotifier {
   }
 
   private async readApiFailure(response: Response): Promise<string | null> {
-    const isJson = response.headers
-      .get("content-type")
-      ?.toLowerCase()
-      .includes("application/json");
-
-    if (response.ok && !isJson) {
-      return null;
-    }
-
     const rawResponseBody = await response.text().catch(() => "");
     const responseBody = this.redact(rawResponseBody);
 

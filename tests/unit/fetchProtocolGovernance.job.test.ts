@@ -24,7 +24,8 @@ import {
 import {
   createFakeProtocolAdapter,
   createRawGovernanceItem,
-  createSilentLogger
+  createSilentLogger,
+  createTelegramApiSuccessResponse
 } from "../helpers/builders.js";
 
 class RecordingFetchRunRepository implements FetchRunRepository {
@@ -256,7 +257,7 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
-  it.each(["lido", "aave", "uniswap"] as const)(
+  it.each(["lido", "aave", "uniswap", "cow"] as const)(
     "silently seeds an empty %s database, then notifies only later discoveries",
     async (protocol) => {
       jest.useFakeTimers();
@@ -853,7 +854,9 @@ describe("FetchProtocolGovernanceJob", () => {
   });
 
   it("fans out production Telegram proposal notifications to every configured allowed user and notifies duplicates only once", async () => {
-    const fetchImpl = jest.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    const fetchImpl = jest.fn<typeof fetch>(async () =>
+      createTelegramApiSuccessResponse()
+    );
     const notificationService = new TelegramNotificationService({
       botToken: "prod-token",
       allowedUserIds: ["111111111", "222222222"],
@@ -897,7 +900,7 @@ describe("FetchProtocolGovernanceJob", () => {
   it("attempts every production Telegram recipient before marking a new proposal notification failed", async () => {
     const fetchImpl = jest
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(createTelegramApiSuccessResponse())
       .mockResolvedValueOnce(new Response("blocked", { status: 403 }));
     const notificationService = new TelegramNotificationService({
       botToken: "prod-token",

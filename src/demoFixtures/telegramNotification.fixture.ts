@@ -154,6 +154,35 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
     sourceUrl:
       "https://gov.uniswap.org/t/governance-proposal-establish-uniswap-governance-as-duni-a-wyoming-duna/25770",
     publishedAt: "2025-08-11T16:02:05.415Z"
+  },
+  {
+    protocol: "cow",
+    sourceType: "forum",
+    sourceId: "3527",
+    publisherName: "MooKeeper",
+    title: "CoW DAO Monthly Recap: July 2026",
+    sourceUrl:
+      "https://forum.cow.fi/t/cow-dao-monthly-recap-july-2026/3527",
+    publishedAt: "2026-08-04T12:47:10.847Z"
+  },
+  {
+    protocol: "cow",
+    sourceType: "forum",
+    sourceId: "3520",
+    publisherName: "felixhenneke",
+    title: "CIP-Draft: Penalty Cap Redesign",
+    sourceUrl:
+      "https://forum.cow.fi/t/cip-draft-penalty-cap-redesign/3520",
+    publishedAt: "2026-07-30T22:00:49.071Z"
+  },
+  {
+    protocol: "cow",
+    sourceType: "forum",
+    sourceId: "28",
+    publisherName: "Chen",
+    title: "CIP-0: Template",
+    sourceUrl: "https://forum.cow.fi/t/cip-0-template/28",
+    publishedAt: "2022-01-31T10:29:54.725Z"
   }
 ];
 
