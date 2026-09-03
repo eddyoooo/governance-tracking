@@ -158,6 +158,46 @@ describe("scheduler", () => {
     );
   });
 
+  it("still schedules recovery and admin reports when protocol polling is disabled", () => {
+    const context = createContext({
+      ENABLE_ADMIN_STATUS_REPORTS: "true",
+      TELEGRAM_BOT_TOKEN: "token"
+    });
+    context.protocolRegistry.list.mockReturnValueOnce([]);
+    context.notificationService.enabled = true;
+    context.adminStatusReporter.enabled = true;
+    const recoveryTask = { stop: jest.fn() };
+    const adminTask = { stop: jest.fn() };
+
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string) =>
+      cron === context.env.notificationRetryCron ? recoveryTask : adminTask
+    );
+
+    const handle = startScheduler(context as never);
+
+    expect(handle).not.toBeNull();
+    expect(scheduleMock).not.toHaveBeenCalledWith(
+      context.env.fetchIntervalCron,
+      expect.any(Function)
+    );
+    expect(scheduleMock).toHaveBeenCalledWith(
+      context.env.notificationRetryCron,
+      expect.any(Function)
+    );
+    expect(scheduleMock).toHaveBeenCalledWith(
+      context.env.adminStatusCron,
+      expect.any(Function)
+    );
+    expect(context.logger.warn).toHaveBeenCalledWith(
+      "No enabled protocol adapters found for governance fetch scheduler"
+    );
+
+    handle?.stop();
+    expect(recoveryTask.stop).toHaveBeenCalledTimes(1);
+    expect(adminTask.stop).toHaveBeenCalledTimes(1);
+  });
+
   it("throws before scheduling when the admin status cron expression is invalid", () => {
     const context = createContext({
       ADMIN_STATUS_CRON: "not-a-cron",

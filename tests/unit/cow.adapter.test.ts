@@ -3,9 +3,11 @@ import { CowAdapter } from "../../src/protocols/cow/cow.adapter.js";
 import { createSilentLogger } from "../helpers/builders.js";
 
 const cowAllowedPublishers = [
-  "moo_keeper",
+  "notsoformal",
+  "Kowrigan",
+  "harisang",
   "felixhenneke",
-  "middleway.eth"
+  "KPK"
 ];
 
 function createCowTopic(sourceId: string, title = `CoW topic ${sourceId}`) {
@@ -13,12 +15,12 @@ function createCowTopic(sourceId: string, title = `CoW topic ${sourceId}`) {
     sourceId,
     title,
     slug: `cow-topic-${sourceId}`,
-    publisherName: "MooKeeper",
+    publisherName: "felixhenneke",
     sourceUrl: `https://forum.cow.fi/t/cow-topic-${sourceId}/${sourceId}`,
     publishedAt: "2026-08-04T12:47:10.847Z",
     raw: {
       topic: { id: Number(sourceId) },
-      publisher: { username: "moo_keeper", name: "MooKeeper" }
+      publisher: { username: "felixhenneke", name: "" }
     }
   };
 }
@@ -131,7 +133,7 @@ describe("CowAdapter", () => {
       protocol: "cow",
       sourceType: "forum",
       title: "CoW topic 3527",
-      publisherName: "MooKeeper"
+      publisherName: "felixhenneke"
     });
     expect(new Date(items[0].fetchedAt).toISOString()).toBe(items[0].fetchedAt);
   });

@@ -171,9 +171,11 @@ describe("admin status reports", () => {
         DEMO_MODE: "false",
         COW_ENABLED: "true",
         COW_ALLOWED_PUBLISHERS: JSON.stringify([
-          "moo_keeper",
+          "notsoformal",
+          "Kowrigan",
+          "harisang",
           "felixhenneke",
-          "middleway.eth"
+          "KPK"
         ])
       }),
       protocolRegistry: {
@@ -181,9 +183,11 @@ describe("admin status reports", () => {
           createFakeProtocolAdapter({
             protocol: "cow",
             publisherAllowlist: [
-              "moo_keeper",
+              "notsoformal",
+              "Kowrigan",
+              "harisang",
               "felixhenneke",
-              "middleway.eth"
+              "KPK"
             ]
           })
         ])

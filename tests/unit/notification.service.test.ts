@@ -121,7 +121,10 @@ describe("notification services", () => {
         "Ken Ng",
         "Natalia",
         "GFX Labs",
-        "UniswapFoundation"
+        "UniswapFoundation",
+        "KPK",
+        "felixhenneke",
+        "notsoformal"
       ])
     );
 

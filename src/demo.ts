@@ -45,9 +45,11 @@ const DEMO_UNISWAP_ALLOWED_PUBLISHERS = [
   "UniswapLabs"
 ];
 const DEMO_COW_ALLOWED_PUBLISHERS = [
-  "moo_keeper",
+  "notsoformal",
+  "Kowrigan",
+  "harisang",
   "felixhenneke",
-  "middleway.eth"
+  "KPK"
 ];
 
 function readStepDelayMs(): number {

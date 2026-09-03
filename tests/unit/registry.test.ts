@@ -21,9 +21,11 @@ const uniswapAllowedPublishers = [
   "UniswapFoundation"
 ];
 const cowAllowedPublishers = [
-  "moo_keeper",
+  "notsoformal",
+  "Kowrigan",
+  "harisang",
   "felixhenneke",
-  "middleway.eth"
+  "KPK"
 ];
 
 describe("ProtocolRegistry", () => {

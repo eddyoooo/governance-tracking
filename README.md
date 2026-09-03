@@ -318,7 +318,8 @@ Allowed values:
 - `SOURCE_ACTIVITY_WARNING_DAYS`: positive integer; warns when newest raw forum item is at least this old.
 - `SOURCE_ACTIVITY_CRITICAL_DAYS`: positive integer greater than or equal to warning days.
 - `SOURCE_ACTIVITY_MIN_FETCHED_COUNT`: non-negative integer; marks source critical if a fetch returns fewer raw items.
-- `API_AUTH_ENABLED`: `true` or `false`.
+- `API_AUTH_ENABLED`: `true` or `false`. When `true`, startup fails unless
+  `API_AUTH_TOKEN` contains a non-blank token; surrounding whitespace is ignored.
 - `ENABLE_TELEGRAM_NOTIFICATIONS`: `true` or `false`.
 - `NOTIFICATION_RETRY_CRON`: valid cron expression; default `*/15 * * * *`.
 - `ENABLE_ADMIN_STATUS_REPORTS`: `true` or `false`.
@@ -397,15 +398,17 @@ COW_FORUM_BASE_URL=https://forum.cow.fi
 COW_FORUM_API_BASE_URL=https://forum.cow.fi
 COW_ENABLED=true
 COW_ALLOWED_PUBLISHERS='[
-  "moo_keeper",
+  "notsoformal",
+  "Kowrigan",
+  "harisang",
   "felixhenneke",
-  "middleway.eth"
+  "KPK"
 ]'
 COW_FETCH_MAX_PAGES=10
 COW_CATEGORY_FETCH_MAX_PAGES=2
 ```
 
-CoW allowlist entries use exact Discourse profile usernames. The initial three profiles were verified against the public forum API. Filtering checks both the display name and raw username, so `middleway.eth` remains trackable even when a topic displays the publisher as `Chen`. Treat this as an initial operational allowlist and replace or extend it when the production stakeholder list is finalized.
+CoW allowlist entries use exact Discourse profile usernames. The five profiles above were verified against the public forum API. Matching is case-insensitive, but canonical casing is retained for `Kowrigan` and `KPK`. Filtering checks both the display name and raw username, so a profile remains trackable when Discourse shows a different display name.
 
 Telegram direct-user notifications:
 
@@ -627,7 +630,7 @@ docker run -d \
   governance-tracker-bot
 ```
 
-Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'`, and `-e COW_ALLOWED_PUBLISHERS='["moo_keeper","felixhenneke","middleway.eth"]'` if they are not already provided by the deployment environment. CoW defaults to disabled unless `COW_ENABLED=true` is supplied, making deployment of an older runtime environment backward-safe.
+Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'`, and `-e COW_ALLOWED_PUBLISHERS='["notsoformal","Kowrigan","harisang","felixhenneke","KPK"]'` if they are not already provided by the deployment environment. CoW defaults to disabled unless `COW_ENABLED=true` is supplied, making deployment of an older runtime environment backward-safe.
 
 For `FIREBASE_PRIVATE_KEY`, pass escaped newlines, for example `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n`. A deployment secret manager is preferable to pasting secrets into shell history.
 

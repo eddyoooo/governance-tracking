@@ -221,7 +221,7 @@ const rawEnvSchema = z
     TELEGRAM_E2E_ENABLED: booleanFromEnv.default(false),
     TELEGRAM_TEST_SEND_DELAY_MS: delayMsFromEnv,
     API_AUTH_ENABLED: booleanFromEnv.default(false),
-    API_AUTH_TOKEN: z.string().default(""),
+    API_AUTH_TOKEN: z.string().default("").transform((value) => value.trim()),
     LOG_LEVEL: z
       .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
       .default("info")
@@ -284,7 +284,10 @@ const rawEnvSchema = z
       message:
         "SOURCE_ACTIVITY_CRITICAL_DAYS must be greater than or equal to SOURCE_ACTIVITY_WARNING_DAYS."
     }
-  );
+  )
+  .refine((value) => !value.apiAuthEnabled || value.apiAuthToken.length > 0, {
+    message: "API_AUTH_TOKEN must be set when API_AUTH_ENABLED=true."
+  });
 
 export type Env = z.infer<typeof rawEnvSchema>;
 

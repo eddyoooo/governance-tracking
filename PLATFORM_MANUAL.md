@@ -208,6 +208,9 @@ API_AUTH_ENABLED=true
 API_AUTH_TOKEN=replace-with-long-random-secret
 ```
 
+When API auth is enabled, the process fails at startup if the token is blank.
+Surrounding whitespace in the configured token is ignored.
+
 ```bash
 curl -s "$API/health" \
   -H "Authorization: Bearer $API_AUTH_TOKEN"
@@ -313,6 +316,12 @@ docker run -d \
   --restart unless-stopped \
   [runtime -e variables...] \
   governance-tracker-bot
+```
+
+Current CoW publisher configuration:
+
+```bash
+-e COW_ALLOWED_PUBLISHERS='["notsoformal","Kowrigan","harisang","felixhenneke","KPK"]' \
 ```
 
 Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally.

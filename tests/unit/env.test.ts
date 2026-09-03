@@ -20,9 +20,11 @@ const uniswapAllowedPublishers = [
   "UniswapFoundation"
 ];
 const cowAllowedPublishers = [
-  "moo_keeper",
+  "notsoformal",
+  "Kowrigan",
+  "harisang",
   "felixhenneke",
-  "middleway.eth"
+  "KPK"
 ];
 
 describe("env parsing", () => {
@@ -34,7 +36,7 @@ describe("env parsing", () => {
       UNISWAP_ALLOWED_PUBLISHERS:
         " haydenadams, eek637, devinwalsh, kenneth, nataliara, GFXlabs, UniswapFoundation ",
       COW_ALLOWED_PUBLISHERS:
-        " moo_keeper, felixhenneke, middleway.eth ",
+        " notsoformal, Kowrigan, harisang, felixhenneke, KPK ",
       FIREBASE_PRIVATE_KEY: "line1\\nline2"
     } as NodeJS.ProcessEnv);
 
@@ -162,7 +164,8 @@ describe("env parsing", () => {
       ENABLE_ADMIN_STATUS_REPORTS: "true",
       ENABLE_SOURCE_ACTIVITY_ALERTS: "false",
       TELEGRAM_E2E_ENABLED: "true",
-      API_AUTH_ENABLED: "true"
+      API_AUTH_ENABLED: "true",
+      API_AUTH_TOKEN: "test-token"
     } as NodeJS.ProcessEnv);
 
     expect(env.demoMode).toBe(true);
@@ -176,6 +179,7 @@ describe("env parsing", () => {
     expect(env.enableSourceActivityAlerts).toBe(false);
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.apiAuthEnabled).toBe(true);
+    expect(env.apiAuthToken).toBe("test-token");
   });
 
   it("accepts already-parsed values from programmatic configuration sources", () => {
@@ -332,6 +336,30 @@ describe("env parsing", () => {
         ENABLE_SCHEDULER: "yes"
       } as NodeJS.ProcessEnv)
     ).toThrow();
+  });
+
+  it("requires a usable API token when global API auth is enabled", () => {
+    expect(() =>
+      loadEnv({
+        API_AUTH_ENABLED: "true"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("API_AUTH_TOKEN must be set when API_AUTH_ENABLED=true.");
+
+    expect(() =>
+      loadEnv({
+        API_AUTH_ENABLED: "true",
+        API_AUTH_TOKEN: "   "
+      } as NodeJS.ProcessEnv)
+    ).toThrow("API_AUTH_TOKEN must be set when API_AUTH_ENABLED=true.");
+  });
+
+  it("trims surrounding API token whitespace so Docker input remains usable", () => {
+    const env = loadEnv({
+      API_AUTH_ENABLED: "true",
+      API_AUTH_TOKEN: "  test-token  "
+    } as NodeJS.ProcessEnv);
+
+    expect(env.apiAuthToken).toBe("test-token");
   });
 
   it("treats blank allowlist entries as absent", () => {

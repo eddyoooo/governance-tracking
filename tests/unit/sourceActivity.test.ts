@@ -141,6 +141,52 @@ describe("source activity watchdog", () => {
     });
   });
 
+  it("clears an obsolete warning reason after fresh source activity resumes", async () => {
+    const repository = new MemorySourceActivityRepository();
+    const adapter = createFakeProtocolAdapter({ protocol: "lido" });
+
+    const warning = await updateSourceActivity({
+      repository,
+      source: adapter.source,
+      rawItems: [
+        createRawGovernanceItem({
+          protocol: "lido",
+          sourceId: "old",
+          publishedAt: "2026-06-01T00:00:00.000Z"
+        })
+      ],
+      fetchedAt: "2026-06-20T00:00:00.000Z",
+      config
+    });
+    const recovered = await updateSourceActivity({
+      repository,
+      source: adapter.source,
+      rawItems: [
+        createRawGovernanceItem({
+          protocol: "lido",
+          sourceId: "new",
+          publishedAt: "2026-06-20T01:00:00.000Z"
+        })
+      ],
+      fetchedAt: "2026-06-20T02:00:00.000Z",
+      config
+    });
+
+    expect(warning).toMatchObject({
+      status: "warning",
+      statusReason: expect.stringContaining("19 day(s) old")
+    });
+    expect(recovered).toMatchObject({
+      status: "healthy",
+      latestRawSourceId: "new",
+      consecutiveStaleRuns: 0
+    });
+    expect(recovered.statusReason).toBeUndefined();
+    await expect(repository.findByProtocol("lido")).resolves.not.toHaveProperty(
+      "statusReason"
+    );
+  });
+
   it("marks old source activity as warning or critical by age", async () => {
     const repository = new MemorySourceActivityRepository();
     const adapter = createFakeProtocolAdapter({ protocol: "lido" });

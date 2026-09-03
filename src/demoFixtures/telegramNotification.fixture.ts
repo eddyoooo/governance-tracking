@@ -158,31 +158,32 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
   {
     protocol: "cow",
     sourceType: "forum",
-    sourceId: "3527",
-    publisherName: "MooKeeper",
-    title: "CoW DAO Monthly Recap: July 2026",
+    sourceId: "3533",
+    publisherName: "KPK",
+    title: "KPK H1 2026 Review for CoW DAO",
     sourceUrl:
-      "https://forum.cow.fi/t/cow-dao-monthly-recap-july-2026/3527",
-    publishedAt: "2026-08-04T12:47:10.847Z"
+      "https://forum.cow.fi/t/kpk-h1-2026-review-for-cow-dao/3533",
+    publishedAt: "2026-08-14T15:09:07.243Z"
   },
   {
     protocol: "cow",
     sourceType: "forum",
     sourceId: "3520",
     publisherName: "felixhenneke",
-    title: "CIP-Draft: Penalty Cap Redesign",
+    title: "CIP-87: Penalty Cap Redesign",
     sourceUrl:
-      "https://forum.cow.fi/t/cip-draft-penalty-cap-redesign/3520",
+      "https://forum.cow.fi/t/cip-87-penalty-cap-redesign/3520",
     publishedAt: "2026-07-30T22:00:49.071Z"
   },
   {
     protocol: "cow",
     sourceType: "forum",
-    sourceId: "28",
-    publisherName: "Chen",
-    title: "CIP-0: Template",
-    sourceUrl: "https://forum.cow.fi/t/cip-0-template/28",
-    publishedAt: "2022-01-31T10:29:54.725Z"
+    sourceId: "3454",
+    publisherName: "notsoformal",
+    title: "CoW DAO's Path to Value Distribution: Core Team view",
+    sourceUrl:
+      "https://forum.cow.fi/t/cow-daos-path-to-value-distribution-core-team-view/3454",
+    publishedAt: "2026-05-15T17:53:21.772Z"
   }
 ];
 

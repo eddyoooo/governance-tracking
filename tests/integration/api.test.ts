@@ -196,9 +196,11 @@ describe("monitor API", () => {
         SOURCE_ACTIVITY_WARNING_DAYS: "3650",
         SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
         COW_ALLOWED_PUBLISHERS: JSON.stringify([
-          "moo_keeper",
+          "notsoformal",
+          "Kowrigan",
+          "harisang",
           "felixhenneke",
-          "middleway.eth"
+          "KPK"
         ])
       }),
       notificationService
@@ -211,40 +213,42 @@ describe("monitor API", () => {
     expect(first.body).toMatchObject({
       protocol: "cow",
       fetchedCount: 4,
-      allowlistedCount: 3,
-      storedNewCount: 3,
+      allowlistedCount: 2,
+      storedNewCount: 2,
       unchangedExistingCount: 0,
-      skippedCount: 1,
-      notificationSentCount: 3,
+      skippedCount: 2,
+      notificationSentCount: 2,
       notificationFailedCount: 0,
       errors: []
     });
     expect(second.body).toMatchObject({
       protocol: "cow",
       fetchedCount: 4,
-      allowlistedCount: 3,
+      allowlistedCount: 2,
       storedNewCount: 0,
-      unchangedExistingCount: 3,
-      skippedCount: 1,
+      unchangedExistingCount: 2,
+      skippedCount: 2,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []
     });
-    expect(notificationService.messages).toHaveLength(3);
+    expect(notificationService.messages).toHaveLength(2);
     expect(notificationService.messages).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ protocol: "cow", publisherName: "MooKeeper" }),
         expect.objectContaining({
           protocol: "cow",
           publisherName: "felixhenneke"
         }),
-        expect.objectContaining({ protocol: "cow", publisherName: "Chen" })
+        expect.objectContaining({ protocol: "cow", publisherName: "KPK" })
       ])
     );
     await expect(
-      context.proposalRepository.findBySourceIdentity("cow", "forum", "3494")
+      context.proposalRepository.findBySourceIdentity("cow", "forum", "3527")
     ).resolves.toBeNull();
-    await expect(context.proposalRepository.findAll()).resolves.toHaveLength(3);
+    await expect(
+      context.proposalRepository.findBySourceIdentity("cow", "forum", "3494")
+    ).resolves.toMatchObject({ publisherName: "KPK" });
+    await expect(context.proposalRepository.findAll()).resolves.toHaveLength(2);
   });
 
   it("silently establishes the real CoW fixture baseline before allowing future alerts", async () => {
@@ -255,9 +259,11 @@ describe("monitor API", () => {
         SOURCE_ACTIVITY_WARNING_DAYS: "3650",
         SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
         COW_ALLOWED_PUBLISHERS: JSON.stringify([
-          "moo_keeper",
+          "notsoformal",
+          "Kowrigan",
+          "harisang",
           "felixhenneke",
-          "middleway.eth"
+          "KPK"
         ])
       }),
       notificationService
@@ -270,11 +276,11 @@ describe("monitor API", () => {
     expect(baseline.body).toMatchObject({
       protocol: "cow",
       fetchedCount: 4,
-      allowlistedCount: 3,
-      storedNewCount: 3,
-      baselineSeededCount: 3,
+      allowlistedCount: 2,
+      storedNewCount: 2,
+      baselineSeededCount: 2,
       unchangedExistingCount: 0,
-      skippedCount: 1,
+      skippedCount: 2,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []
@@ -282,24 +288,19 @@ describe("monitor API", () => {
     expect(repeated.body).toMatchObject({
       protocol: "cow",
       fetchedCount: 4,
-      allowlistedCount: 3,
+      allowlistedCount: 2,
       storedNewCount: 0,
       baselineSeededCount: 0,
-      unchangedExistingCount: 3,
-      skippedCount: 1,
+      unchangedExistingCount: 2,
+      skippedCount: 2,
       notificationSentCount: 0,
       notificationFailedCount: 0,
       errors: []
     });
     expect(notificationService.messages).toEqual([]);
-    expect(proposals).toHaveLength(3);
+    expect(proposals).toHaveLength(2);
     expect(proposals).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          protocol: "cow",
-          publisherName: "MooKeeper",
-          notificationStatus: "skipped"
-        }),
         expect.objectContaining({
           protocol: "cow",
           publisherName: "felixhenneke",
@@ -307,7 +308,7 @@ describe("monitor API", () => {
         }),
         expect.objectContaining({
           protocol: "cow",
-          publisherName: "Chen",
+          publisherName: "KPK",
           notificationStatus: "skipped"
         })
       ])
@@ -345,9 +346,11 @@ describe("monitor API", () => {
         SOURCE_ACTIVITY_WARNING_DAYS: "3650",
         SOURCE_ACTIVITY_CRITICAL_DAYS: "7300",
         COW_ALLOWED_PUBLISHERS: JSON.stringify([
-          "moo_keeper",
+          "notsoformal",
+          "Kowrigan",
+          "harisang",
           "felixhenneke",
-          "middleway.eth"
+          "KPK"
         ])
       }),
       notificationService
@@ -361,13 +364,13 @@ describe("monitor API", () => {
 
     expect(failedFetch.body).toMatchObject({
       protocol: "cow",
-      storedNewCount: 3,
+      storedNewCount: 2,
       notificationSentCount: 0,
-      notificationFailedCount: 3
+      notificationFailedCount: 2
     });
-    expect(failedFetch.body.errors).toHaveLength(3);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(failedProposals).toHaveLength(3);
+    expect(failedFetch.body.errors).toHaveLength(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(failedProposals).toHaveLength(2);
     expect(
       failedProposals.every(
         (proposal) =>
@@ -393,14 +396,14 @@ describe("monitor API", () => {
     );
 
     expect(recovery).toMatchObject({
-      candidateCount: 3,
-      attemptedProposalCount: 3,
-      attemptedRecipientCount: 3,
-      recoveredCount: 3,
+      candidateCount: 2,
+      attemptedProposalCount: 2,
+      attemptedRecipientCount: 2,
+      recoveredCount: 2,
       stillFailedCount: 0,
       errors: []
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(
       (await context.proposalRepository.findAll()).every(
         (proposal) => proposal.notificationStatus === "sent"
@@ -683,7 +686,7 @@ describe("monitor API", () => {
     const { app } = createApp({
       env: testEnv({
         API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: "test-token"
+        API_AUTH_TOKEN: "  test-token  "
       })
     });
 
@@ -786,10 +789,13 @@ describe("monitor API", () => {
 
   it("fails closed when API auth is enabled without a configured token", async () => {
     const { app } = createApp({
-      env: testEnv({
-        API_AUTH_ENABLED: "true",
-        API_AUTH_TOKEN: ""
-      })
+      // Keep the middleware defensive even if a caller bypasses loadEnv's
+      // startup validation with programmatic configuration.
+      env: {
+        ...testEnv(),
+        apiAuthEnabled: true,
+        apiAuthToken: ""
+      }
     });
 
     const response = await request(app).get("/health").expect(500);

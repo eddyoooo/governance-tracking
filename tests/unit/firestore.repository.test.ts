@@ -973,4 +973,46 @@ describe("FirestoreSourceActivityRepository", () => {
       { protocol: "aave" }
     ]);
   });
+
+  it("removes an obsolete status reason when source activity recovers", async () => {
+    const repository = new FirestoreSourceActivityRepository(createFakeFirestore());
+    const warning: SourceActivityRecord = {
+      protocol: "lido",
+      sourceType: "forum",
+      latestRawSourceId: "11800",
+      latestRawPublishedAt: "2026-08-01T00:00:00.000Z",
+      lastFetchedAt: "2026-08-20T00:00:00.000Z",
+      lastFetchedCount: 150,
+      consecutiveStaleRuns: 10,
+      status: "warning",
+      statusReason: "Newest raw source item is 19 day(s) old.",
+      warningThresholdDays: 14,
+      criticalThresholdDays: 30,
+      minFetchedCount: 1,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-20T00:00:00.000Z"
+    };
+    const recovered: SourceActivityRecord = {
+      ...warning,
+      latestRawSourceId: "11839",
+      latestRawPublishedAt: "2026-08-31T11:39:27.957Z",
+      lastFetchedAt: "2026-09-01T08:00:00.000Z",
+      consecutiveStaleRuns: 0,
+      status: "healthy",
+      updatedAt: "2026-09-01T08:00:00.000Z"
+    };
+    delete recovered.statusReason;
+
+    await repository.upsert(warning);
+    await repository.upsert(recovered);
+
+    const stored = await repository.findByProtocol("lido");
+
+    expect(stored).toMatchObject({
+      status: "healthy",
+      latestRawSourceId: "11839",
+      consecutiveStaleRuns: 0
+    });
+    expect(stored?.statusReason).toBeUndefined();
+  });
 });

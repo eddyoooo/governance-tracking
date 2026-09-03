@@ -98,7 +98,7 @@ export class FirestoreSourceActivityRepository
   async upsert(record: SourceActivityRecord): Promise<void> {
     await this.collection
       .doc(record.protocol)
-      .set(cleanSourceActivityRecord(record), { merge: true });
+      .set(cleanSourceActivityRecord(record));
   }
 
   async findByProtocol(protocol: string): Promise<SourceActivityRecord | null> {

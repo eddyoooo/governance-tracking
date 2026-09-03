@@ -95,6 +95,27 @@ describe("publisher allowlist", () => {
     );
   });
 
+  it("matches every verified CoW publisher username without retaining removed authors", () => {
+    const cowAllowlist = [
+      "notsoformal",
+      "Kowrigan",
+      "harisang",
+      "felixhenneke",
+      "KPK"
+    ];
+
+    for (const publisher of cowAllowlist) {
+      expect(matchesPublisherAllowlist(publisher, cowAllowlist)).toBe(true);
+      expect(
+        matchesPublisherAllowlist(publisher.toLowerCase(), cowAllowlist)
+      ).toBe(true);
+    }
+
+    expect(matchesPublisherAllowlist("moo_keeper", cowAllowlist)).toBe(false);
+    expect(matchesPublisherAllowlist("middleway.eth", cowAllowlist)).toBe(false);
+    expect(matchesPublisherAllowlist("KPK Research", cowAllowlist)).toBe(false);
+  });
+
   it("extracts stable Discourse username aliases from raw publisher payloads", () => {
     const item: RawGovernanceItem = {
       protocol: "uniswap",
