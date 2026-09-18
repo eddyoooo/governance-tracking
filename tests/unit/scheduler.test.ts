@@ -53,6 +53,25 @@ function createContext(overrides: NodeJS.ProcessEnv = {}) {
         skippedBecauseRunning: false
       }))
     },
+    governanceNotificationDispatcher: {
+      recoverOutstanding: jest.fn(async () => ({
+        candidateCount: 0,
+        attemptedProposalCount: 0,
+        attemptedRecipientCount: 0,
+        recoveredCount: 0,
+        stillPendingCount: 0,
+        stillFailedCount: 0,
+        skippedCount: 0,
+        errors: [],
+        skippedBecauseRunning: false
+      }))
+    },
+    onchainGovernanceJob: {
+      run: jest.fn(async () => undefined)
+    },
+    evmGovernanceRegistry: {
+      list: jest.fn(() => [])
+    },
     proposalRepository: {},
     fetchRunRepository: {},
     protocolRegistry: {
@@ -329,11 +348,10 @@ describe("scheduler", () => {
 
     startScheduler(context as never);
     recoveryCallback?.();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      { error },
+      { error: { name: "Error", message: "Firestore recovery read failed" } },
       "Scheduled notification recovery failed"
     );
   });
@@ -405,7 +423,7 @@ describe("scheduler", () => {
     await Promise.resolve();
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      { error },
+      { error: { name: "Error", message: "admin status failed" } },
       "Scheduled admin status report failed"
     );
   });
@@ -484,8 +502,151 @@ describe("scheduler", () => {
     await Promise.resolve();
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      { error, protocol: "lido" },
+      {
+        error: { name: "Error", message: "scheduled failure" },
+        protocol: "lido"
+      },
       "Scheduled governance fetch failed"
+    );
+  });
+
+  it("validates and schedules enabled on-chain governance independently", async () => {
+    let onchainCallback: (() => void) | undefined;
+    const context = createContext({
+      ETHEREUM_RPC_URL: "https://example.com/rpc",
+      UNISWAP_ONCHAIN_ENABLED: "true",
+      ONCHAIN_FETCH_INTERVAL_CRON: "15 */6 * * *"
+    });
+    context.evmGovernanceRegistry.list.mockReturnValue([
+      { protocol: "uniswap", enabled: true }
+    ]);
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === "15 */6 * * *") {
+        onchainCallback = callback;
+      }
+
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+
+    expect(validateMock).toHaveBeenCalledWith("15 */6 * * *");
+    expect(scheduleMock).toHaveBeenCalledWith(
+      "15 */6 * * *",
+      expect.any(Function)
+    );
+    expect(context.logger.info).toHaveBeenCalledWith(
+      { cron: "15 */6 * * *", protocols: ["uniswap"] },
+      "Starting on-chain governance scheduler"
+    );
+
+    onchainCallback?.();
+    await Promise.resolve();
+
+    expect(context.onchainGovernanceJob.run).toHaveBeenCalledWith("uniswap");
+  });
+
+  it("rejects an invalid on-chain cron before creating any schedules", () => {
+    const context = createContext({
+      ETHEREUM_RPC_URL: "https://example.com/rpc",
+      UNISWAP_ONCHAIN_ENABLED: "true",
+      ONCHAIN_FETCH_INTERVAL_CRON: "not-a-cron"
+    });
+    context.evmGovernanceRegistry.list.mockReturnValue([
+      { protocol: "uniswap", enabled: true }
+    ]);
+    validateMock.mockImplementation((cron: string) => cron !== "not-a-cron");
+
+    expect(() => startScheduler(context as never)).toThrow(
+      "Invalid ONCHAIN_FETCH_INTERVAL_CRON: not-a-cron"
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("logs on-chain scheduler failures without interrupting forum polling", async () => {
+    const callbacks = new Map<string, () => void>();
+    const context = createContext({
+      ETHEREUM_RPC_URL: "https://example.com/rpc",
+      UNISWAP_ONCHAIN_ENABLED: "true"
+    });
+    const error = new Error("Ethereum RPC unavailable");
+    context.evmGovernanceRegistry.list.mockReturnValue([
+      { protocol: "uniswap", enabled: true }
+    ]);
+    context.onchainGovernanceJob.run.mockRejectedValueOnce(error as never);
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      callbacks.set(cron, callback);
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    callbacks.get(context.env.onchainFetchIntervalCron)?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(context.logger.error).toHaveBeenCalledWith(
+      {
+        error: { name: "Error", message: "Ethereum RPC unavailable" },
+        protocol: "uniswap"
+      },
+      "Scheduled on-chain governance scan failed"
+    );
+    expect(scheduleMock).toHaveBeenCalledWith(
+      context.env.fetchIntervalCron,
+      expect.any(Function)
+    );
+  });
+
+  it("aggregates forum and lifecycle notification recovery results", async () => {
+    let recoveryCallback: (() => void) | undefined;
+    const context = createContext();
+    context.notificationService.enabled = true;
+    context.notificationDispatcher.recoverOutstanding.mockResolvedValueOnce({
+      candidateCount: 1,
+      attemptedProposalCount: 1,
+      attemptedRecipientCount: 2,
+      recoveredCount: 1,
+      stillPendingCount: 0,
+      stillFailedCount: 0,
+      skippedCount: 0,
+      errors: [],
+      skippedBecauseRunning: false
+    });
+    context.governanceNotificationDispatcher.recoverOutstanding.mockResolvedValueOnce({
+      candidateCount: 2,
+      attemptedProposalCount: 2,
+      attemptedRecipientCount: 4,
+      recoveredCount: 1,
+      stillPendingCount: 0,
+      stillFailedCount: 1,
+      skippedCount: 0,
+      errors: [],
+      skippedBecauseRunning: false
+    });
+    validateMock.mockReturnValue(true);
+    scheduleMock.mockImplementation((cron: string, callback: () => void) => {
+      if (cron === context.env.notificationRetryCron) {
+        recoveryCallback = callback;
+      }
+      return { stop: jest.fn() };
+    });
+
+    startScheduler(context as never);
+    recoveryCallback?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateCount: 3,
+        attemptedProposalCount: 3,
+        attemptedRecipientCount: 6,
+        recoveredCount: 2,
+        stillFailedCount: 1
+      }),
+      "Finished automatic notification recovery"
     );
   });
 });

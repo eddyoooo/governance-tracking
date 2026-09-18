@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "@jest/globals";
 import { loadEnv } from "../../src/config/env.js";
 import { telegramTestNotificationFixtures } from "../../src/demoFixtures/telegramNotification.fixture.js";
@@ -6,12 +7,16 @@ import {
   ProposalNotificationDispatcher,
   TelegramNotificationService
 } from "../../src/notifications/index.js";
+import { createGovernanceDecisionId } from "../../src/onchain/governanceDecision.js";
+import { governanceEventMessage } from "../../src/onchain/governanceNotifications.js";
+import type { GovernanceDecisionObservation } from "../../src/onchain/types.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
 import { normalizeCowForumItem } from "../../src/protocols/cow/cow.normalizer.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import { normalizeUniswapForumItem } from "../../src/protocols/uniswap/uniswap.normalizer.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
+import { MemoryGovernanceRepository } from "../../src/storage/governance.repository.js";
 import {
   createRawGovernanceItem,
   createSilentLogger
@@ -128,5 +133,160 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
     telegramTestNotificationFixtures.length *
         telegramE2EEnv.telegramTestSendDelayMs +
       30_000
+  );
+
+  it(
+    "sends a real Uniswap vote-result notification to the configured admin only",
+    async () => {
+      const env = loadEnv({
+        ...process.env,
+        NODE_ENV: "test",
+        STORAGE_MODE: "memory",
+        DEMO_MODE: "true",
+        ENABLE_SCHEDULER: "false",
+        ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+        LOG_LEVEL: "silent"
+      });
+      const fixture = JSON.parse(
+        await readFile(
+          new URL("../fixtures/uniswap/onchain-proposal-100.json", import.meta.url),
+          "utf8"
+        )
+      ) as {
+        observedAtBlock: number;
+        governorAddress: string;
+        proposal: {
+          id: string;
+          proposer: string;
+          title: string;
+          startBlock: number;
+          endBlock: number;
+          votingEndedAt: string;
+          forVotes: string;
+          againstVotes: string;
+          abstainVotes: string;
+          firstAction: {
+            target: string;
+            value: string;
+            signature: string;
+            calldata: string;
+          };
+          sourceUrl: string;
+        };
+        events: Array<{
+          blockNumber: number;
+          transactionHash: string;
+        }>;
+      };
+      const proposal = fixture.proposal;
+      const decisionId = createGovernanceDecisionId({
+        protocol: "uniswap",
+        chainId: 1,
+        governorAddress: fixture.governorAddress,
+        proposalId: proposal.id
+      });
+      const base: Omit<
+        GovernanceDecisionObservation,
+        "status" | "voteOutcome" | "executionOutcome" | "forVotes" | "againstVotes" | "abstainVotes" | "lastObservedBlockNumber" | "rawHash"
+      > = {
+        id: decisionId,
+        sourceKey: `uniswap:onchain:1:${fixture.governorAddress.toLowerCase()}`,
+        protocol: "uniswap",
+        sourceType: "onchain",
+        chainId: 1,
+        governorAddress: fixture.governorAddress,
+        proposalId: proposal.id,
+        proposer: proposal.proposer,
+        title: proposal.title,
+        description: `# ${proposal.title}`,
+        sourceUrl: proposal.sourceUrl,
+        startBlock: proposal.startBlock,
+        endBlock: proposal.endBlock,
+        eta: null,
+        actions: [{ index: 0, ...proposal.firstAction }],
+        createdBlockNumber: fixture.events[0].blockNumber,
+        createdTransactionHash: fixture.events[0].transactionHash
+      };
+      const repository = new MemoryGovernanceRepository();
+      const notificationService = new TelegramNotificationService({
+        botToken: env.telegramBotToken,
+        allowedUserIds: [env.telegramAdminUserId],
+        logger: createSilentLogger()
+      });
+      const dispatcher = new ProposalNotificationDispatcher(
+        repository,
+        notificationService,
+        createSilentLogger(),
+        governanceEventMessage
+      );
+
+      expect(env.telegramAdminUserId).toBe("1549323073");
+      expect(notificationService.getRecipients()).toEqual([
+        {
+          key: createTelegramRecipientKey("1549323073"),
+          maskedId: "******3073"
+        }
+      ]);
+
+      await repository.upsertDecision(
+        {
+          ...base,
+          status: "active",
+          voteOutcome: "pending",
+          executionOutcome: "not_started",
+          forVotes: "0",
+          againstVotes: "0",
+          abstainVotes: "0",
+          lastObservedBlockNumber: proposal.startBlock + 1,
+          rawHash: "telegram-e2e-active"
+        },
+        { notificationStatusForNewEvents: "skipped" }
+      );
+      const result = await repository.upsertDecision(
+        {
+          ...base,
+          status: "succeeded",
+          voteOutcome: "succeeded",
+          executionOutcome: "awaiting_queue",
+          votingEndedAt: proposal.votingEndedAt,
+          forVotes: proposal.forVotes,
+          againstVotes: proposal.againstVotes,
+          abstainVotes: proposal.abstainVotes,
+          lastObservedBlockNumber: proposal.endBlock + 1,
+          rawHash: "telegram-e2e-succeeded"
+        },
+        { notificationStatusForNewEvents: "pending" }
+      );
+      const voteResult = result.lifecycleEventsCreated[0];
+
+      expect(result.lifecycleEventsCreated).toHaveLength(1);
+      expect(voteResult).toMatchObject({
+        transition: "succeeded",
+        notificationStatus: "pending",
+        message: {
+          heading: "ON-CHAIN GOVERNANCE VOTE RESULT",
+          title: "Activate v4 Protocol Fees (Part 1/2)",
+          fields: expect.arrayContaining([
+            { label: "Voting ended", value: "2026-07-25 07:29 UTC" }
+          ])
+        }
+      });
+      await new Promise((resolve) =>
+        setTimeout(resolve, env.telegramTestSendDelayMs)
+      );
+      await expect(dispatcher.notifyNewProposal(voteResult)).resolves.toEqual({
+        status: "sent"
+      });
+      await expect(repository.findById(voteResult.id)).resolves.toMatchObject({
+        notificationStatus: "sent",
+        notificationDeliveries: {
+          [createTelegramRecipientKey("1549323073")]: {
+            status: "sent",
+            recipientMaskedId: "******3073"
+          }
+        }
+      });
+    },
+    telegramE2EEnv.telegramTestSendDelayMs + 30_000
   );
 });

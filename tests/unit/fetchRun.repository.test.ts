@@ -86,6 +86,13 @@ describe("MemoryFetchRunRepository", () => {
 
     await repository.upsert(
       createRun({
+        id: "aave-older",
+        protocol: "aave",
+        startedAt: "2026-06-04T00:00:00.000Z"
+      })
+    );
+    await repository.upsert(
+      createRun({
         id: "aave-latest",
         protocol: "aave",
         startedAt: "2026-06-05T00:00:00.000Z"
@@ -108,6 +115,15 @@ describe("MemoryFetchRunRepository", () => {
   it("finds the latest successful run while ignoring newer failed and running attempts", async () => {
     const repository = new MemoryFetchRunRepository();
 
+    await repository.upsert(
+      createRun({
+        id: "successful-older",
+        protocol: "uniswap",
+        startedAt: "2026-06-04T00:00:00.000Z",
+        finishedAt: "2026-06-04T00:01:00.000Z",
+        status: "success"
+      })
+    );
     await repository.upsert(
       createRun({
         id: "successful",

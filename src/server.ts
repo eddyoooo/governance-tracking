@@ -23,12 +23,26 @@ import {
 } from "./storage/index.js";
 import { createLogger } from "./utils/logger.js";
 import { createAdminRouter } from "./api/routes/admin.routes.js";
+import { AdminQueryValidationError } from "./api/routes/admin.routes.js";
 import { createHealthRouter } from "./api/routes/health.routes.js";
 import { requireApiAuth } from "./api/middleware/auth.middleware.js";
 import type { FetchRunRepository } from "./storage/fetchRun.repository.js";
 import type { ProposalRepository } from "./storage/proposal.repository.js";
 import type { ProtocolStateRepository } from "./storage/protocolState.repository.js";
 import type { SourceActivityRepository } from "./storage/sourceActivity.repository.js";
+import {
+  OnchainGovernanceScanJob,
+  OnchainScanAlreadyRunningError,
+  UnknownOnchainGovernanceSourceError
+} from "./onchain/onchainGovernance.job.js";
+import {
+  createEvmGovernanceRegistry,
+  type EvmGovernanceRegistry
+} from "./onchain/registry.js";
+import { governanceEventMessage } from "./onchain/governanceNotifications.js";
+import type { GovernanceLifecycleEvent } from "./onchain/types.js";
+import type { GovernanceRepository } from "./storage/governance.repository.js";
+import { errorMessage, safeErrorDetails } from "./utils/errors.js";
 
 export interface AppContext {
   env: Env;
@@ -37,11 +51,15 @@ export interface AppContext {
   fetchRunRepository: FetchRunRepository;
   sourceActivityRepository: SourceActivityRepository;
   protocolStateRepository: ProtocolStateRepository;
+  governanceRepository: GovernanceRepository;
   protocolRegistry: ProtocolRegistry;
+  evmGovernanceRegistry: EvmGovernanceRegistry;
   notificationService: NotificationService;
   notificationDispatcher: ProposalNotificationDispatcher;
+  governanceNotificationDispatcher: ProposalNotificationDispatcher<GovernanceLifecycleEvent>;
   adminStatusReporter: AdminStatusReporter;
   fetchJob: FetchProtocolGovernanceJob;
+  onchainGovernanceJob: OnchainGovernanceScanJob;
 }
 
 export interface CreateAppOptions {
@@ -49,10 +67,13 @@ export interface CreateAppOptions {
   logger?: Logger;
   repositories?: Repositories;
   protocolRegistry?: ProtocolRegistry;
+  evmGovernanceRegistry?: EvmGovernanceRegistry;
   notificationService?: NotificationService;
   notificationDispatcher?: ProposalNotificationDispatcher;
+  governanceNotificationDispatcher?: ProposalNotificationDispatcher<GovernanceLifecycleEvent>;
   adminStatusReporter?: AdminStatusReporter;
   fetchJob?: FetchProtocolGovernanceJob;
+  onchainGovernanceJob?: OnchainGovernanceScanJob;
 }
 
 export interface CreatedApp {
@@ -76,6 +97,8 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
   const repositories = options.repositories ?? createRepositories(runtimeEnv, logger);
   const protocolRegistry =
     options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
+  const evmGovernanceRegistry =
+    options.evmGovernanceRegistry ?? createEvmGovernanceRegistry(runtimeEnv);
   const notificationService =
     options.notificationService ?? createNotificationService(runtimeEnv, logger);
   const protocolStateRepository = repositories.protocolStateRepository;
@@ -86,6 +109,14 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       notificationService,
       logger
     );
+  const governanceNotificationDispatcher =
+    options.governanceNotificationDispatcher ??
+    new ProposalNotificationDispatcher<GovernanceLifecycleEvent>(
+      repositories.governanceRepository,
+      notificationService,
+      logger,
+      governanceEventMessage
+    );
   const adminStatusReporter =
     options.adminStatusReporter ??
     createAdminStatusReporter({
@@ -94,6 +125,8 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       fetchRunRepository: repositories.fetchRunRepository,
       proposalRepository: repositories.proposalRepository,
       sourceActivityRepository: repositories.sourceActivityRepository,
+      governanceRepository: repositories.governanceRepository,
+      evmGovernanceRegistry,
       logger
     });
   const fetchJob =
@@ -112,6 +145,15 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
           FetchProtocolGovernanceJob.sourceActivityConfigFromEnv(runtimeEnv)
       }
     );
+  const onchainGovernanceJob =
+    options.onchainGovernanceJob ??
+    new OnchainGovernanceScanJob(
+      evmGovernanceRegistry,
+      repositories.governanceRepository,
+      notificationService,
+      governanceNotificationDispatcher,
+      logger
+    );
   const context: AppContext = {
     env: runtimeEnv,
     logger,
@@ -119,11 +161,15 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     fetchRunRepository: repositories.fetchRunRepository,
     sourceActivityRepository: repositories.sourceActivityRepository,
     protocolStateRepository,
+    governanceRepository: repositories.governanceRepository,
     protocolRegistry,
+    evmGovernanceRegistry,
     notificationService,
     notificationDispatcher,
+    governanceNotificationDispatcher,
     adminStatusReporter,
-    fetchJob
+    fetchJob,
+    onchainGovernanceJob
   };
   const app = express();
 
@@ -144,9 +190,13 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       routes: [
         "GET /health",
         "POST /api/admin/fetch/:protocol",
+        "POST /api/admin/fetch-onchain/:protocol",
         "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
-        "GET /api/admin/source-activity"
+        "GET /api/admin/source-activity",
+        "GET /api/admin/governance-votes",
+        "GET /api/admin/onchain-source-status",
+        "GET /api/admin/onchain-scan-runs"
       ]
     });
   });
@@ -161,7 +211,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       response: express.Response,
       _next: express.NextFunction
     ) => {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
 
       if (isMalformedJsonError(error)) {
         response.status(400).json({ error: "Malformed JSON request body." });
@@ -178,7 +228,22 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
         return;
       }
 
-      logger.error({ error }, "Request failed");
+      if (error instanceof UnknownOnchainGovernanceSourceError) {
+        response.status(404).json({ error: message });
+        return;
+      }
+
+      if (error instanceof OnchainScanAlreadyRunningError) {
+        response.status(409).json({ error: message });
+        return;
+      }
+
+      if (error instanceof AdminQueryValidationError) {
+        response.status(400).json({ error: message });
+        return;
+      }
+
+      logger.error({ error: safeErrorDetails(error) }, "Request failed");
       response.status(500).json({
         error:
           runtimeEnv.nodeEnv === "production"

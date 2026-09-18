@@ -1,5 +1,6 @@
 import { loadEnv } from "./config/env.js";
 import {
+  readBooleanFlag,
   shouldEnableAdminStatusDemo,
   telegramAllowedUserIdsForDemo
 } from "./demoConfig.js";
@@ -7,12 +8,22 @@ import {
   nonAllowlistedDemoFixture,
   ScriptedLidoDemoAdapter
 } from "./demoFixtures/scriptedLidoDemo.adapter.js";
+import {
+  ScriptedUniswapOnchainDemoAdapter,
+  UNISWAP_PROPOSAL_100_CAPTURED_ACTION_COUNT
+} from "./demoFixtures/scriptedUniswapOnchainDemo.adapter.js";
 import type { FetchProtocolResult } from "./jobs/fetchProtocolGovernance.job.js";
 import { AaveAdapter } from "./protocols/aave/aave.adapter.js";
 import { createAaveDemoClient } from "./protocols/aave/aave.demoClient.js";
 import { CowAdapter } from "./protocols/cow/cow.adapter.js";
 import { createCowDemoClient } from "./protocols/cow/cow.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
+import { EvmGovernanceRegistry } from "./onchain/registry.js";
+import type {
+  GovernanceScanResult,
+  GovernanceSourceState,
+  StoredGovernanceDecision
+} from "./onchain/types.js";
 import type { StoredProposal } from "./protocols/types.js";
 import { UniswapAdapter } from "./protocols/uniswap/uniswap.adapter.js";
 import { createUniswapDemoClient } from "./protocols/uniswap/uniswap.demoClient.js";
@@ -162,6 +173,136 @@ function summarizeSourceActivity(records: SourceActivityRecord[]) {
   }));
 }
 
+function summarizeOnchainScan(result: GovernanceScanResult) {
+  return {
+    protocol: result.protocol,
+    status: result.status,
+    baselineSeeding: result.baselineSeeding,
+    cursorBefore: result.cursorBefore,
+    cursorAfter: result.cursorAfter,
+    contractEventsRead: result.contractEventsRead,
+    decisionsCreated: result.decisionsCreated,
+    decisionsUpdated: result.decisionsUpdated,
+    decisionsUnchanged: result.decisionsUnchanged,
+    lifecycleEventsCreated: result.lifecycleEventsCreated,
+    notificationSentCount: result.notificationSentCount,
+    notificationFailedCount: result.notificationFailedCount,
+    errors: result.errors
+  };
+}
+
+function summarizeGovernanceDecision(decision: StoredGovernanceDecision) {
+  return {
+    id: decision.id,
+    proposalId: decision.proposalId,
+    title: decision.title,
+    proposer: decision.proposer,
+    status: decision.status,
+    voteOutcome: decision.voteOutcome,
+    executionOutcome: decision.executionOutcome,
+    votingEndedAt: decision.votingEndedAt,
+    forVotes: decision.forVotes,
+    againstVotes: decision.againstVotes,
+    abstainVotes: decision.abstainVotes,
+    capturedActionCount: UNISWAP_PROPOSAL_100_CAPTURED_ACTION_COUNT,
+    includedActionSampleCount: decision.actions.length,
+    canonicalLifecycle: {
+      createdBlockNumber: decision.createdBlockNumber,
+      createdTransactionHash: decision.createdTransactionHash,
+      queuedBlockNumber: decision.queuedBlockNumber,
+      queuedTransactionHash: decision.queuedTransactionHash,
+      executedBlockNumber: decision.executedBlockNumber,
+      executedTransactionHash: decision.executedTransactionHash
+    },
+    sourceUrl: decision.sourceUrl
+  };
+}
+
+function assertOnchainDemoIntegrity(options: {
+  baseline: ReturnType<typeof summarizeOnchainScan>;
+  creation: ReturnType<typeof summarizeOnchainScan>;
+  execution: ReturnType<typeof summarizeOnchainScan>;
+  duplicate: ReturnType<typeof summarizeOnchainScan>;
+  decisions: StoredGovernanceDecision[];
+  sourceState: GovernanceSourceState | null;
+  notificationStatusCounts: {
+    pending: number;
+    sent: number;
+    skipped: number;
+    failed: number;
+  };
+  notificationsEnabled: boolean;
+}): void {
+  if (
+    options.baseline.status !== "success" ||
+    !options.baseline.baselineSeeding ||
+    options.baseline.notificationSentCount !== 0
+  ) {
+    throw new Error("Demo on-chain baseline was not completed silently.");
+  }
+  if (
+    options.creation.status !== "success" ||
+    options.creation.decisionsCreated !== 1 ||
+    options.creation.lifecycleEventsCreated !== 1
+  ) {
+    throw new Error("Demo did not discover proposal #100 exactly once.");
+  }
+  if (
+    options.execution.status !== "success" ||
+    options.execution.decisionsUpdated !== 1 ||
+    options.execution.lifecycleEventsCreated !== 3
+  ) {
+    throw new Error("Demo did not capture the complete proposal #100 result lifecycle.");
+  }
+  if (
+    options.duplicate.status !== "success" ||
+    options.duplicate.decisionsCreated !== 0 ||
+    options.duplicate.decisionsUpdated !== 0 ||
+    options.duplicate.lifecycleEventsCreated !== 0 ||
+    options.duplicate.notificationSentCount !== 0
+  ) {
+    throw new Error("Demo duplicate scan was not idempotent.");
+  }
+
+  const decision = options.decisions[0];
+  if (
+    options.decisions.length !== 1 ||
+    !decision ||
+    decision.proposalId !== "100" ||
+    decision.status !== "executed" ||
+    !decision.votingEndedAt ||
+    !decision.createdTransactionHash ||
+    !decision.queuedTransactionHash ||
+    !decision.executedTransactionHash
+  ) {
+    throw new Error(
+      "Demo stored decision is missing its final state or canonical lifecycle references."
+    );
+  }
+  if (
+    !options.sourceState ||
+    options.sourceState.baselineStatus !== "complete" ||
+    options.sourceState.healthStatus !== "healthy" ||
+    options.sourceState.cursorBlockNumber !==
+      options.sourceState.latestFinalizedBlockNumber
+  ) {
+    throw new Error("Demo on-chain source checkpoint is incomplete or unhealthy.");
+  }
+
+  const expectedSent = options.notificationsEnabled ? 4 : 0;
+  const expectedSkipped = options.notificationsEnabled ? 0 : 4;
+  if (
+    options.notificationStatusCounts.pending !== 0 ||
+    options.notificationStatusCounts.failed !== 0 ||
+    options.notificationStatusCounts.sent !== expectedSent ||
+    options.notificationStatusCounts.skipped !== expectedSkipped
+  ) {
+    throw new Error(
+      "Demo on-chain lifecycle notification states are incomplete or inconsistent."
+    );
+  }
+}
+
 function createDemoRegistry(
   lidoAdapter: ScriptedLidoDemoAdapter,
   aaveAdapter: AaveAdapter,
@@ -180,6 +321,9 @@ function createDemoRegistry(
 async function main(): Promise<void> {
   const stepDelayMs = readStepDelayMs();
   const adminDemoEnabled = shouldEnableAdminStatusDemo();
+  const telegramDemoEnabled = readBooleanFlag(
+    "ENABLE_TELEGRAM_NOTIFICATIONS"
+  );
   const env = loadEnv({
     ...process.env,
     NODE_ENV: "development",
@@ -203,6 +347,11 @@ async function main(): Promise<void> {
     COW_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_COW_ALLOWED_PUBLISHERS),
     COW_FETCH_MAX_PAGES: "10",
     COW_CATEGORY_FETCH_MAX_PAGES: "2",
+    ETHEREUM_RPC_URL: "https://demo.invalid/rpc",
+    UNISWAP_ONCHAIN_ENABLED: "true",
+    UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: telegramDemoEnabled
+      ? "true"
+      : "false",
     TELEGRAM_ALLOWED_USER_IDS: telegramAllowedUserIdsForDemo(process.env),
     API_AUTH_ENABLED: "false",
     ENABLE_ADMIN_STATUS_REPORTS: adminDemoEnabled ? "true" : "false",
@@ -248,6 +397,9 @@ async function main(): Promise<void> {
       forumApiBaseUrl: env.cowForumApiBaseUrl
     })
   });
+  const uniswapOnchainAdapter = new ScriptedUniswapOnchainDemoAdapter(
+    env.uniswapOnchainNotificationsEnabled
+  );
   const { context } = createApp({
     env,
     protocolRegistry: createDemoRegistry(
@@ -255,7 +407,10 @@ async function main(): Promise<void> {
       aaveAdapter,
       uniswapAdapter,
       cowAdapter
-    )
+    ),
+    evmGovernanceRegistry: new EvmGovernanceRegistry([
+      uniswapOnchainAdapter
+    ])
   });
   await Promise.all(
     context.protocolRegistry
@@ -270,10 +425,10 @@ async function main(): Promise<void> {
 
   console.log("Governance monitor demo");
   console.log(
-    "Using memory storage plus locally saved Lido, Aave, Uniswap, and CoW forum samples."
+    "Using memory storage plus locally saved forum samples and a real Uniswap Governor Bravo proposal snapshot."
   );
   console.log(
-    "The scripted records are treated as discoveries after an established baseline."
+    "The scripted records exercise live discovery, historical backfill, and duplicate suppression after an established baseline."
   );
   console.log(
     env.enableTelegramNotifications
@@ -297,6 +452,9 @@ async function main(): Promise<void> {
         ? "configured admin user only"
         : "not used",
       adminStatusReportsEnabled: env.enableAdminStatusReports,
+      uniswapOnchainEnabled: env.uniswapOnchainEnabled,
+      uniswapOnchainNotificationsEnabled:
+        env.uniswapOnchainNotificationsEnabled,
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,
       uniswapAllowedPublishers: env.uniswapAllowedPublishers,
@@ -322,6 +480,76 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  const onchainBaseline = await runStep(
+    "Uniswap on-chain baseline: establish history without notifications",
+    async () => summarizeOnchainScan(await context.onchainGovernanceJob.run("uniswap")),
+    stepDelayMs
+  );
+
+  uniswapOnchainAdapter.revealCreation();
+  const onchainCreation = await runStep(
+    "Uniswap on-chain discovery: detect real proposal #100 creation",
+    async () => summarizeOnchainScan(await context.onchainGovernanceJob.run("uniswap")),
+    stepDelayMs
+  );
+
+  if (env.uniswapOnchainNotificationsEnabled && env.telegramTestSendDelayMs > 0) {
+    await sleep(env.telegramTestSendDelayMs);
+  }
+
+  uniswapOnchainAdapter.revealExecution();
+  const onchainExecution = await runStep(
+    "Uniswap on-chain lifecycle: detect vote result, queue, and execution",
+    async () => summarizeOnchainScan(await context.onchainGovernanceJob.run("uniswap")),
+    stepDelayMs
+  );
+  const onchainDuplicate = await runStep(
+    "Uniswap on-chain duplicate scan: prove no duplicate records or alerts",
+    async () => summarizeOnchainScan(await context.onchainGovernanceJob.run("uniswap")),
+    stepDelayMs
+  );
+  const governanceDecisions = await context.governanceRepository.findDecisionsBySource(
+    uniswapOnchainAdapter.sourceKey
+  );
+  const onchainSourceState = await context.governanceRepository.findSourceState(
+    uniswapOnchainAdapter.sourceKey
+  );
+  const [pending, sent, skipped, failed] = await Promise.all([
+    context.governanceRepository.countByNotificationStatus("pending"),
+    context.governanceRepository.countByNotificationStatus("sent"),
+    context.governanceRepository.countByNotificationStatus("skipped"),
+    context.governanceRepository.countByNotificationStatus("failed")
+  ]);
+  const onchainNotificationStatusCounts = {
+    pending,
+    sent,
+    skipped,
+    failed
+  };
+  assertOnchainDemoIntegrity({
+    baseline: onchainBaseline,
+    creation: onchainCreation,
+    execution: onchainExecution,
+    duplicate: onchainDuplicate,
+    decisions: governanceDecisions,
+    sourceState: onchainSourceState,
+    notificationStatusCounts: onchainNotificationStatusCounts,
+    notificationsEnabled: env.uniswapOnchainNotificationsEnabled
+  });
+
+  await runStep(
+    "Stored on-chain governance snapshot",
+    async () => ({
+      count: governanceDecisions.length,
+      decisions: governanceDecisions.map(summarizeGovernanceDecision),
+      sourceState: onchainSourceState,
+      notificationStatusCounts: onchainNotificationStatusCounts,
+      integrityChecks: "passed",
+      scanRunCount: (await context.governanceRepository.findScanRuns()).length
+    }),
+    stepDelayMs
+  );
+
   const discoverySummaries: Array<{
     discovered: string | undefined;
     fetch: ReturnType<typeof summarizeFetch>;
@@ -331,7 +559,9 @@ async function main(): Promise<void> {
   for (let index = 0; index < lidoAdapter.totalAllowlistedFixtures; index += 1) {
     const fixture = lidoAdapter.revealNext();
     const summary = await runStep(
-      `Lido fetch ${index + 1}: discover one new allowlisted proposal`,
+      index === 0
+        ? "Lido fetch 1: discover and notify one new allowlisted proposal"
+        : `Lido fetch ${index + 1}: store an older allowlisted proposal without a historical alert`,
       async () => {
         const fetchResult = await context.fetchJob.run("lido");
         const storedProposal = fixture
@@ -494,6 +724,13 @@ async function main(): Promise<void> {
     storedProposalCount: storedProposals.length,
     fetchRunCount: fetchRuns.length,
     sourceActivityCount: sourceActivity.length,
+    uniswapOnchain: {
+      baseline: onchainBaseline,
+      creation: onchainCreation,
+      execution: onchainExecution,
+      duplicate: onchainDuplicate,
+      storedDecisionCount: governanceDecisions.length
+    },
     telegram:
       env.enableTelegramNotifications
         ? "notifications sent during new proposal fetches"

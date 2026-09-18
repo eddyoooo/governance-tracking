@@ -68,6 +68,19 @@ describe("env parsing", () => {
     expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
     expect(env.cowFetchMaxPages).toBe(10);
     expect(env.cowCategoryFetchMaxPages).toBe(2);
+    expect(env.ethereumRpcUrl).toBe("");
+    expect(env.uniswapOnchainEnabled).toBe(false);
+    expect(env.uniswapOnchainNotificationsEnabled).toBe(false);
+    expect(env.onchainFetchIntervalCron).toBe("0 */6 * * *");
+    expect(env.uniswapGovernorAddress).toBe(
+      "0x408ED6354d4973f66138C91495F2f2FCbd8724C3"
+    );
+    expect(env.uniswapTimelockAddress).toBe(
+      "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
+    );
+    expect(env.uniswapUniTokenAddress).toBe(
+      "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+    );
     expect(env.firebasePrivateKey).toBe("line1\nline2");
     expect(env.enableTelegramNotifications).toBe(false);
     expect(env.telegramAllowedUserIds).toEqual([]);
@@ -524,6 +537,83 @@ describe("env parsing", () => {
         LOG_LEVEL: "verbose"
       } as NodeJS.ProcessEnv)
     ).toThrow();
+  });
+
+  it("parses explicit Uniswap on-chain governance configuration", () => {
+    const env = loadEnv({
+      ETHEREUM_RPC_URL: " https://example.quiknode.pro/secret/ ",
+      UNISWAP_ONCHAIN_ENABLED: "true",
+      UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "true",
+      ONCHAIN_FETCH_INTERVAL_CRON: "15 */6 * * *",
+      ENABLE_TELEGRAM_NOTIFICATIONS: "true",
+      UNISWAP_GOVERNOR_ADDRESS:
+        "0x408ED6354d4973f66138C91495F2f2FCbd8724C3",
+      UNISWAP_TIMELOCK_ADDRESS:
+        "0x1a9C8182C09F50C8318d769245beA52c32BE35BC",
+      UNISWAP_UNI_TOKEN_ADDRESS:
+        "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+    } as NodeJS.ProcessEnv);
+
+    expect(env.ethereumRpcUrl).toBe("https://example.quiknode.pro/secret/");
+    expect(env.uniswapOnchainEnabled).toBe(true);
+    expect(env.uniswapOnchainNotificationsEnabled).toBe(true);
+    expect(env.onchainFetchIntervalCron).toBe("15 */6 * * *");
+  });
+
+  it("requires RPC configuration only when on-chain governance is enabled", () => {
+    expect(() =>
+      loadEnv({
+        ETHEREUM_RPC_URL: "",
+        UNISWAP_ONCHAIN_ENABLED: "true"
+      } as NodeJS.ProcessEnv)
+    ).toThrow("ETHEREUM_RPC_URL must be set when UNISWAP_ONCHAIN_ENABLED=true.");
+
+    expect(() =>
+      loadEnv({
+        ETHEREUM_RPC_URL: "not-a-url",
+        UNISWAP_ONCHAIN_ENABLED: "false"
+      } as NodeJS.ProcessEnv)
+    ).toThrow();
+
+    expect(() =>
+      loadEnv({
+        ETHEREUM_RPC_URL: "",
+        UNISWAP_ONCHAIN_ENABLED: "false"
+      } as NodeJS.ProcessEnv)
+    ).not.toThrow();
+  });
+
+  it("requires both the source and Telegram before lifecycle notifications can be enabled", () => {
+    expect(() =>
+      loadEnv({
+        UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "true",
+        UNISWAP_ONCHAIN_ENABLED: "false",
+        ENABLE_TELEGRAM_NOTIFICATIONS: "true"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(
+      "UNISWAP_ONCHAIN_ENABLED must be true when UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true."
+    );
+
+    expect(() =>
+      loadEnv({
+        ETHEREUM_RPC_URL: "https://example.com/rpc",
+        UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "true",
+        UNISWAP_ONCHAIN_ENABLED: "true",
+        ENABLE_TELEGRAM_NOTIFICATIONS: "false"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(
+      "ENABLE_TELEGRAM_NOTIFICATIONS must be true when UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true."
+    );
+  });
+
+  it.each([
+    "0x1234",
+    "408ED6354d4973f66138C91495F2f2FCbd8724C3",
+    "0xZZ8ED6354d4973f66138C91495F2f2FCbd8724C3"
+  ])("rejects malformed EVM address %s", (address) => {
+    expect(() =>
+      loadEnv({ UNISWAP_GOVERNOR_ADDRESS: address } as NodeJS.ProcessEnv)
+    ).toThrow("Must be a valid Ethereum address.");
   });
 
 });

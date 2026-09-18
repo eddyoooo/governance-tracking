@@ -1,12 +1,22 @@
 import type { Logger } from "pino";
 import type {
   NotificationDelivery,
+  NotificationStatus,
   StoredProposal
 } from "../protocols/types.js";
-import type { ProposalRepository } from "../storage/proposal.repository.js";
+import type { ProposalNotificationState } from "../storage/proposal.repository.js";
+import { errorMessage, safeErrorDetails } from "../utils/errors.js";
+import {
+  buildLegacyDeliveries,
+  buildPendingDeliveries,
+  cloneDeliveries,
+  currentNotificationState,
+  deduplicateProposals,
+  needsRecoveryNow,
+  notificationStateFromDeliveries
+} from "./notificationDeliveryState.js";
 import type {
   NotificationMessage,
-  NotificationRecipient,
   NotificationService
 } from "./notification.service.js";
 
@@ -27,6 +37,33 @@ export interface NotificationRecoveryResult {
   skippedBecauseRunning: boolean;
 }
 
+export interface NotificationRecord {
+  id: string;
+  notificationStatus: NotificationStatus;
+  notificationError?: string;
+  notificationDeliveries?: Record<string, NotificationDelivery>;
+  firstSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationRecordRepository<T extends NotificationRecord> {
+  findById(id: string): Promise<T | null>;
+  findByNotificationStatus(
+    status: NotificationStatus,
+    limit?: number
+  ): Promise<T[]>;
+  updateNotificationState(
+    id: string,
+    updater: (record: T) => ProposalNotificationState
+  ): Promise<T | null>;
+}
+
+type ProposalNotificationFields = Pick<
+  StoredProposal,
+  "protocol" | "sourceType" | "publisherName" | "title" | "sourceUrl"
+>;
+
 export const NOTIFICATION_RECOVERY_BATCH_SIZE = 100;
 const NOTIFICATION_RECOVERY_SCAN_SIZE = 1_000;
 const RETRY_DELAYS_MS = [
@@ -37,7 +74,7 @@ const RETRY_DELAYS_MS = [
 ] as const;
 
 export function buildProposalNotificationMessage(
-  proposal: StoredProposal
+  proposal: ProposalNotificationFields
 ): NotificationMessage {
   return {
     protocol: proposal.protocol,
@@ -62,18 +99,24 @@ export function notificationRetryAt(
   ).toISOString();
 }
 
-export class ProposalNotificationDispatcher {
+export class ProposalNotificationDispatcher<
+  T extends NotificationRecord = StoredProposal
+> {
   private recoveryRunning = false;
   private readonly proposalLocks = new Map<string, Promise<void>>();
+  private readonly messageBuilder: (record: T) => NotificationMessage;
 
   constructor(
-    private readonly proposalRepository: ProposalRepository,
+    private readonly proposalRepository: NotificationRecordRepository<T>,
     private readonly notificationService: NotificationService,
-    private readonly logger: Pick<Logger, "error" | "info" | "warn">
-  ) {}
+    private readonly logger: Pick<Logger, "error" | "info" | "warn">,
+    messageBuilder?: (record: T) => NotificationMessage
+  ) {
+    this.messageBuilder = messageBuilder ?? defaultProposalNotificationMessage;
+  }
 
   async notifyNewProposal(
-    proposal: StoredProposal
+    proposal: T
   ): Promise<ProposalNotificationResult> {
     return this.withProposalLock(proposal.id, async () => {
       const current = await this.proposalRepository.findById(proposal.id);
@@ -102,9 +145,9 @@ export class ProposalNotificationDispatcher {
       }
 
       if (!this.notificationService.enabled) {
-        await this.proposalRepository.updateNotificationStatus(
+        await this.proposalRepository.updateNotificationState(
           current.id,
-          "skipped"
+          () => ({ notificationStatus: "skipped" })
         );
         return { status: "skipped" };
       }
@@ -188,7 +231,7 @@ export class ProposalNotificationDispatcher {
     attempted: boolean;
     attemptedRecipientCount: number;
     recovered: boolean;
-    status: StoredProposal["notificationStatus"];
+    status: NotificationStatus;
     error?: string;
   }> {
     const current = await this.proposalRepository.findById(proposalId);
@@ -274,9 +317,9 @@ export class ProposalNotificationDispatcher {
   }
 
   private async initializeDeliveries(
-    proposal: StoredProposal,
+    proposal: T,
     now = new Date().toISOString()
-  ): Promise<StoredProposal | null> {
+  ): Promise<T | null> {
     if (proposal.notificationDeliveries) {
       return this.reconcileRemovedRecipients(proposal, now);
     }
@@ -333,9 +376,9 @@ export class ProposalNotificationDispatcher {
   }
 
   private async reconcileRemovedRecipients(
-    proposal: StoredProposal,
+    proposal: T,
     now: string
-  ): Promise<StoredProposal> {
+  ): Promise<T> {
     if (!proposal.notificationDeliveries) {
       return proposal;
     }
@@ -380,7 +423,7 @@ export class ProposalNotificationDispatcher {
   }
 
   private async attemptOutstandingRecipients(
-    proposal: StoredProposal,
+    proposal: T,
     includeFailed: boolean,
     eligibleRecipientKeys?: ReadonlySet<string>,
     now = new Date().toISOString()
@@ -460,7 +503,7 @@ export class ProposalNotificationDispatcher {
 
     try {
       await this.notificationService.send(
-        buildProposalNotificationMessage(prepared),
+        this.messageBuilder(prepared),
         [recipientKey]
       );
       await this.proposalRepository.updateNotificationState(
@@ -486,7 +529,7 @@ export class ProposalNotificationDispatcher {
         }
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
 
       await this.proposalRepository.updateNotificationState(
         proposalId,
@@ -513,7 +556,7 @@ export class ProposalNotificationDispatcher {
         {
           proposalId,
           recipientMaskedId: delivery.recipientMaskedId,
-          error
+          error: safeErrorDetails(error)
         },
         "Failed to send proposal notification to configured recipient"
       );
@@ -544,185 +587,28 @@ export class ProposalNotificationDispatcher {
   }
 }
 
-function buildPendingDeliveries(
-  recipients: readonly NotificationRecipient[],
-  now: string
-): Record<string, NotificationDelivery> {
-  return Object.fromEntries(
-    recipients.map((recipient) => [
-      recipient.key,
-      {
-        recipientKey: recipient.key,
-        recipientMaskedId: recipient.maskedId,
-        status: "pending",
-        attemptCount: 0,
-        createdAt: now,
-        updatedAt: now
-      }
-    ])
-  );
-}
-
-function buildLegacyDeliveries(
-  proposal: StoredProposal,
-  recipients: readonly NotificationRecipient[],
-  now: string
-): Record<string, NotificationDelivery> | null {
-  const error = proposal.notificationError ?? "";
-  const attemptedCountMatch = error.match(
-    /of\s+(\d+)\s+allowed recipients/i
-  );
-  const attemptedCount = attemptedCountMatch
-    ? Number(attemptedCountMatch[1])
-    : null;
-  const failureMatches = [
-    ...error.matchAll(/recipient\s+(\d+)(?:\s+\(([^)]+)\))?\s+failed/gi)
-  ];
-
-  if (
-    attemptedCount !== recipients.length ||
-    failureMatches.length === 0
-  ) {
-    return null;
-  }
-
-  const failedIndexes = new Set<number>();
-  const maskedIdCounts = new Map<string, number>();
-
-  for (const recipient of recipients) {
-    maskedIdCounts.set(
-      recipient.maskedId,
-      (maskedIdCounts.get(recipient.maskedId) ?? 0) + 1
+function defaultProposalNotificationMessage(
+  record: NotificationRecord
+): NotificationMessage {
+  if (!hasProposalNotificationFields(record)) {
+    throw new Error(
+      "A custom notification message builder is required for this record type."
     );
   }
 
-  for (const match of failureMatches) {
-    const index = Number(match[1]);
-    const recipient = recipients[index - 1];
-    const recordedMaskedId = match[2];
-
-    if (
-      !recipient ||
-      (recipients.length > 1 && !recordedMaskedId) ||
-      (recordedMaskedId && recordedMaskedId !== recipient.maskedId) ||
-      (recordedMaskedId &&
-        (maskedIdCounts.get(recordedMaskedId) ?? 0) > 1)
-    ) {
-      return null;
-    }
-
-    failedIndexes.add(index);
-  }
-
-  return Object.fromEntries(
-    recipients.map((recipient, index) => {
-      const failed = failedIndexes.has(index + 1);
-      const delivery: NotificationDelivery = {
-        recipientKey: recipient.key,
-        recipientMaskedId: recipient.maskedId,
-        status: failed ? "failed" : "sent",
-        attemptCount: 1,
-        createdAt: proposal.createdAt,
-        updatedAt: now
-      };
-
-      if (failed) {
-        delivery.lastAttemptAt = proposal.updatedAt;
-        delivery.nextRetryAt = now;
-        delivery.lastError = error;
-      } else {
-        delivery.sentAt = proposal.updatedAt;
-      }
-
-      return [recipient.key, delivery];
-    })
-  );
+  return buildProposalNotificationMessage(record);
 }
 
-function notificationStateFromDeliveries(
-  deliveries: Record<string, NotificationDelivery>
-) {
-  const values = Object.values(deliveries);
-  const failed = values.filter((delivery) => delivery.status === "failed");
-
-  if (failed.length > 0) {
-    return {
-      notificationStatus: "failed" as const,
-      notificationError: [
-        `Telegram delivery unresolved for ${failed.length} recipient(s)`,
-        ...failed.map(
-          (delivery) =>
-            `${delivery.recipientMaskedId}: ${
-              delivery.lastError ?? "No error recorded."
-            }`
-        )
-      ].join("; "),
-      notificationDeliveries: deliveries
-    };
-  }
-
-  if (values.some((delivery) => delivery.status === "pending")) {
-    return {
-      notificationStatus: "pending" as const,
-      notificationDeliveries: deliveries
-    };
-  }
-
-  if (values.some((delivery) => delivery.status === "sent")) {
-    return {
-      notificationStatus: "sent" as const,
-      notificationDeliveries: deliveries
-    };
-  }
-
-  return {
-    notificationStatus: "skipped" as const,
-    notificationDeliveries: deliveries
-  };
-}
-
-function currentNotificationState(proposal: StoredProposal) {
-  return {
-    notificationStatus: proposal.notificationStatus,
-    notificationError: proposal.notificationError,
-    notificationDeliveries: proposal.notificationDeliveries
-  };
-}
-
-function cloneDeliveries(
-  deliveries: StoredProposal["notificationDeliveries"]
-): Record<string, NotificationDelivery> {
-  return Object.fromEntries(
-    Object.entries(deliveries ?? {}).map(([key, delivery]) => [
-      key,
-      { ...delivery }
-    ])
-  );
-}
-
-function deduplicateProposals(proposals: StoredProposal[]): StoredProposal[] {
-  return [...new Map(proposals.map((proposal) => [proposal.id, proposal])).values()]
-    .sort((left, right) => left.firstSeenAt.localeCompare(right.firstSeenAt));
-}
-
-function needsRecoveryNow(
-  proposal: StoredProposal,
-  activeRecipientKeys: ReadonlySet<string>,
-  now: string
-): boolean {
-  const deliveries = Object.values(proposal.notificationDeliveries ?? {});
-
-  if (deliveries.length === 0) {
-    return true;
-  }
-
-  return deliveries.some(
-    (delivery) =>
-      delivery.status === "pending" ||
-      (delivery.status === "failed" &&
-        (!activeRecipientKeys.has(delivery.recipientKey) ||
-          !delivery.nextRetryAt ||
-          delivery.nextRetryAt <= now))
+function hasProposalNotificationFields(
+  record: NotificationRecord
+): record is NotificationRecord & ProposalNotificationFields {
+  return (
+    typeof (record as Partial<ProposalNotificationFields>).protocol === "string" &&
+    typeof (record as Partial<ProposalNotificationFields>).sourceType === "string" &&
+    typeof (record as Partial<ProposalNotificationFields>).publisherName ===
+      "string" &&
+    typeof (record as Partial<ProposalNotificationFields>).title === "string" &&
+    typeof (record as Partial<ProposalNotificationFields>).sourceUrl === "string"
   );
 }
 

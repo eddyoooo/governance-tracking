@@ -66,9 +66,13 @@ describe("monitor API", () => {
       routes: [
         "GET /health",
         "POST /api/admin/fetch/:protocol",
+        "POST /api/admin/fetch-onchain/:protocol",
         "POST /api/admin/status/send",
         "GET /api/admin/fetch-runs",
-        "GET /api/admin/source-activity"
+        "GET /api/admin/source-activity",
+        "GET /api/admin/governance-votes",
+        "GET /api/admin/onchain-source-status",
+        "GET /api/admin/onchain-scan-runs"
       ]
     });
   });

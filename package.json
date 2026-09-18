@@ -2,7 +2,7 @@
   "name": "governance-tracking",
   "version": "0.1.0",
   "private": true,
-  "description": "Governance forum monitor with Firestore persistence and Telegram notifications.",
+  "description": "Governance forum and on-chain monitor with Firestore persistence and Telegram notifications.",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck:strict": "tsc -p tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
+    "audit:prod": "npm audit --omit=dev --omit=optional",
     "check": "npm run build && npm run typecheck:strict && npm test",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
@@ -17,16 +18,21 @@
     "demo:admin": "ENABLE_ADMIN_DEMO=true tsx src/demo.ts",
     "telegram:test-send": "tsx src/telegramTestSend.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "test:e2e:forums": "RUN_FORUM_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/forumSources.e2e.test.ts",
+    "test:e2e:onchain": "RUN_UNISWAP_ONCHAIN_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/uniswapOnchain.e2e.test.ts",
+    "test:e2e:onchain:full": "RUN_UNISWAP_ONCHAIN_FULL_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/uniswapOnchainFullReplay.e2e.test.ts",
     "test:e2e:telegram": "RUN_TELEGRAM_E2E=true TELEGRAM_E2E_ENABLED=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/telegram.e2e.test.ts",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch --coverage=false"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.1.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "firebase-admin": "^14.2.0",
+    "firebase-admin": "^14.4.0",
     "node-cron": "^4.2.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
+    "viem": "^2.56.5",
     "zod": "^3.24.1"
   },
   "overrides": {

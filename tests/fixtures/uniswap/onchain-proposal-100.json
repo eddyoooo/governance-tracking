@@ -1,0 +1,51 @@
+{
+  "capturedAt": "2026-09-15",
+  "observedAtBlock": 25981000,
+  "chainId": 1,
+  "governorAddress": "0x408ED6354d4973f66138C91495F2f2FCbd8724C3",
+  "proposal": {
+    "id": "100",
+    "proposer": "0x927c7fD078FC406059957a691c21F6E0fC4A959C",
+    "title": "Activate v4 Protocol Fees (Part 1/2)",
+    "status": "executed",
+    "startBlock": 25567974,
+    "endBlock": 25608294,
+    "votingEndedAt": "2026-07-25T07:29:47.000Z",
+    "eta": "1785137423",
+    "forVotes": "46604582791345472235524184",
+    "againstVotes": "1274746482273310161174620",
+    "abstainVotes": "1813590659889870399210",
+    "actionCount": 7,
+    "firstAction": {
+      "target": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+      "value": "0",
+      "signature": "",
+      "calldata": "0x2d77138900000000000000000000000089a5d5bf00a27d55c02951e49078a5c5771051db"
+    },
+    "sourceUrl": "https://vote.uniswapfoundation.org/proposals/100",
+    "rawHash": "b09381f8f020d0fa6e1d154e4b591c0e84253d89c2aa7fb90bc00086b95589a8"
+  },
+  "events": [
+    {
+      "type": "created",
+      "blockNumber": 25554834,
+      "blockHash": "0xf6b1e4b120d54101fa28007a468461a93c1b60fb33f20b20e1ad747b448005a3",
+      "transactionHash": "0xa8ea4b2d438c82462ada1e24ed265d617963c667d4dcca3a67f94e1073cc5a3d",
+      "logIndex": 633
+    },
+    {
+      "type": "queued",
+      "blockNumber": 25608297,
+      "blockHash": "0x050fdfd7b208f3514b39fae2afaf073224fb75b335403efa0b42636aa41f718f",
+      "transactionHash": "0xe6499cc2e740c9548ac28cafea1e235fc6c9f305e444c2b412124fa066748d90",
+      "logIndex": 482
+    },
+    {
+      "type": "executed",
+      "blockNumber": 25622665,
+      "blockHash": "0xbd4fe8a4cb8f2e128d71e031d3aa3e92df14f30e09aba410fab81417f90751ac",
+      "transactionHash": "0x451b7fd02b38fbd8cf8ed52cbaf6c87c12322fe078f08e5f3b26b059266e4604",
+      "logIndex": 715
+    }
+  ]
+}

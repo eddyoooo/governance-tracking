@@ -133,6 +133,21 @@ export function createTelegramRecipientKey(userId: string): string {
 export function formatTelegramGovernanceMessage(
   message: NotificationMessage
 ): string {
+  if (message.kind === "lifecycle") {
+    return [
+      `<b>${escapeTelegramHtml(message.heading.toUpperCase())}</b>`,
+      `Protocol: <b>${escapeTelegramHtml(
+        formatProtocolLabel(message.protocol).toUpperCase()
+      )}</b>`,
+      ...message.fields.map(
+        (field) =>
+          `${escapeTelegramHtml(field.label)}: ${escapeTelegramHtml(field.value)}`
+      ),
+      `Title: ${escapeTelegramHtml(message.title)}`,
+      `Link: ${escapeTelegramHtml(message.sourceUrl)}`
+    ].join("\n");
+  }
+
   return [
     "<b>NEW GOVERNANCE ITEM TRACKED</b>",
     `Protocol: ${escapeTelegramHtml(formatProtocolLabel(message.protocol))}`,

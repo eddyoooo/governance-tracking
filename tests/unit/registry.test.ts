@@ -41,7 +41,7 @@ describe("ProtocolRegistry", () => {
     registry.register(uniswap);
     registry.register(cow);
 
-    expect(registry.get("lido")).toBe(lido);
+    expect(registry.get(" LIDO ")).toBe(lido);
     expect(registry.get("aave")).toBe(aave);
     expect(registry.get("uniswap")).toBe(uniswap);
     expect(registry.get("cow")).toBe(cow);
@@ -49,22 +49,34 @@ describe("ProtocolRegistry", () => {
     expect(registry.list()).toEqual([lido, aave, uniswap, cow]);
   });
 
-  it("replaces adapters registered with the same protocol key", () => {
+  it("rejects duplicate protocol registrations without replacing the original", () => {
     const registry = new ProtocolRegistry();
     const first = createFakeProtocolAdapter({
       protocol: "lido",
       publisherAllowlist: ["First"]
     });
     const second = createFakeProtocolAdapter({
-      protocol: "lido",
+      protocol: " LIDO ",
       publisherAllowlist: ["Second"]
     });
 
     registry.register(first);
-    registry.register(second);
 
+    expect(() => registry.register(second)).toThrow(
+      "Duplicate protocol adapter registered for protocol: lido"
+    );
     expect(registry.list()).toHaveLength(1);
-    expect(registry.get("lido")).toBe(second);
+    expect(registry.get("lido")).toBe(first);
+  });
+
+  it("rejects blank protocol keys", () => {
+    const registry = new ProtocolRegistry();
+    const adapter = createFakeProtocolAdapter({ protocol: "   " });
+
+    expect(() => registry.register(adapter)).toThrow(
+      "Protocol adapter protocol cannot be blank."
+    );
+    expect(registry.list()).toEqual([]);
   });
 
   it("creates the protocol registry from environment configuration", () => {

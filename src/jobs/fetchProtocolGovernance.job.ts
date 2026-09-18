@@ -18,6 +18,7 @@ import {
   type ProtocolStateRepository
 } from "../storage/protocolState.repository.js";
 import type { SourceActivityRepository } from "../storage/sourceActivity.repository.js";
+import { errorMessage, safeErrorDetails } from "../utils/errors.js";
 
 export interface FetchProtocolResult {
   run: FetchRun;
@@ -302,7 +303,7 @@ export class FetchProtocolGovernanceJob {
         errors: finishedRun.errors
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       const failedRun: FetchRun = {
         ...run,
         finishedAt: new Date().toISOString(),
@@ -316,20 +317,28 @@ export class FetchProtocolGovernanceJob {
         skippedCount,
         notificationSentCount,
         notificationFailedCount,
-        errors: [...errors, errorMessage]
+        errors: [...errors, message]
       };
 
       try {
         await this.fetchRunRepository.upsert(failedRun);
       } catch (fetchRunError) {
         this.logger.error(
-          { protocol, runId, error, fetchRunError },
+          {
+            protocol,
+            runId,
+            error: safeErrorDetails(error),
+            fetchRunError: safeErrorDetails(fetchRunError)
+          },
           "Failed to record failed governance fetch"
         );
         throw error;
       }
 
-      this.logger.error({ protocol, runId, error }, "Governance fetch failed");
+      this.logger.error(
+        { protocol, runId, error: safeErrorDetails(error) },
+        "Governance fetch failed"
+      );
       throw error;
     } finally {
       this.runningProtocols.delete(protocol);

@@ -47,6 +47,9 @@ describe("logger", () => {
         firebaseClientEmail: "service-account@example.com",
         FIREBASE_CLIENT_EMAIL: "service-account-uppercase@example.com",
         firebasePrivateKey: "super-secret-firebase-value",
+        ethereumRpcUrl: "https://example.quiknode.pro/super-secret-rpc-token",
+        ETHEREUM_RPC_URL: "https://example.quiknode.pro/uppercase-secret",
+        rpcUrl: "https://example.quiknode.pro/nested-secret",
         nested: {
           visible: "safe"
         }
@@ -66,6 +69,9 @@ describe("logger", () => {
     expect(serialized).not.toContain("service-account@example.com");
     expect(serialized).not.toContain("service-account-uppercase@example.com");
     expect(serialized).not.toContain("super-secret-firebase-value");
+    expect(serialized).not.toContain("super-secret-rpc-token");
+    expect(serialized).not.toContain("uppercase-secret");
+    expect(serialized).not.toContain("nested-secret");
     expect(serialized).toContain("safe");
     expect(entry).toMatchObject({
       apiAuthToken: "[redacted]",
@@ -77,7 +83,10 @@ describe("logger", () => {
       adminUserId: "[redacted]",
       firebaseClientEmail: "[redacted]",
       FIREBASE_CLIENT_EMAIL: "[redacted]",
-      firebasePrivateKey: "[redacted]"
+      firebasePrivateKey: "[redacted]",
+      ethereumRpcUrl: "[redacted]",
+      ETHEREUM_RPC_URL: "[redacted]",
+      rpcUrl: "[redacted]"
     });
   });
 });

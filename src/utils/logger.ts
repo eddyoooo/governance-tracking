@@ -25,7 +25,10 @@ const REDACTED_LOG_PATHS = [
   "firebasePrivateKey",
   "FIREBASE_PRIVATE_KEY",
   "privateKey",
-  "botToken"
+  "botToken",
+  "ethereumRpcUrl",
+  "ETHEREUM_RPC_URL",
+  "rpcUrl"
 ];
 
 export function createLogger(

@@ -355,6 +355,45 @@ describe("notification services", () => {
     expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain("333333333");
   });
 
+  it("sends production on-chain lifecycle notifications to every allowed user", async () => {
+    const fetchImpl = jest.fn<typeof fetch>(async () =>
+      createTelegramApiSuccessResponse()
+    );
+    const service = new TelegramNotificationService({
+      botToken: "token",
+      allowedUserIds: ["1549323073", "7615564785", "5227656122"],
+      fetchImpl,
+      logger: createSilentLogger()
+    });
+
+    await service.send({
+      kind: "lifecycle",
+      heading: "NEW GOVERNANCE VOTE TRACKED",
+      protocol: "uniswap",
+      sourceType: "onchain",
+      title: "Activate protocol fees",
+      sourceUrl: "https://vote.uniswapfoundation.org/proposals/100",
+      fields: [
+        { label: "Proposal", value: "#100" },
+        { label: "Status", value: "Created" }
+      ]
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(
+      fetchImpl.mock.calls.map((call) =>
+        JSON.parse((call[1] as RequestInit).body as string)
+      )
+    ).toEqual([
+      expect.objectContaining({
+        chat_id: "1549323073",
+        text: expect.stringContaining("<b>NEW GOVERNANCE VOTE TRACKED</b>")
+      }),
+      expect.objectContaining({ chat_id: "7615564785" }),
+      expect.objectContaining({ chat_id: "5227656122" })
+    ]);
+  });
+
   it("treats a Telegram JSON ok=false response as a delivery failure even with HTTP 200", async () => {
     const fetchImpl = jest.fn<typeof fetch>(
       async () =>

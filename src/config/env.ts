@@ -144,6 +144,16 @@ const optionalTelegramUserIdFromEnv = z.preprocess(
     .optional()
 );
 
+const optionalUrlFromEnv = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  z.union([z.literal(""), z.string().url()])
+);
+
+const ethereumAddressFromEnv = z
+  .string()
+  .trim()
+  .regex(/^0x[0-9a-fA-F]{40}$/, "Must be a valid Ethereum address.");
+
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -211,6 +221,19 @@ const rawEnvSchema = z
       .positive()
       .max(5)
       .default(2),
+    ETHEREUM_RPC_URL: optionalUrlFromEnv.default(""),
+    UNISWAP_ONCHAIN_ENABLED: booleanFromEnv.default(false),
+    UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: booleanFromEnv.default(false),
+    ONCHAIN_FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
+    UNISWAP_GOVERNOR_ADDRESS: ethereumAddressFromEnv.default(
+      "0x408ED6354d4973f66138C91495F2f2FCbd8724C3"
+    ),
+    UNISWAP_TIMELOCK_ADDRESS: ethereumAddressFromEnv.default(
+      "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
+    ),
+    UNISWAP_UNI_TOKEN_ADDRESS: ethereumAddressFromEnv.default(
+      "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+    ),
     ENABLE_TELEGRAM_NOTIFICATIONS: booleanFromEnv.default(false),
     TELEGRAM_BOT_TOKEN: z.string().default(""),
     TELEGRAM_ALLOWED_USER_IDS: telegramUserIdListFromEnv.default([]),
@@ -265,6 +288,14 @@ const rawEnvSchema = z
     cowAllowedPublishers: value.COW_ALLOWED_PUBLISHERS,
     cowFetchMaxPages: value.COW_FETCH_MAX_PAGES,
     cowCategoryFetchMaxPages: value.COW_CATEGORY_FETCH_MAX_PAGES,
+    ethereumRpcUrl: value.ETHEREUM_RPC_URL,
+    uniswapOnchainEnabled: value.UNISWAP_ONCHAIN_ENABLED,
+    uniswapOnchainNotificationsEnabled:
+      value.UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED,
+    onchainFetchIntervalCron: value.ONCHAIN_FETCH_INTERVAL_CRON,
+    uniswapGovernorAddress: value.UNISWAP_GOVERNOR_ADDRESS,
+    uniswapTimelockAddress: value.UNISWAP_TIMELOCK_ADDRESS,
+    uniswapUniTokenAddress: value.UNISWAP_UNI_TOKEN_ADDRESS,
     enableTelegramNotifications: value.ENABLE_TELEGRAM_NOTIFICATIONS,
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: value.TELEGRAM_ALLOWED_USER_IDS,
@@ -287,7 +318,31 @@ const rawEnvSchema = z
   )
   .refine((value) => !value.apiAuthEnabled || value.apiAuthToken.length > 0, {
     message: "API_AUTH_TOKEN must be set when API_AUTH_ENABLED=true."
-  });
+  })
+  .refine(
+    (value) => !value.uniswapOnchainEnabled || Boolean(value.ethereumRpcUrl),
+    {
+      message:
+        "ETHEREUM_RPC_URL must be set when UNISWAP_ONCHAIN_ENABLED=true."
+    }
+  )
+  .refine(
+    (value) =>
+      !value.uniswapOnchainNotificationsEnabled || value.uniswapOnchainEnabled,
+    {
+      message:
+        "UNISWAP_ONCHAIN_ENABLED must be true when UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true."
+    }
+  )
+  .refine(
+    (value) =>
+      !value.uniswapOnchainNotificationsEnabled ||
+      value.enableTelegramNotifications,
+    {
+      message:
+        "ENABLE_TELEGRAM_NOTIFICATIONS must be true when UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true."
+    }
+  );
 
 export type Env = z.infer<typeof rawEnvSchema>;
 

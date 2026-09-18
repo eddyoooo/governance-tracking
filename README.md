@@ -1,8 +1,8 @@
 # Governance Tracking
 
-Node.js + TypeScript backend for monitoring governance forums. The service periodically checks tracked protocol forums, stores new allowlisted proposals, tracks raw forum-source freshness, deduplicates repeat sightings, records fetch-run audit data, and optionally sends direct Telegram notifications.
+Node.js + TypeScript governance monitor. The service periodically checks tracked protocol forums, stores new allowlisted proposals, tracks raw forum-source freshness, follows Uniswap Governor Bravo proposals on Ethereum mainnet, deduplicates repeat observations, records operational audit data, and optionally sends direct Telegram notifications.
 
-The current tracked protocols are Lido, Aave, Uniswap, and CoW DAO. There is intentionally no dashboard in this version, and the backend no longer exposes proposal-browsing endpoints for a future UI. Stored proposals live in Firestore in production mode, or in memory during demo/test mode.
+Forum tracking covers Lido, Aave, Uniswap, and CoW DAO. On-chain tracking currently covers Uniswap governance proposal creation, vote result, queue, cancellation, expiry, and execution. There is intentionally no dashboard or public proposal browser. Structured state lives in Firestore in production mode, or in memory during demos and tests.
 
 For operator commands and expected results, use [PLATFORM_MANUAL.md](./PLATFORM_MANUAL.md).
 
@@ -39,8 +39,12 @@ curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s -X POST "$API/api/admin/fetch/cow"
+curl -s -X POST "$API/api/admin/fetch-onchain/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 curl -s "$API/api/admin/source-activity"
+curl -s "$API/api/admin/governance-votes?protocol=uniswap&limit=10"
+curl -s "$API/api/admin/onchain-source-status"
+curl -s "$API/api/admin/onchain-scan-runs?limit=10"
 curl -s -X POST "$API/api/admin/status/send"
 ```
 
@@ -68,8 +72,9 @@ Before pointing the monitor at production Firestore/Telegram, run:
 
 ```bash
 npm run check
+npm audit --omit=dev --omit=optional
 DEMO_STEP_DELAY_MS=0 npm run demo
-docker build -t governance-tracker-bot .
+docker build --load -t governance-tracker-bot .
 ```
 
 Then start the production-like service and verify:
@@ -81,12 +86,16 @@ curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_
 curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/fetch/cow" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s -X POST "$API/api/admin/fetch-onchain/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/governance-votes?protocol=uniswap&limit=10" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/onchain-source-status" -H "Authorization: Bearer $API_AUTH_TOKEN"
+curl -s "$API/api/admin/onchain-scan-runs?limit=10" -H "Authorization: Bearer $API_AUTH_TOKEN"
 curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
 ```
 
-Expected result: all four manual fetches finish with `status: "success"` in their `run`, fetch-run records are created, source-activity records exist for Lido, Aave, Uniswap, and CoW, and the manual admin status endpoint sends the configured Telegram admin a compact health report. On an empty database, the first successful fetch silently establishes each protocol baseline; only proposals discovered after that baseline generate Telegram alerts.
+Expected result: all four forum fetches succeed, forum fetch-run and source-activity records exist, and the admin receives a compact health report. If Uniswap on-chain tracking is enabled, its manual scan validates Ethereum mainnet and the configured Governor, Timelock, UNI token, and Governor implementation before scanning finalized logs. On an empty database, both forum and on-chain history are seeded silently; only later discoveries generate Telegram alerts.
 
 Production deployment note: if you run multiple backend replicas, prefer enabling `ENABLE_SCHEDULER=true` on only one worker. Firestore proposal upserts are transaction-backed to protect against duplicate proposal records and duplicate new-proposal notifications, but multiple active schedulers can still create duplicate polling load and extra fetch-run audit records.
 
@@ -110,6 +119,12 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 - Send a daily Telegram status report to the configured admin when enabled.
 - Allow manually sending the same admin status report after deploys or restarts.
 - Run scheduled polling once daily by default.
+- Poll finalized Uniswap Governor Bravo activity on Ethereum mainnet every six hours when enabled.
+- Persist proposal metadata, actions, vote totals, vote/execution outcome, canonical lifecycle transactions, source cursor state, and scan runs.
+- Emit one deterministic lifecycle alert for creation, success/defeat, cancellation, queue, expiry, and execution; the intermediate `active` state is stored but not alerted.
+- Refresh every on-chain proposal that can still transition, including defeated or expired proposals that may later be canceled, so state changes are detected even when a provider omits a lifecycle log.
+- Seed existing on-chain history silently, in resumable 10,000-block ranges, before enabling new-event notifications.
+- Validate complete proposal-id and canonical lifecycle-reference coverage, reject proposal-counter regression, and fail closed on RPC omissions, cursor hash changes, address mismatches, or an unreviewed configured-Governor implementation upgrade.
 - Provide a small operational API for health, manual fetches, admin status, source activity, and fetch-run audit.
 - Run deterministic unit/integration tests without live forum calls.
 - Enforce coverage thresholds during every normal `npm test` run.
@@ -122,7 +137,9 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 - No CORS/browser-facing API support.
 - No debug endpoints.
 - No AI agent, AI summary, classification, category tagging, urgency score, recommendation, or portfolio-impact logic.
-- No Snapshot or on-chain governance ingestion yet.
+- No Snapshot ingestion.
+- No on-chain governance ingestion for Lido, Aave, or CoW yet.
+- No per-wallet `VoteCast` indexing, calldata decoding, transaction simulation, or cross-chain executor tracking yet.
 - No raw payload archive.
 
 ## How It Works
@@ -142,9 +159,19 @@ Scheduler or admin fetch request
   -> fetch-run repository audit record
 
 Notification recovery scheduler
-  -> pending/failed proposal query
+  -> pending/failed forum proposal and on-chain lifecycle-event query
   -> retry only due unresolved recipients
   -> update recipient and aggregate notification state
+
+Six-hour Uniswap on-chain scheduler or admin scan request
+  -> validate Ethereum mainnet and configured contracts
+  -> verify finalized cursor and Governor implementation
+  -> read finalized Governor lifecycle logs in bounded ranges
+  -> refresh every proposal whose Governor state can still transition
+  -> verify proposal-id and canonical lifecycle-reference coverage
+  -> upsert decisions and deterministic lifecycle events atomically
+  -> recipient-aware Telegram lifecycle notification dispatcher
+  -> persist source cursor and scan-run audit data
 ```
 
 Lido uses the proposal-category Discourse endpoint:
@@ -176,6 +203,28 @@ The Aave, Uniswap, and CoW adapters combine global latest pages with every publi
 If a forum still reports more pages after the configured page cap, the monitor logs that as an `info` message with the page limit and fetched count. That is coverage telemetry, not a failed fetch.
 
 Transient Discourse network failures, request timeouts, and `408`, `429`, or `5xx` responses are retried up to three attempts with bounded exponential backoff; a valid `Retry-After` header is respected up to 30 seconds. Invalid JSON and definitive client errors are not retried. If page zero succeeds but a later page fails, the adapter preserves the newer topics already fetched. Aave, Uniswap, and CoW also continue through other public categories when one redundant category feed fails. If no global or category feed can be read, the protocol fetch fails and is surfaced in the fetch run and daily admin status.
+
+### Uniswap On-chain Tracking
+
+The on-chain adapter reads the canonical Uniswap Governor Bravo contract on Ethereum mainnet. The UNI token contract is validated as the Governor's configured voting token; it is not scanned as a separate proposal source. Before scanning, the adapter validates:
+
+- RPC chain id `1` and a finalized head.
+- Bytecode at the configured Governor, Timelock, UNI token, and current Governor implementation.
+- The Governor's own `timelock()` and `uni()` values against configuration.
+- Governor proposal counters and voting parameters.
+- The stored Governor implementation on every run. An implementation change stops scanning until the code and configuration are reviewed.
+
+Validation and proposal reads are pinned to the same finalized block snapshot, so a scan never combines a newer contract counter with older proposal state. The source reads `ProposalCreated`, `ProposalCanceled`, `ProposalQueued`, and `ProposalExecuted` logs. The proxy also contains legacy Governor Alpha events for proposal IDs `1` through `8`; the adapter reads the contract's `initialProposalId` and excludes those events. Governor Bravo tracking therefore begins at proposal `#9` rather than calling Bravo state methods with invalid Alpha IDs.
+
+Contract state supplies the native proposal status, aggregate `forVotes`, `againstVotes`, and `abstainVotes` totals, ETA, proposer, voting blocks, and action arrays. Every proposal that can still change Governor state is refreshed on each scan. That includes `pending`, `active`, `succeeded`, `queued`, `defeated`, and `expired`; Governor Bravo permits the last two to be canceled later. This is how the monitor observes result and cancellation changes even when no usable lifecycle log is returned in the incremental range. Vote-total changes update the stored decision without generating an alert until the result changes. This step does not archive individual `VoteCast` ballots or voter addresses. If a proposal is queued and canceled between polls, the canonical queue and cancellation are both retained rather than collapsing the lifecycle to only its final state.
+
+Only finalized blocks are processed. Each log query is capped at 10,000 blocks for compatibility with the configured QuickNode endpoint. The first production scan replays from Governor deployment block `13,059,157` to a fixed finalized target and persists progress after each complete range. This can require roughly 1,300 RPC log requests and may take several minutes, but it is resumable after a process or provider failure. Historical lifecycle records are stored with notifications skipped. New lifecycle notifications begin only after that baseline is complete.
+
+Normal scans overlap the previous 64 finalized blocks and verify the stored cursor block hash before advancing. Deterministic decision and lifecycle-event IDs make overlap safe. The scanner independently compares stored proposal IDs with `initialProposalId + 1` through `proposalCount`, verifies that `proposalCount` has not regressed below an already stored proposal, and requires canonical creation/cancellation/queue/execution block and transaction references whenever the current lifecycle state implies those events. A missing or corrupt baseline record triggers a silent full repair. A post-baseline proposal or lifecycle gap triggers a notification-enabled full-range retry: the persisted `replayMode` survives restarts, existing deterministic events remain deduplicated, and a genuinely missed event can still alert. The failed run is never reported as successful and never advances past the coverage gap.
+
+Lifecycle states, finalized observation blocks, and aggregate vote totals are monotonic. Proposal identity, proposer, voting window, actions, and source URL are immutable; an ETA may be established once when queued but cannot later change. Invalid backward transitions, regressive vote totals or counters, inconsistent Governor state/flags/ETA, unexpected duplicate creation/queue/execution stages, logs outside their requested range, conflicting duplicate logs, a cursor ahead of the finalized head, a changed finalized cursor hash, contract identity mismatch, unsupported contract state, missing proposal IDs, or missing canonical lifecycle references fail closed and appear in the daily admin report. Governor Bravo can legitimately emit repeated cancellation logs; the earliest cancellation remains the canonical lifecycle transition, while later cancellation calls neither rewrite it nor send another alert. Re-observed event metadata can otherwise enrich a stored lifecycle record in place, but its notification state and deterministic identity are preserved, so enrichment never sends a duplicate alert.
+
+The implementation-change guard monitors the configured Governor Bravo proxy. A migration to an entirely separate Governor address cannot be inferred from an unchanged old contract alone; it requires an explicit address/configuration update and adapter review. Forum source-activity alerts and the daily operator report provide additional operational signals, but they are not a substitute for reviewing official Uniswap governance migration announcements.
 
 ## Stored Data
 
@@ -220,6 +269,17 @@ Example proposal:
 The repository derives the document ID itself from `protocol + sourceType + sourceId`; it does not trust an adapter-supplied ID. This keeps future adapters from accidentally creating duplicate identities.
 
 `notificationDeliveries` stores an opaque deterministic recipient key and masked Telegram ID, never the full Telegram user ID. A successful recipient remains `sent`; if another recipient fails, only that unresolved recipient is retried. The aggregate `notificationStatus` is `failed` while any recipient remains failed and becomes `sent` automatically after all remaining deliveries succeed.
+
+Uniswap on-chain decisions use separate collections because their lifecycle and vote data differ from forum topics:
+
+- `governanceDecisions/{decisionId}` stores proposal identity, proposer, title/description, status, voting and execution outcomes, vote totals, the exact voting-end block timestamp when known, ETA, action arrays, lifecycle transaction/block references, and timestamps.
+- `governanceEvents/{eventId}` stores one deterministic notification event per meaningful lifecycle transition plus masked recipient delivery state.
+- `governanceSourceStates/{sourceKey}` stores the resumable baseline/cursor, `initialProposalId`, fixed baseline proposal count, silent/live replay mode, finalized block hashes, validated implementation address, and current source health.
+- `governanceScanRuns/{runId}` stores each scan's range, event, decision, lifecycle, notification, and error counts.
+
+Decision identity is derived from `protocol + sourceType + chainId + governorAddress + proposalId`. Lifecycle identity is derived from `decisionId + transition`, so replay overlap and repeated scans cannot create duplicate records or alerts. Vote amounts are stored as base-unit decimal strings to avoid JavaScript precision loss. The read API returns raw values; for UNI display, divide by `10^18`.
+
+An on-chain decision may move through `pending`, `active`, `succeeded`, `queued`, and `executed`, or end as `defeated`, `canceled`, or `expired`. `firstSeenAt` and `createdAt` are preserved. Meaningful contract-state or canonical event changes update the existing record; merely scanning it again does not rewrite it.
 
 Fetch runs are stored under `fetchRuns/{runId}`:
 
@@ -294,6 +354,10 @@ STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 8 * * *
+ETHEREUM_RPC_URL=https://replace-with-authenticated-ethereum-mainnet-rpc
+UNISWAP_ONCHAIN_ENABLED=true
+UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true
+ONCHAIN_FETCH_INTERVAL_CRON=0 */6 * * *
 ENABLE_SOURCE_ACTIVITY_ALERTS=true
 SOURCE_ACTIVITY_WARNING_DAYS=14
 SOURCE_ACTIVITY_CRITICAL_DAYS=30
@@ -314,6 +378,9 @@ Allowed values:
 - `STORAGE_MODE`: `firestore` or `memory`.
 - `DEMO_MODE`: `true` or `false`.
 - `ENABLE_SCHEDULER`: `true` or `false`.
+- `UNISWAP_ONCHAIN_ENABLED`: `true` or `false`; requires `ETHEREUM_RPC_URL` when enabled.
+- `UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED`: `true` or `false`; requires both on-chain tracking and global Telegram notifications.
+- `ONCHAIN_FETCH_INTERVAL_CRON`: valid cron expression; default `0 */6 * * *`.
 - `ENABLE_SOURCE_ACTIVITY_ALERTS`: `true` or `false`.
 - `SOURCE_ACTIVITY_WARNING_DAYS`: positive integer; warns when newest raw forum item is at least this old.
 - `SOURCE_ACTIVITY_CRITICAL_DAYS`: positive integer greater than or equal to warning days.
@@ -391,6 +458,22 @@ UNISWAP_CATEGORY_FETCH_MAX_PAGES=2
 
 Uniswap allowlist entries should use stable Discourse profile usernames. The monitor also checks the raw Discourse username behind a displayed publisher name, so profiles like `devinwalsh` can be tracked even when the stored proposal publisher displays as `Devin`.
 
+Uniswap on-chain configuration:
+
+```bash
+ETHEREUM_RPC_URL=https://replace-with-authenticated-ethereum-mainnet-rpc
+UNISWAP_ONCHAIN_ENABLED=false
+UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=false
+ONCHAIN_FETCH_INTERVAL_CRON=0 */6 * * *
+UNISWAP_GOVERNOR_ADDRESS=0x408ED6354d4973f66138C91495F2f2FCbd8724C3
+UNISWAP_TIMELOCK_ADDRESS=0x1a9C8182C09F50C8318d769245beA52c32BE35BC
+UNISWAP_UNI_TOKEN_ADDRESS=0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984
+```
+
+Set `UNISWAP_ONCHAIN_ENABLED=true` only after supplying an authenticated Ethereum mainnet RPC URL that supports finalized blocks, contract reads, and `eth_getLogs` ranges of 10,000 blocks. Set `UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true` to alert normal production recipients about newly observed lifecycle transitions. This also requires `ENABLE_TELEGRAM_NOTIFICATIONS=true`. Keep the three verified mainnet contract addresses unchanged unless Uniswap governance migrates and the adapter has been reviewed for the new contracts.
+
+The first enabled scan is intentionally silent and resumable. Run `POST /api/admin/fetch-onchain/uniswap` once after deployment and wait for `status: "success"` plus `baselineStatus: "complete"` from `/api/admin/onchain-source-status` before treating the source as live.
+
 CoW DAO configuration:
 
 ```bash
@@ -439,6 +522,22 @@ Link: <source URL>
 
 The heading is sent in bold, all caps. Dynamic fields are HTML-escaped before Telegram delivery.
 
+On-chain lifecycle notifications use the same delivery and retry machinery. Telegram displays only operationally useful fields; source type, proposal number, proposer, block references, actions, and other complete decision data remain stored in Firestore for later use. Vote-result messages include the exact UTC timestamp of the Ethereum voting-period end block plus formatted `For`, `Against`, and `Abstain` UNI totals. Example:
+
+```text
+ON-CHAIN GOVERNANCE VOTE RESULT
+Protocol: UNISWAP
+Status: Succeeded
+Voting ended: 2026-07-25 07:29 UTC
+For: 46,604,582.79 UNI
+Against: 1,274,746.48 UNI
+Abstain: 1,813.59 UNI
+Title: Activate v4 Protocol Fees (Part 1/2)
+Link: https://vote.uniswapfoundation.org/proposals/100
+```
+
+The heading and uppercase protocol value are bold in Telegram. Existing forum notification text is unchanged.
+
 A delivery is considered successful only when Telegram returns a valid JSON response with `ok: true`. HTTP `2xx` responses containing HTML, malformed JSON, an empty body, or `ok: false` remain failed and enter automatic recipient-level recovery instead of being marked sent.
 
 Failed proposal deliveries are retried automatically while the main scheduler is enabled. Backoff is 15 minutes, 1 hour, 6 hours, then 24 hours for later attempts. Recipient state prevents already-successful users from receiving the same proposal again. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` marks that recipient delivery skipped and allows the aggregate proposal status to clear. Legacy failed records that do not identify their failed recipient safely are automatically closed as `skipped` without resending; this prevents both permanent health-report noise and delivery to a guessed recipient.
@@ -451,7 +550,9 @@ TELEGRAM_ADMIN_USER_ID=1549323073
 ADMIN_STATUS_CRON=0 9 * * *
 ```
 
-Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from proposal notification recipients. When `ENABLE_SCHEDULER=true`, protocol fetches run daily at `08:00` server time by default, notification recovery checks run every 15 minutes by default, and the admin receives one daily status message at `09:00` server time. The one-hour gap gives the report time to include the latest daily fetch outcome. The message reports storage mode, scheduler mode, enabled protocols, latest fetch status per protocol, exact current pending/failed notification counts, source activity, unresolved recipient details with masked IDs, and any enabled protocol whose publisher allowlist is empty.
+Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from production notification recipients. When `ENABLE_SCHEDULER=true`, forum fetches run daily at `08:00`, enabled on-chain sources run every six hours, notification recovery checks run every 15 minutes, and the admin receives one daily status message at `09:00` server time. The report covers forum fetches, source activity, on-chain baseline/cursor/source health, latest on-chain scan status, aggregate forum and lifecycle delivery counts, masked unresolved recipients, and empty allowlists. It reports attention required if an enabled on-chain source has no successful scan within 12 hours, which catches a stopped or silently broken on-chain scheduler even when the last stored cursor looked healthy.
+
+An incomplete Uniswap historical baseline also makes the daily report show `ATTENTION REQUIRED`. The on-chain section displays checkpointed and remaining block counts, progress percentage, the saved resume cursor, last attempt, last successful scan, consecutive failures, latest scan status, and persisted replay mode. It explicitly notes that historical alerts remain suppressed until the baseline completes. A pending live coverage replay is called out separately and remains notification-enabled, with deterministic IDs preventing duplicate alerts. A failed or interrupted scan therefore remains visible to the admin while the next scheduled or manual scan safely resumes from the persisted checkpoint.
 
 The same report can be triggered manually with `POST /api/admin/status/send`. The report is defensive: if one status subsection cannot be read, for example a Firestore query error, the admin still receives an `ATTENTION REQUIRED` message with the failing subsection named.
 
@@ -502,7 +603,7 @@ Run all normal tests:
 npm test
 ```
 
-This runs all non-live Jest unit, regression, repository, and Supertest integration suites and enforces global minimums of 92% statements, 80% branches, 90% functions, and 92% lines. Live Telegram delivery remains opt-in.
+This runs all non-live Jest unit, regression, repository, and Supertest integration suites and enforces global minimums of 97% statements, 88% branches, 96% functions, and 97% lines. Critical modules also have stricter per-file thresholds. Live Ethereum RPC and Telegram delivery tests remain opt-in.
 
 Run full verification:
 
@@ -511,6 +612,14 @@ npm run check
 ```
 
 `npm run check` runs the production TypeScript build, strict unused-symbol typecheck, and the full Jest/Supertest test suite.
+
+Audit the dependency set installed in the production image:
+
+```bash
+npm run audit:prod
+```
+
+The image omits development dependencies and Firebase Admin's unused optional Cloud Storage dependency tree, so this command audits the same runtime dependency set.
 
 Run real Telegram test-send:
 
@@ -526,7 +635,25 @@ Run real Telegram E2E test:
 npm run test:e2e:telegram
 ```
 
-The Telegram commands send real messages only when the required Telegram env values are configured. Demo/test Telegram messages are admin-only. Normal `npm test` and `npm run check` do not send Telegram messages, even if `.env` has `TELEGRAM_E2E_ENABLED=true`; the real E2E test requires the dedicated script.
+This sends the saved real forum samples and one real Uniswap proposal-result sample through memory repositories, then verifies recipient-level `sent` state. The service is constructed with only `TELEGRAM_ADMIN_USER_ID`; production teammate recipients are not used.
+
+Validate all live forum APIs without Firestore or Telegram:
+
+```bash
+npm run test:e2e:forums
+```
+
+This reads page zero from Lido's proposal category and the global latest feeds from Aave, Uniswap, and CoW, validates the live Discourse response shape, and verifies public category discovery for the three broad-coverage adapters.
+
+Run the read-only live Uniswap RPC E2E test:
+
+```bash
+npm run test:e2e:onchain
+```
+
+This validates Ethereum mainnet, the configured Governor/Timelock/UNI/implementation relationships, proposal #100's canonical creation/queue/execution logs, exact voting-end timestamp, current vote totals, and all seven actions. It does not access Firestore or Telegram. The Telegram commands send real messages only when the required Telegram env values are configured. Demo/test Telegram messages are admin-only. Normal `npm test` and `npm run check` make neither live RPC calls nor Telegram requests; each live E2E path requires its dedicated script.
+
+For an expensive deployment-to-head audit, run `npm run test:e2e:onchain:full`. It replays every Governor Bravo proposal into memory, verifies contiguous proposal coverage, canonical lifecycle references, final-result timestamps, and idempotency, and forcibly disables Firestore and Telegram. Use it deliberately because it performs many RPC requests and can take 10-30 minutes when the provider throttles repeated historical reads.
 
 ## Operational API
 
@@ -538,16 +665,20 @@ Security notes:
 - Use a long random `API_AUTH_TOKEN` when the API is reachable outside your machine.
 - Request logs redact `Authorization`, `x-api-token`, Telegram, Firebase, and API token fields.
 
-| Endpoint | Calls forums? | Purpose |
+| Endpoint | External call? | Purpose |
 | --- | --- | --- |
 | `GET /health` | No | Confirms service health and storage/scheduler mode. |
 | `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/cow` | Yes | Fetches CoW global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/fetch-onchain/uniswap` | RPC | Runs the same finalized Uniswap Governor scan as the six-hour scheduler. The first run silently seeds history. |
 | `POST /api/admin/status/send` | No | Sends the same operator Telegram status report used by the daily admin cron. |
 | `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
 | `GET /api/admin/source-activity` | No | Returns latest raw-source freshness records used by the silent-migration watchdog. |
+| `GET /api/admin/governance-votes?protocol=uniswap&limit=100` | No | Returns stored on-chain decisions, newest updated first. `limit` must be `1..500`. |
+| `GET /api/admin/onchain-source-status` | No | Returns stored on-chain baseline, cursor, implementation, finalized-head, and health state. |
+| `GET /api/admin/onchain-scan-runs?limit=100` | No | Returns stored on-chain scan audit records, newest first. `limit` must be `1..500`. |
 
 With auth enabled, include a token:
 
@@ -564,11 +695,13 @@ You can also use `x-api-token: $API_AUTH_TOKEN`.
 
 Demo mode shows:
 
-- New allowlisted Lido items being discovered over multiple fetches.
+- Lido live discovery, historical allowlist backfill without old alerts, and duplicate suppression across multiple fetches.
 - Non-allowlisted Lido items being skipped.
 - Aave global latest plus category/subcategory coverage.
 - Uniswap global latest plus all discovered public category/subcategory coverage.
 - CoW global latest plus all discovered public category/subcategory coverage.
+- A real saved snapshot of Uniswap Governor proposal `#100` progressing through silent baseline, creation, successful result, queue, and execution.
+- On-chain lifecycle event persistence, canonical create/queue/execute references, persisted notification-state totals, and a repeated scan with zero duplicate decisions or alerts.
 - Repeat fetches updating counts without duplicating proposals.
 - Stored proposals printed from the repository.
 - Fetch-run audit records printed from the repository.
@@ -581,7 +714,7 @@ Speed it up:
 DEMO_STEP_DELAY_MS=0 npm run demo
 ```
 
-If Telegram is enabled in `.env`, the demo can send real Telegram notifications during the new-proposal fetches, but only to `TELEGRAM_ADMIN_USER_ID`. It never uses teammate IDs from `TELEGRAM_ALLOWED_USER_IDS`.
+If Telegram is enabled in `.env`, the demo can send forum and on-chain lifecycle notifications, but only to `TELEGRAM_ADMIN_USER_ID`. It never uses teammate IDs from `TELEGRAM_ALLOWED_USER_IDS`. The saved Uniswap proposal #100 snapshot records an action count of seven; the concise scripted demo includes its first action as a representative sample, while the production RPC adapter persists every returned action.
 
 ## Docker
 
@@ -590,7 +723,7 @@ The multi-stage production image uses Node.js 24 LTS, runs as the non-root `node
 Production image:
 
 ```bash
-docker build -t governance-tracker-bot .
+docker build --load -t governance-tracker-bot .
 ```
 
 Production container with runtime environment variables:
@@ -606,6 +739,13 @@ docker run -d \
   -e DEMO_MODE=false \
   -e ENABLE_SCHEDULER=true \
   -e FETCH_INTERVAL_CRON="0 8 * * *" \
+  -e ETHEREUM_RPC_URL="https://replace-with-authenticated-ethereum-mainnet-rpc" \
+  -e UNISWAP_ONCHAIN_ENABLED=true \
+  -e UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true \
+  -e ONCHAIN_FETCH_INTERVAL_CRON="0 */6 * * *" \
+  -e UNISWAP_GOVERNOR_ADDRESS="0x408ED6354d4973f66138C91495F2f2FCbd8724C3" \
+  -e UNISWAP_TIMELOCK_ADDRESS="0x1a9C8182C09F50C8318d769245beA52c32BE35BC" \
+  -e UNISWAP_UNI_TOKEN_ADDRESS="0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" \
   -e ENABLE_SOURCE_ACTIVITY_ALERTS=true \
   -e SOURCE_ACTIVITY_WARNING_DAYS=14 \
   -e SOURCE_ACTIVITY_CRITICAL_DAYS=30 \
@@ -641,7 +781,7 @@ Useful Docker commands:
 ```bash
 docker ps -a
 docker images
-docker build -t governance-tracker-bot .
+docker build --load -t governance-tracker-bot .
 docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
 docker logs -f governance-tracker-bot
 docker stop governance-tracker-bot
@@ -654,12 +794,20 @@ To replace a running container after rebuilding:
 ```bash
 docker stop governance-tracker-bot
 docker rm governance-tracker-bot
-docker build -t governance-tracker-bot .
+docker build --load -t governance-tracker-bot .
 docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
 ```
 
 Secrets are injected through environment variables and are not baked into the Docker image. Do not commit `.env` files or paste real secrets into shell history unless you are comfortable rotating them later.
 
+Application error logs and persisted failure messages sanitize authenticated URLs, bearer credentials, bot-token patterns, and private-key blocks. Keep normal secret-handling controls in place regardless: redaction is defense in depth, not a reason to expose credentials.
+
+The Docker image installs Firestore explicitly and omits Firebase Admin's unused optional services, including Cloud Storage. This keeps the production dependency set aligned with the platform's Firestore-only storage design.
+
+After the first on-chain-enabled deploy, trigger one authenticated `POST /api/admin/fetch-onchain/uniswap` and monitor `docker logs -f governance-tracker-bot`. Do not restart merely because the initial historical baseline takes several minutes; completed 10,000-block ranges are persisted and a later run resumes from the last safe cursor. Confirm `baselineStatus: "complete"` through `/api/admin/onchain-source-status`.
+
 ## Adding Another Protocol
 
 Add a protocol adapter under `src/protocols/<protocol>/`, including a forum/source client, Zod schemas, normalizer, fixtures, and tests. Register the adapter in `src/protocols/registry.ts`. The shared fetch job, repositories, notification service, scheduler, and admin fetch endpoint are protocol-agnostic.
+
+For another EVM governance source, implement `EvmGovernanceAdapter` under `src/onchain/<protocol>/` and register it in `src/onchain/registry.ts`. Reuse the generic range scanner, source cursor, decision/lifecycle repositories, delivery dispatcher, scheduler, admin status integration, and operational endpoints. Keep chain-specific ABI, address validation, native state mapping, deployment block, and public proposal URL inside the adapter.

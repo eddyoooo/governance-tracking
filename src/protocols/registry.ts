@@ -15,11 +15,20 @@ export class ProtocolRegistry {
   private readonly adapters = new Map<string, ProtocolAdapter>();
 
   register(adapter: ProtocolAdapter): void {
-    this.adapters.set(adapter.protocol, adapter);
+    const protocol = adapter.protocol.trim().toLowerCase();
+
+    if (!protocol) {
+      throw new Error("Protocol adapter protocol cannot be blank.");
+    }
+    if (this.adapters.has(protocol)) {
+      throw new Error(`Duplicate protocol adapter registered for protocol: ${protocol}`);
+    }
+
+    this.adapters.set(protocol, adapter);
   }
 
   get(protocol: string): ProtocolAdapter | undefined {
-    return this.adapters.get(protocol);
+    return this.adapters.get(protocol.trim().toLowerCase());
   }
 
   list(): ProtocolAdapter[] {

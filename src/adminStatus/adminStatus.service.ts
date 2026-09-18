@@ -2,14 +2,24 @@ import type { Logger } from "pino";
 import type { Env } from "../config/env.js";
 import type { ProtocolRegistry } from "../protocols/registry.js";
 import type { StoredProposal } from "../protocols/types.js";
+import type { EvmGovernanceRegistry } from "../onchain/registry.js";
+import type {
+  GovernanceLifecycleEvent,
+  GovernanceScanRun,
+  GovernanceSourceState
+} from "../onchain/types.js";
 import type { FetchRun } from "../storage/fetchRun.repository.js";
 import type { FetchRunRepository } from "../storage/fetchRun.repository.js";
+import type { GovernanceRepository } from "../storage/governance.repository.js";
 import type { ProposalRepository } from "../storage/proposal.repository.js";
 import type {
   SourceActivityRecord,
   SourceActivityRepository
 } from "../storage/sourceActivity.repository.js";
+import { errorMessage } from "../utils/errors.js";
 import { TelegramAdminStatusNotifier } from "./telegramAdminStatus.service.js";
+
+const ONCHAIN_SCAN_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 
 export interface AdminStatusNotifier {
   readonly name: string;
@@ -50,6 +60,8 @@ export class DailyAdminStatusReporter implements AdminStatusReporter {
       fetchRunRepository: FetchRunRepository;
       proposalRepository: ProposalRepository;
       sourceActivityRepository: SourceActivityRepository;
+      governanceRepository?: GovernanceRepository;
+      evmGovernanceRegistry?: EvmGovernanceRegistry;
       notifier: AdminStatusNotifier;
       logger?: Pick<Logger, "info" | "error">;
     }
@@ -64,7 +76,9 @@ export class DailyAdminStatusReporter implements AdminStatusReporter {
         protocolRegistry: this.options.protocolRegistry,
         fetchRunRepository: this.options.fetchRunRepository,
         proposalRepository: this.options.proposalRepository,
-        sourceActivityRepository: this.options.sourceActivityRepository
+        sourceActivityRepository: this.options.sourceActivityRepository,
+        governanceRepository: this.options.governanceRepository,
+        evmGovernanceRegistry: this.options.evmGovernanceRegistry
       });
     } catch (error) {
       const message = errorMessage(error);
@@ -107,6 +121,8 @@ export function createAdminStatusReporter(options: {
   fetchRunRepository: FetchRunRepository;
   proposalRepository: ProposalRepository;
   sourceActivityRepository: SourceActivityRepository;
+  governanceRepository?: GovernanceRepository;
+  evmGovernanceRegistry?: EvmGovernanceRegistry;
   logger: Logger;
 }): AdminStatusReporter {
   if (!options.env.enableAdminStatusReports) {
@@ -136,7 +152,11 @@ export async function buildAdminStatusReport(options: {
   fetchRunRepository: FetchRunRepository;
   proposalRepository: ProposalRepository;
   sourceActivityRepository: SourceActivityRepository;
+  governanceRepository?: GovernanceRepository;
+  evmGovernanceRegistry?: EvmGovernanceRegistry;
+  checkedAt?: Date;
 }): Promise<AdminStatusReportResult> {
+  const checkedAt = options.checkedAt ?? new Date();
   const problems: string[] = [];
   const enabledAdapters = options.protocolRegistry
     .list()
@@ -162,9 +182,21 @@ export async function buildAdminStatusReport(options: {
     () => options.sourceActivityRepository.findAll(100),
     "source activity records"
   );
+  const enabledOnchainAdapters =
+    options.evmGovernanceRegistry?.list().filter((adapter) => adapter.enabled) ?? [];
+  const onchainReads = await readOnchainAdminStatus(
+    enabledOnchainAdapters.map((adapter) => adapter.sourceKey),
+    options.governanceRepository
+  );
   const fetchRuns = fetchRunsResult.records ?? [];
-  const pendingNotificationCount = pendingNotificationCountResult.count;
-  const failedNotificationCount = failedNotificationCountResult.count;
+  const pendingNotificationCount = sumOptionalCounts(
+    pendingNotificationCountResult.count,
+    onchainReads.pendingNotificationCount
+  );
+  const failedNotificationCount = sumOptionalCounts(
+    failedNotificationCountResult.count,
+    onchainReads.failedNotificationCount
+  );
   const failedNotifications = failedNotificationsResult.records;
   const sourceActivityRecords = sourceActivityRecordsResult.records ?? [];
   const latestByProtocol = new Map<string, FetchRun>();
@@ -179,6 +211,8 @@ export async function buildAdminStatusReport(options: {
       problems.push(result.error);
     }
   }
+
+  problems.push(...onchainReads.errors);
 
   for (const result of [
     pendingNotificationCountResult,
@@ -240,7 +274,9 @@ export async function buildAdminStatusReport(options: {
       if (latestRun.status !== "success") {
         problems.push(
           `${protocol} latest fetch is ${latestRun.status}${
-            latestRun.errors.length > 0 ? `: ${latestRun.errors.join("; ")}` : "."
+            latestRun.errors.length > 0
+              ? `: ${latestRun.errors.map(errorMessage).join("; ")}`
+              : "."
           }`
         );
       }
@@ -258,6 +294,83 @@ export async function buildAdminStatusReport(options: {
     problems.push(
       `${failedNotificationCount} proposal notification(s) have unresolved recipient deliveries.`
     );
+  }
+
+  for (const adapter of enabledOnchainAdapters) {
+    const sourceState = onchainReads.sourceStates.find(
+      (state) => state.sourceKey === adapter.sourceKey
+    );
+    const latestScan = onchainReads.latestScans.get(adapter.sourceKey);
+
+    if (!sourceState) {
+      problems.push(
+        `No on-chain governance source state has been recorded for ${adapter.protocol}.`
+      );
+    } else {
+      if (sourceState.baselineStatus !== "complete") {
+        const progress = describeOnchainBaselineProgress(sourceState);
+
+        problems.push(
+          `${adapter.protocol} on-chain governance historical baseline is incomplete: ${progress.checkpointSummary}. Historical notifications remain suppressed until completion; ${progress.recoverySummary}.`
+        );
+      }
+
+      if (sourceState.replayMode === "live") {
+        problems.push(
+          `${adapter.protocol} on-chain governance notification-enabled coverage replay is pending; deterministic lifecycle IDs will prevent duplicate alerts.`
+        );
+      }
+
+      if (sourceState.healthStatus !== "healthy") {
+        problems.push(
+          `${adapter.protocol} on-chain governance source is ${sourceState.healthStatus}${
+            sourceState.consecutiveFailures > 0
+              ? ` after ${sourceState.consecutiveFailures} consecutive failure(s)`
+              : ""
+          }${
+            sourceState.lastError ? `: ${errorMessage(sourceState.lastError)}` : "."
+          }`
+        );
+      }
+
+      if (
+        sourceState.baselineStatus === "complete" &&
+        sourceState.cursorBlockNumber < sourceState.latestFinalizedBlockNumber
+      ) {
+        problems.push(
+          `${adapter.protocol} on-chain governance cursor is ${sourceState.latestFinalizedBlockNumber - sourceState.cursorBlockNumber} finalized block(s) behind.`
+        );
+      }
+    }
+
+    if (!latestScan) {
+      problems.push(
+        `No on-chain governance scan has been recorded for ${adapter.protocol}.`
+      );
+    } else if (latestScan.status !== "success") {
+      problems.push(
+          `${adapter.protocol} latest on-chain governance scan is ${latestScan.status}${
+            latestScan.errors.length > 0
+            ? `: ${latestScan.errors.map(errorMessage).join("; ")}`
+            : "."
+        }`
+      );
+    }
+
+    if (latestScan) {
+      const latestScanTimestamp = latestScan.finishedAt ?? latestScan.startedAt;
+      const latestScanAt = Date.parse(latestScanTimestamp);
+
+      if (!Number.isFinite(latestScanAt)) {
+        problems.push(
+          `${adapter.protocol} latest on-chain governance scan has an invalid timestamp: ${latestScanTimestamp}.`
+        );
+      } else if (checkedAt.getTime() - latestScanAt > ONCHAIN_SCAN_STALE_AFTER_MS) {
+        problems.push(
+          `${adapter.protocol} latest on-chain governance scan is older than 12 hours (${latestScanTimestamp}).`
+        );
+      }
+    }
   }
 
   if (options.env.enableSourceActivityAlerts && sourceActivityRecordsResult.records) {
@@ -284,7 +397,8 @@ export async function buildAdminStatusReport(options: {
   return {
     healthy,
     problems,
-    message: formatAdminStatusMessage({
+    message: appendOnchainAdminStatus(
+      formatAdminStatusMessage({
       env: options.env,
       enabledProtocols,
       latestByProtocol,
@@ -294,9 +408,225 @@ export async function buildAdminStatusReport(options: {
       failedNotifications: failedNotifications ?? null,
       healthy,
       problems,
-      checkedAt: new Date().toISOString()
-    })
+      checkedAt: checkedAt.toISOString()
+      }),
+      enabledOnchainAdapters.map((adapter) => adapter.sourceKey),
+      onchainReads
+    )
   };
+}
+
+interface OnchainAdminStatusReads {
+  sourceStates: GovernanceSourceState[];
+  latestScans: Map<string, GovernanceScanRun>;
+  pendingNotificationCount: number | null;
+  failedNotificationCount: number | null;
+  failedNotifications: GovernanceLifecycleEvent[] | null;
+  errors: string[];
+}
+
+async function readOnchainAdminStatus(
+  sourceKeys: string[],
+  repository: GovernanceRepository | undefined
+): Promise<OnchainAdminStatusReads> {
+  if (sourceKeys.length === 0 || !repository) {
+    return {
+      sourceStates: [],
+      latestScans: new Map(),
+      pendingNotificationCount: 0,
+      failedNotificationCount: 0,
+      failedNotifications: [],
+      errors: []
+    };
+  }
+
+  const sourceStatesResult = await readReportSection(
+    () => repository.findAllSourceStates(100),
+    "on-chain governance source states"
+  );
+  const pendingResult = await readReportCount(
+    () => repository.countByNotificationStatus("pending"),
+    "pending on-chain governance notification count"
+  );
+  const failedResult = await readReportCount(
+    () => repository.countByNotificationStatus("failed"),
+    "failed on-chain governance notification count"
+  );
+  const failedDetailsResult = await readReportSection(
+    () => repository.findByNotificationStatus("failed", 20),
+    "failed on-chain governance notification details"
+  );
+  const latestScans = new Map<string, GovernanceScanRun>();
+  const errors = [
+    sourceStatesResult.error,
+    pendingResult.error,
+    failedResult.error,
+    failedDetailsResult.error
+  ].filter((error): error is string => Boolean(error));
+
+  await Promise.all(
+    sourceKeys.map(async (sourceKey) => {
+      const scanResult = await readReportValue(
+        () => repository.findLatestScanRunBySource(sourceKey),
+        `latest ${sourceKey} on-chain governance scan`
+      );
+
+      if (scanResult.error) {
+        errors.push(scanResult.error);
+      } else if (scanResult.value) {
+        latestScans.set(sourceKey, scanResult.value);
+      }
+    })
+  );
+
+  return {
+    sourceStates: sourceStatesResult.records ?? [],
+    latestScans,
+    pendingNotificationCount: pendingResult.count,
+    failedNotificationCount: failedResult.count,
+    failedNotifications: failedDetailsResult.records,
+    errors
+  };
+}
+
+function appendOnchainAdminStatus(
+  message: string,
+  sourceKeys: string[],
+  reads: OnchainAdminStatusReads
+): string {
+  if (sourceKeys.length === 0) {
+    return message;
+  }
+
+  const sourceLines = sourceKeys.map((sourceKey) => {
+    const state = reads.sourceStates.find((item) => item.sourceKey === sourceKey);
+    const scan = reads.latestScans.get(sourceKey);
+
+    if (!state) {
+      return `- ${escapeTelegramHtml(sourceKey)}: no source state recorded`;
+    }
+
+    const baselineSummary =
+      state.baselineStatus === "complete"
+        ? "baseline complete"
+        : `baseline seeding (${describeOnchainBaselineProgress(state).checkpointSummary}; historical alerts suppressed)`;
+
+    return [
+      `- ${escapeTelegramHtml(sourceKey)}: ${escapeTelegramHtml(state.healthStatus)}`,
+      escapeTelegramHtml(baselineSummary),
+      `cursor ${state.cursorBlockNumber}/${state.latestFinalizedBlockNumber}`,
+      `last attempt ${escapeTelegramHtml(state.lastAttemptAt)}`,
+      `last success ${escapeTelegramHtml(state.lastSuccessfulScanAt ?? "never")}`,
+      `consecutive failures ${state.consecutiveFailures}`,
+      `latest scan ${escapeTelegramHtml(scan?.status ?? "not recorded")}`,
+      `replay ${escapeTelegramHtml(state.replayMode ?? "none")}`
+    ].join("; ");
+  });
+  const failedLines = formatFailedGovernanceNotificationLines(
+    reads.failedNotifications,
+    reads.failedNotificationCount
+  );
+
+  return enforceTelegramMessageLimit(
+    [message, "", "On-chain governance:", ...sourceLines, ...failedLines].join(
+      "\n"
+    )
+  );
+}
+
+function describeOnchainBaselineProgress(state: GovernanceSourceState): {
+  checkpointSummary: string;
+  recoverySummary: string;
+} {
+  const firstBlock = state.deploymentBlock;
+  const targetBlock = state.baselineTargetBlock;
+  const totalBlocks = Math.max(0, targetBlock - firstBlock + 1);
+  const boundedCursor = Math.min(
+    Math.max(state.cursorBlockNumber, firstBlock - 1),
+    targetBlock
+  );
+  const checkpointedBlocks =
+    totalBlocks === 0 ? 0 : Math.max(0, boundedCursor - firstBlock + 1);
+  const remainingBlocks = Math.max(0, totalBlocks - checkpointedBlocks);
+  const progressPercent =
+    totalBlocks === 0 ? 0 : (checkpointedBlocks / totalBlocks) * 100;
+  const checkpointSummary = `${checkpointedBlocks}/${totalBlocks} block(s) checkpointed (${formatProgressPercent(
+    progressPercent
+  )}); ${remainingBlocks} block(s) remaining`;
+
+  if (remainingBlocks === 0) {
+    return {
+      checkpointSummary,
+      recoverySummary:
+        "all target blocks are checkpointed but baseline completion has not been recorded"
+    };
+  }
+
+  return {
+    checkpointSummary,
+    recoverySummary: `the next scan will safely resume from block ${boundedCursor + 1}`
+  };
+}
+
+function formatProgressPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)}%`;
+}
+
+function formatFailedGovernanceNotificationLines(
+  events: GovernanceLifecycleEvent[] | null,
+  totalCount: number | null
+): string[] {
+  if (!events || events.length === 0) {
+    return [];
+  }
+
+  const visible = events.slice(0, 5);
+  const lines = [
+    `Failed on-chain lifecycle notifications${
+      (totalCount ?? visible.length) > visible.length
+        ? ` (showing ${visible.length} of ${totalCount})`
+        : ""
+    }:`
+  ];
+
+  for (const event of visible) {
+    const failedRecipients = Object.values(
+      event.notificationDeliveries ?? {}
+    ).filter((delivery) => delivery.status === "failed");
+    const recipientSummary =
+      failedRecipients.length > 0
+        ? failedRecipients
+            .slice(0, 5)
+            .map(
+              (delivery) =>
+                `${delivery.recipientMaskedId} (${truncate(
+                  errorMessage(delivery.lastError ?? "no error recorded"),
+                  140
+                )})`
+            )
+            .join(", ")
+        : truncate(errorMessage(event.notificationError ?? "no error recorded"), 180);
+
+    lines.push(
+      `- ${escapeTelegramHtml(event.protocol)}/${escapeTelegramHtml(
+        event.transition
+      )}/${escapeTelegramHtml(event.decisionId)}; recipients ${escapeTelegramHtml(
+        recipientSummary
+      )}`
+    );
+  }
+
+  return lines;
+}
+
+function sumOptionalCounts(
+  forumCount: number | null,
+  onchainCount: number | null
+): number | null {
+  return forumCount === null || onchainCount === null
+    ? null
+    : forumCount + onchainCount;
 }
 
 export function formatAdminStatusMessage(options: {
@@ -433,7 +763,10 @@ function formatFailedRecipientDetails(
       }; next retry ${escapeTelegramHtml(
         delivery.nextRetryAt ?? "next recovery cycle"
       )}; reason ${escapeTelegramHtml(
-        truncate(delivery.lastError ?? "No notification error recorded.", 220)
+        truncate(
+          errorMessage(delivery.lastError ?? "No notification error recorded."),
+          220
+        )
       )}`
   );
 }
@@ -442,7 +775,9 @@ function describeNotificationFailure(
   notificationError: string | undefined,
   env: Env
 ): string {
-  const rawError = notificationError?.trim() || "No notification error recorded.";
+  const rawError = errorMessage(
+    notificationError?.trim() || "No notification error recorded."
+  );
   const recipientMatch = rawError.match(/recipient\s+(\d+)/i);
   const recipientIndex = recipientMatch ? Number(recipientMatch[1]) : null;
   const recipientId =
@@ -532,10 +867,6 @@ async function readReportValue<T>(
 
 function formatOptionalCount(count: number | null): string {
   return count === null ? "unknown" : String(count);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function escapeTelegramHtml(value: string): string {

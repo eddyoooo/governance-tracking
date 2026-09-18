@@ -58,6 +58,48 @@ module.exports = {
       branches: 81,
       functions: 100,
       lines: 100
+    },
+    "./src/onchain/governanceDecision.ts": {
+      statements: 100,
+      branches: 90,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/governanceNotifications.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/onchainGovernance.job.ts": {
+      statements: 96,
+      branches: 90,
+      functions: 100,
+      lines: 96
+    },
+    "./src/onchain/registry.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/uniswap/uniswapOnchain.adapter.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/uniswap/uniswapOnchain.client.ts": {
+      statements: 98,
+      branches: 92,
+      functions: 100,
+      lines: 98
+    },
+    "./src/storage/governance.repository.ts": {
+      statements: 95,
+      branches: 85,
+      functions: 93,
+      lines: 95
     }
   },
   transform: {

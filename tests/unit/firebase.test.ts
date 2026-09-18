@@ -8,6 +8,7 @@ import {
 } from "../../src/config/firebase.js";
 import { FirestoreFetchRunRepository } from "../../src/storage/fetchRun.repository.js";
 import { FirestoreProposalRepository } from "../../src/storage/firestoreProposal.repository.js";
+import { FirestoreGovernanceRepository } from "../../src/storage/governance.repository.js";
 import { createRepositories } from "../../src/storage/index.js";
 import { FirestoreProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import { FirestoreSourceActivityRepository } from "../../src/storage/sourceActivity.repository.js";
@@ -99,6 +100,9 @@ describe("Firebase configuration", () => {
     );
     expect(repositories.protocolStateRepository).toBeInstanceOf(
       FirestoreProtocolStateRepository
+    );
+    expect(repositories.governanceRepository).toBeInstanceOf(
+      FirestoreGovernanceRepository
     );
   });
 });

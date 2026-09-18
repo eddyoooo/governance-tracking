@@ -1,5 +1,6 @@
 import cron, { type ScheduledTask } from "node-cron";
 import type { AppContext } from "../server.js";
+import { safeErrorDetails } from "../utils/errors.js";
 
 export interface SchedulerHandle {
   stop(): void;
@@ -33,6 +34,20 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
     );
   }
 
+  const scheduledOnchainProtocols = context.evmGovernanceRegistry
+    .list()
+    .filter((adapter) => adapter.enabled)
+    .map((adapter) => adapter.protocol);
+
+  if (
+    scheduledOnchainProtocols.length > 0 &&
+    !cron.validate(env.onchainFetchIntervalCron)
+  ) {
+    throw new Error(
+      `Invalid ONCHAIN_FETCH_INTERVAL_CRON: ${env.onchainFetchIntervalCron}`
+    );
+  }
+
   const scheduledTasks: ScheduledTask[] = [];
   const scheduledProtocols = context.protocolRegistry
     .list()
@@ -51,7 +66,33 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
       cron.schedule(env.fetchIntervalCron, () => {
         for (const protocol of scheduledProtocols) {
           fetchJob.run(protocol).catch((error) => {
-            logger.error({ error, protocol }, "Scheduled governance fetch failed");
+            logger.error(
+              { error: safeErrorDetails(error), protocol },
+              "Scheduled governance fetch failed"
+            );
+          });
+        }
+      })
+    );
+  }
+
+  if (scheduledOnchainProtocols.length > 0) {
+    logger.info(
+      {
+        cron: env.onchainFetchIntervalCron,
+        protocols: scheduledOnchainProtocols
+      },
+      "Starting on-chain governance scheduler"
+    );
+
+    scheduledTasks.push(
+      cron.schedule(env.onchainFetchIntervalCron, () => {
+        for (const protocol of scheduledOnchainProtocols) {
+          context.onchainGovernanceJob.run(protocol).catch((error) => {
+            logger.error(
+              { error: safeErrorDetails(error), protocol },
+              "Scheduled on-chain governance scan failed"
+            );
           });
         }
       })
@@ -66,19 +107,40 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
 
     scheduledTasks.push(
       cron.schedule(env.notificationRetryCron, () => {
-        context.notificationDispatcher
-          .recoverOutstanding()
-          .then((result) => {
-            if (result.candidateCount > 0 || result.skippedBecauseRunning) {
+        Promise.all([
+          context.notificationDispatcher.recoverOutstanding(),
+          context.governanceNotificationDispatcher.recoverOutstanding()
+        ])
+          .then(([proposalResult, governanceResult]) => {
+            const candidateCount =
+              proposalResult.candidateCount + governanceResult.candidateCount;
+
+            if (
+              candidateCount > 0 ||
+              proposalResult.skippedBecauseRunning ||
+              governanceResult.skippedBecauseRunning
+            ) {
               logger.info(
                 {
-                  candidateCount: result.candidateCount,
-                  attemptedProposalCount: result.attemptedProposalCount,
-                  attemptedRecipientCount: result.attemptedRecipientCount,
-                  recoveredCount: result.recoveredCount,
-                  stillPendingCount: result.stillPendingCount,
-                  stillFailedCount: result.stillFailedCount,
-                  skippedBecauseRunning: result.skippedBecauseRunning
+                  candidateCount,
+                  attemptedProposalCount:
+                    proposalResult.attemptedProposalCount +
+                    governanceResult.attemptedProposalCount,
+                  attemptedRecipientCount:
+                    proposalResult.attemptedRecipientCount +
+                    governanceResult.attemptedRecipientCount,
+                  recoveredCount:
+                    proposalResult.recoveredCount +
+                    governanceResult.recoveredCount,
+                  stillPendingCount:
+                    proposalResult.stillPendingCount +
+                    governanceResult.stillPendingCount,
+                  stillFailedCount:
+                    proposalResult.stillFailedCount +
+                    governanceResult.stillFailedCount,
+                  skippedBecauseRunning:
+                    proposalResult.skippedBecauseRunning ||
+                    governanceResult.skippedBecauseRunning
                 },
                 "Finished automatic notification recovery"
               );
@@ -86,7 +148,7 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
           })
           .catch((error) => {
             logger.error(
-              { error },
+              { error: safeErrorDetails(error) },
               "Scheduled notification recovery failed"
             );
           });
@@ -103,7 +165,10 @@ export function startScheduler(context: AppContext): SchedulerHandle | null {
     scheduledTasks.push(
       cron.schedule(env.adminStatusCron, () => {
         context.adminStatusReporter.sendDailyStatusReport().catch((error) => {
-          logger.error({ error }, "Scheduled admin status report failed");
+          logger.error(
+            { error: safeErrorDetails(error) },
+            "Scheduled admin status report failed"
+          );
         });
       })
     );

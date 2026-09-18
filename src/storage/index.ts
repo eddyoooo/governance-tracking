@@ -20,12 +20,18 @@ import {
   MemorySourceActivityRepository,
   type SourceActivityRepository
 } from "./sourceActivity.repository.js";
+import {
+  FirestoreGovernanceRepository,
+  MemoryGovernanceRepository,
+  type GovernanceRepository
+} from "./governance.repository.js";
 
 export interface Repositories {
   proposalRepository: ProposalRepository;
   fetchRunRepository: FetchRunRepository;
   sourceActivityRepository: SourceActivityRepository;
   protocolStateRepository: ProtocolStateRepository;
+  governanceRepository: GovernanceRepository;
 }
 
 export function createRepositories(env: Env, logger: Logger): Repositories {
@@ -36,7 +42,8 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
       proposalRepository: new MemoryProposalRepository(),
       fetchRunRepository: new MemoryFetchRunRepository(),
       sourceActivityRepository: new MemorySourceActivityRepository(),
-      protocolStateRepository: new MemoryProtocolStateRepository()
+      protocolStateRepository: new MemoryProtocolStateRepository(),
+      governanceRepository: new MemoryGovernanceRepository()
     };
   }
 
@@ -47,6 +54,7 @@ export function createRepositories(env: Env, logger: Logger): Repositories {
     proposalRepository: new FirestoreProposalRepository(db),
     fetchRunRepository: new FirestoreFetchRunRepository(db),
     sourceActivityRepository: new FirestoreSourceActivityRepository(db),
-    protocolStateRepository: new FirestoreProtocolStateRepository(db)
+    protocolStateRepository: new FirestoreProtocolStateRepository(db),
+    governanceRepository: new FirestoreGovernanceRepository(db)
   };
 }

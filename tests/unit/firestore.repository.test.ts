@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import type { Firestore } from "firebase-admin/firestore";
+import { createGovernanceLifecycleEventId } from "../../src/onchain/governanceDecision.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import {
   FirestoreFetchRunRepository,
   type FetchRun
 } from "../../src/storage/fetchRun.repository.js";
 import { FirestoreProposalRepository } from "../../src/storage/firestoreProposal.repository.js";
+import { FirestoreGovernanceRepository } from "../../src/storage/governance.repository.js";
 import { FirestoreProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import {
   FirestoreSourceActivityRepository,
   type SourceActivityRecord
 } from "../../src/storage/sourceActivity.repository.js";
 import { createRawGovernanceItem } from "../helpers/builders.js";
+import {
+  createGovernanceObservation,
+  createGovernanceScanRun,
+  createGovernanceSourceState,
+  TEST_SOURCE_KEY
+} from "../helpers/onchainBuilders.js";
 
 type StoredDocument = Record<string, unknown>;
 
@@ -916,7 +924,14 @@ describe("FirestoreFetchRunRepository", () => {
       status: "failed",
       errors: ["Forum unavailable"]
     };
+    const olderSuccessful: FetchRun = {
+      ...successful,
+      id: "older-successful",
+      startedAt: "2026-06-04T00:00:00.000Z",
+      finishedAt: "2026-06-04T00:01:00.000Z"
+    };
 
+    await repository.upsert(olderSuccessful);
     await repository.upsert(successful);
     await repository.upsert(failed);
 
@@ -1014,5 +1029,225 @@ describe("FirestoreSourceActivityRepository", () => {
       consecutiveStaleRuns: 0
     });
     expect(stored?.statusReason).toBeUndefined();
+  });
+});
+
+describe("FirestoreGovernanceRepository", () => {
+  it("transactionally stores decisions and idempotent lifecycle events", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const observation = createGovernanceObservation();
+    const first = await repository.upsertDecision(observation, {
+      notificationStatusForNewEvents: "pending",
+      now: "2026-09-01T00:00:00.000Z"
+    });
+    const repeated = await repository.upsertDecision(
+      { ...observation, lastObservedBlockNumber: 999 },
+      {
+        notificationStatusForNewEvents: "pending",
+        now: "2026-09-02T00:00:00.000Z"
+      }
+    );
+
+    expect(first).toMatchObject({ created: true, updated: true });
+    expect(first.lifecycleEventsCreated).toHaveLength(1);
+    expect(repeated).toMatchObject({ created: false, updated: false });
+    expect(repeated.lifecycleEventsCreated).toEqual([]);
+    await expect(repository.findDecisionById(observation.id)).resolves.toMatchObject({
+      proposalId: "1",
+      updatedAt: "2026-09-01T00:00:00.000Z"
+    });
+    await expect(repository.countByNotificationStatus("pending")).resolves.toBe(1);
+  });
+
+  it("atomically rejects regressive vote totals without altering the stored decision", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const original = createGovernanceObservation({
+      status: "active",
+      forVotes: "100",
+      againstVotes: "20",
+      abstainVotes: "3",
+      lastObservedBlockNumber: 130,
+      rawHash: "active-100-20-3"
+    });
+    await repository.upsertDecision(original, {
+      notificationStatusForNewEvents: "skipped",
+      now: "2026-09-01T00:00:00.000Z"
+    });
+
+    await expect(
+      repository.upsertDecision(
+        {
+          ...original,
+          forVotes: "99",
+          lastObservedBlockNumber: 140,
+          rawHash: "active-99-20-3"
+        },
+        {
+          notificationStatusForNewEvents: "pending",
+          now: "2026-09-02T00:00:00.000Z"
+        }
+      )
+    ).rejects.toThrow("Governance proposal forVotes regressed from 100 to 99");
+
+    await expect(repository.findDecisionById(original.id)).resolves.toMatchObject({
+      forVotes: "100",
+      lastObservedBlockNumber: 130,
+      updatedAt: "2026-09-01T00:00:00.000Z"
+    });
+    await expect(repository.countByNotificationStatus("pending")).resolves.toBe(0);
+    await expect(repository.countByNotificationStatus("skipped")).resolves.toBe(1);
+  });
+
+  it("queries notification work without requiring a composite Firestore index", async () => {
+    const db = createFakeFirestore();
+    const repository = new FirestoreGovernanceRepository(db);
+    const first = await repository.upsertDecision(
+      createGovernanceObservation({ proposalId: "1" }),
+      {
+        notificationStatusForNewEvents: "pending",
+        now: "2026-09-02T00:00:00.000Z"
+      }
+    );
+    await repository.upsertDecision(
+      createGovernanceObservation({ proposalId: "2" }),
+      {
+        notificationStatusForNewEvents: "pending",
+        now: "2026-09-01T00:00:00.000Z"
+      }
+    );
+    await repository.updateNotificationState(
+      first.lifecycleEventsCreated[0].id,
+      () => ({
+        notificationStatus: "sent"
+      })
+    );
+
+    const pending = await repository.findByNotificationStatus("pending", 1);
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      decisionId: expect.stringContaining("_2_"),
+      notificationStatus: "pending"
+    });
+    await expect(repository.countByNotificationStatus("sent")).resolves.toBe(1);
+    await expect(repository.findById("missing")).resolves.toBeNull();
+  });
+
+  it("transactionally enriches lifecycle event metadata without resetting delivery state", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const initial = await repository.upsertDecision(
+      createGovernanceObservation({
+        status: "executed",
+        rawHash: "executed-before-event-log",
+        lastObservedBlockNumber: 200
+      }),
+      {
+        notificationStatusForNewEvents: "skipped",
+        now: "2026-09-01T00:00:00.000Z"
+      }
+    );
+    const eventId = createGovernanceLifecycleEventId(initial.decision.id, "executed");
+    await repository.updateNotificationState(eventId, () => ({
+      notificationStatus: "sent"
+    }));
+    const executedTransactionHash = `0x${"44".repeat(32)}`;
+
+    const enriched = await repository.upsertDecision(
+      createGovernanceObservation({
+        status: "executed",
+        executedBlockNumber: 190,
+        executedTransactionHash,
+        rawHash: "executed-before-event-log",
+        lastObservedBlockNumber: 220
+      }),
+      {
+        notificationStatusForNewEvents: "pending",
+        now: "2026-09-02T00:00:00.000Z"
+      }
+    );
+
+    expect(enriched.lifecycleEventsCreated).toEqual([]);
+    await expect(repository.findById(eventId)).resolves.toMatchObject({
+      blockNumber: 190,
+      transactionHash: executedTransactionHash,
+      notificationStatus: "sent",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-02T00:00:00.000Z"
+    });
+  });
+
+  it("persists source progress while protecting source identity", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const state = createGovernanceSourceState();
+
+    await expect(repository.initializeSourceState(state)).resolves.toEqual(state);
+    await expect(
+      repository.initializeSourceState(
+        createGovernanceSourceState({ cursorBlockNumber: 999 })
+      )
+    ).resolves.toEqual(state);
+    await expect(
+      repository.updateSourceState(TEST_SOURCE_KEY, (current) => ({
+        ...current,
+        cursorBlockNumber: 120,
+        updatedAt: "2026-09-02T00:00:00.000Z"
+      }))
+    ).resolves.toMatchObject({ cursorBlockNumber: 120 });
+    await expect(repository.findAllSourceStates(1)).resolves.toEqual([
+      expect.objectContaining({ sourceKey: TEST_SOURCE_KEY, cursorBlockNumber: 120 })
+    ]);
+    await expect(
+      repository.updateSourceState(TEST_SOURCE_KEY, (current) => ({
+        ...current,
+        contractAddress: "0x0000000000000000000000000000000000000002"
+      }))
+    ).rejects.toThrow("Governance source identity cannot change.");
+    await expect(
+      repository.updateSourceState(TEST_SOURCE_KEY, (current) => ({
+        ...current,
+        initialProposalId: "8"
+      }))
+    ).rejects.toThrow("Governance source identity cannot change.");
+    await expect(
+      repository.updateSourceState("missing", (current) => current)
+    ).resolves.toBeNull();
+  });
+
+  it("lists scan runs and resolves the newest run for a source in memory", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const older = createGovernanceScanRun({
+      id: "older",
+      startedAt: "2026-09-01T00:00:00.000Z"
+    });
+    const newer = createGovernanceScanRun({
+      id: "newer",
+      startedAt: "2026-09-02T00:00:00.000Z"
+    });
+
+    await repository.upsertScanRun(older);
+    await repository.upsertScanRun(newer);
+
+    await expect(repository.findScanRuns(1)).resolves.toEqual([newer]);
+    await expect(repository.findLatestScanRunBySource(TEST_SOURCE_KEY)).resolves.toEqual(
+      newer
+    );
+    await expect(repository.findLatestScanRunBySource("missing")).resolves.toBeNull();
+  });
+
+  it("returns only non-terminal decisions for periodic state refresh", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+
+    await repository.upsertDecision(
+      createGovernanceObservation({ proposalId: "1", status: "active" }),
+      { notificationStatusForNewEvents: "skipped" }
+    );
+    await repository.upsertDecision(
+      createGovernanceObservation({ proposalId: "2", status: "executed" }),
+      { notificationStatusForNewEvents: "skipped" }
+    );
+
+    await expect(repository.findNonTerminalDecisions(TEST_SOURCE_KEY)).resolves.toEqual([
+      expect.objectContaining({ proposalId: "1", status: "active" })
+    ]);
   });
 });

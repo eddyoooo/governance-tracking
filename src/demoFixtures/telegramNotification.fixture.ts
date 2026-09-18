@@ -1,6 +1,10 @@
-import type { NotificationMessage } from "../notifications/notification.service.js";
+import type {
+  NotificationMessage,
+  ProposalNotificationMessage
+} from "../notifications/notification.service.js";
 
-export interface TelegramTestNotificationFixture extends NotificationMessage {
+export interface TelegramTestNotificationFixture
+  extends ProposalNotificationMessage {
   sourceId: string;
   publishedAt: string;
 }
@@ -188,7 +192,7 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
 ];
 
 export function createTelegramTestNotification(
-  overrides: Partial<NotificationMessage> = {}
+  overrides: Partial<ProposalNotificationMessage> = {}
 ): NotificationMessage {
   return {
     ...telegramTestNotificationFixtures[0],
@@ -197,7 +201,7 @@ export function createTelegramTestNotification(
 }
 
 export function createTelegramTestNotifications(
-  overrides: Partial<NotificationMessage> = {}
+  overrides: Partial<ProposalNotificationMessage> = {}
 ): NotificationMessage[] {
   return telegramTestNotificationFixtures.map((fixture) => ({
     ...fixture,

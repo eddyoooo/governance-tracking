@@ -29,6 +29,8 @@ describe("Docker configuration", () => {
     const dockerignore = await readProjectFile(".dockerignore");
 
     expect(dockerfile).toContain("RUN npm run build");
+    expect(dockerfile).toContain("RUN npm ci --omit=optional");
+    expect(dockerfile).toContain("RUN npm ci --omit=dev --omit=optional");
     expect(dockerfile).toContain("FROM node:24-alpine AS base");
     expect(dockerfile).not.toContain("node:20");
     expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');

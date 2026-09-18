@@ -8,7 +8,13 @@ export function createHealthRouter(context: AppContext): Router {
     response.json({
       ok: true,
       storageMode: context.env.demoMode ? "memory" : context.env.storageMode,
-      schedulerEnabled: context.env.enableScheduler
+      schedulerEnabled: context.env.enableScheduler,
+      onchainGovernance: {
+        enabledProtocols: context.evmGovernanceRegistry
+          .list()
+          .map((adapter) => adapter.protocol),
+        schedule: context.env.onchainFetchIntervalCron
+      }
     });
   });
 
