@@ -196,9 +196,9 @@ describe("real Uniswap Governor Bravo fixture", () => {
         "Protocol: <b>UNISWAP</b>\n" +
         "Status: Succeeded\n" +
         "Voting ended: 2026-07-25 07:29 UTC\n" +
-        "For: 46,604,582.79 UNI\n" +
-        "Against: 1,274,746.48 UNI\n" +
-        "Abstain: 1,813.59 UNI\n" +
+        "For: 46,604,582.79 UNI (97.33%)\n" +
+        "Against: 1,274,746.48 UNI (2.66%)\n" +
+        "Abstain: 1,813.59 UNI (0.01%)\n" +
         "Title: Activate v4 Protocol Fees (Part 1/2)\n" +
         "Link: https://vote.uniswapfoundation.org/proposals/100"
     );

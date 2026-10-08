@@ -522,16 +522,16 @@ Link: <source URL>
 
 The heading is sent in bold, all caps. Dynamic fields are HTML-escaped before Telegram delivery.
 
-On-chain lifecycle notifications use the same delivery and retry machinery. Telegram displays only operationally useful fields; source type, proposal number, proposer, block references, actions, and other complete decision data remain stored in Firestore for later use. Vote-result messages include the exact UTC timestamp of the Ethereum voting-period end block plus formatted `For`, `Against`, and `Abstain` UNI totals. Example:
+On-chain lifecycle notifications use the same delivery and retry machinery. Telegram displays only operationally useful fields; source type, proposal number, proposer, block references, actions, and other complete decision data remain stored in Firestore for later use. Vote-result messages include the exact UTC timestamp of the Ethereum voting-period end block plus formatted `For`, `Against`, and `Abstain` UNI totals. Each percentage is that option's share of all votes cast, including abstentions, rounded to two decimal places. A non-zero share that would round to `0.00%` is displayed as `0.01%` so it is never mistaken for no votes. Example:
 
 ```text
 ON-CHAIN GOVERNANCE VOTE RESULT
 Protocol: UNISWAP
 Status: Succeeded
 Voting ended: 2026-07-25 07:29 UTC
-For: 46,604,582.79 UNI
-Against: 1,274,746.48 UNI
-Abstain: 1,813.59 UNI
+For: 46,604,582.79 UNI (97.33%)
+Against: 1,274,746.48 UNI (2.66%)
+Abstain: 1,813.59 UNI (0.01%)
 Title: Activate v4 Protocol Fees (Part 1/2)
 Link: https://vote.uniswapfoundation.org/proposals/100
 ```

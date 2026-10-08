@@ -22,6 +22,11 @@ export function buildGovernanceLifecycleMessage(
   const fields = [{ label: "Status", value: statusLabel(transition) }];
 
   if (transition === "succeeded" || transition === "defeated") {
+    const forVotes = parseUniVotes(decision.forVotes);
+    const againstVotes = parseUniVotes(decision.againstVotes);
+    const abstainVotes = parseUniVotes(decision.abstainVotes);
+    const totalVotes = forVotes + againstVotes + abstainVotes;
+
     if (decision.votingEndedAt) {
       fields.push({
         label: "Voting ended",
@@ -30,9 +35,9 @@ export function buildGovernanceLifecycleMessage(
     }
 
     fields.push(
-      { label: "For", value: formatUniVotes(decision.forVotes) },
-      { label: "Against", value: formatUniVotes(decision.againstVotes) },
-      { label: "Abstain", value: formatUniVotes(decision.abstainVotes) }
+      { label: "For", value: formatVoteResult(forVotes, totalVotes) },
+      { label: "Against", value: formatVoteResult(againstVotes, totalVotes) },
+      { label: "Abstain", value: formatVoteResult(abstainVotes, totalVotes) }
     );
   }
 
@@ -72,11 +77,18 @@ export function governanceEventMessage(
 }
 
 export function formatUniVotes(value: string): string {
+  return formatUniVoteAmount(parseUniVotes(value));
+}
+
+function parseUniVotes(value: string): bigint {
   if (!/^\d+$/.test(value)) {
     throw new Error(`UNI vote amount must be a non-negative integer: ${value}`);
   }
 
-  const amount = BigInt(value);
+  return BigInt(value);
+}
+
+function formatUniVoteAmount(amount: bigint): string {
   const whole = amount / 10n ** 18n;
   const fraction = amount % 10n ** 18n;
   const fractionDigits = fraction
@@ -87,6 +99,24 @@ export function formatUniVotes(value: string): string {
   const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
   return `${grouped}${fractionDigits ? `.${fractionDigits}` : ""} UNI`;
+}
+
+function formatVoteResult(amount: bigint, total: bigint): string {
+  return `${formatUniVoteAmount(amount)} (${formatVotePercentage(amount, total)})`;
+}
+
+function formatVotePercentage(amount: bigint, total: bigint): string {
+  if (total === 0n) {
+    return "0.00%";
+  }
+
+  // Scale to hundredths of a percent and round half up without floating-point loss.
+  const roundedHundredths = (amount * 10_000n + total / 2n) / total;
+  const hundredths = amount > 0n && roundedHundredths === 0n ? 1n : roundedHundredths;
+  const whole = hundredths / 100n;
+  const fraction = (hundredths % 100n).toString().padStart(2, "0");
+
+  return `${whole}.${fraction}%`;
 }
 
 function statusLabel(transition: GovernanceTransitionType): string {

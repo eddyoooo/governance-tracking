@@ -62,12 +62,83 @@ describe("on-chain governance notifications", () => {
       expect.arrayContaining([
         { label: "Status", value: label },
         { label: "Voting ended", value: "2026-09-10 14:35 UTC" },
-        { label: "For", value: "46,604,583 UNI" },
-        { label: "Against", value: "1,274,746 UNI" },
-        { label: "Abstain", value: "500 UNI" }
+        { label: "For", value: "46,604,583 UNI (97.34%)" },
+        { label: "Against", value: "1,274,746 UNI (2.66%)" },
+        { label: "Abstain", value: "500 UNI (0.01%)" }
       ])
     );
     expect(message.heading).toBe("ON-CHAIN GOVERNANCE VOTE RESULT");
+  });
+
+  it("uses integer-safe percentage rounding for equal vote shares", () => {
+    const message = buildGovernanceLifecycleMessage(
+      createStoredGovernanceDecision({
+        status: "succeeded",
+        forVotes: "1",
+        againstVotes: "1",
+        abstainVotes: "1"
+      }),
+      "succeeded"
+    );
+
+    expect(message.fields).toEqual(
+      expect.arrayContaining([
+        { label: "For", value: "0 UNI (33.33%)" },
+        { label: "Against", value: "0 UNI (33.33%)" },
+        { label: "Abstain", value: "0 UNI (33.33%)" }
+      ])
+    );
+  });
+
+  it("formats an all-zero vote without dividing by zero", () => {
+    const message = buildGovernanceLifecycleMessage(
+      createStoredGovernanceDecision({
+        status: "defeated",
+        forVotes: "0",
+        againstVotes: "0",
+        abstainVotes: "0"
+      }),
+      "defeated"
+    );
+
+    expect(message.fields).toEqual(
+      expect.arrayContaining([
+        { label: "For", value: "0 UNI (0.00%)" },
+        { label: "Against", value: "0 UNI (0.00%)" },
+        { label: "Abstain", value: "0 UNI (0.00%)" }
+      ])
+    );
+  });
+
+  it("shows a minimum 0.01% share for a non-zero vote amount", () => {
+    const message = buildGovernanceLifecycleMessage(
+      createStoredGovernanceDecision({
+        status: "succeeded",
+        forVotes: "999999999999999999999999",
+        againstVotes: "0",
+        abstainVotes: "1"
+      }),
+      "succeeded"
+    );
+
+    expect(message.fields).toEqual(
+      expect.arrayContaining([
+        { label: "For", value: "999,999.99 UNI (100.00%)" },
+        { label: "Against", value: "0 UNI (0.00%)" },
+        { label: "Abstain", value: "0 UNI (0.01%)" }
+      ])
+    );
+  });
+
+  it("rejects malformed stored vote totals before building a result message", () => {
+    const decision = createStoredGovernanceDecision({
+      status: "succeeded",
+      againstVotes: "invalid"
+    });
+
+    expect(() => buildGovernanceLifecycleMessage(decision, "succeeded")).toThrow(
+      "UNI vote amount must be a non-negative integer: invalid"
+    );
   });
 
   it("formats canonical voting timestamps in an explicit UTC representation", () => {
