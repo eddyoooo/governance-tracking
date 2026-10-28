@@ -5,6 +5,7 @@ import type {
   RawGovernanceItem
 } from "../protocols/types.js";
 import { normalizeLidoForumItem } from "../protocols/lido/lido.normalizer.js";
+import { DISCOURSE_TRUST_LEVEL_LEADER } from "../protocols/discourse/discourseForum.client.js";
 import {
   telegramTestNotificationFixtures,
   type TelegramTestNotificationFixture
@@ -35,6 +36,9 @@ export class ScriptedLidoDemoAdapter implements ProtocolAdapter {
   readonly enabled = true;
   readonly source: GovernanceSource;
   readonly publisherAllowlist: string[];
+  readonly publisherTrustLevelAllowlist = [
+    DISCOURSE_TRUST_LEVEL_LEADER
+  ] as const;
   private visibleAllowlistedCount = 0;
   private readonly includeNonAllowlistedItem: boolean;
 

@@ -41,6 +41,7 @@ describe("LidoForumClient", () => {
       sourceId: "1001",
       title: "Allowed Lido Proposal",
       publisherName: "Allowed Publisher",
+      publisherTrustLevel: 2,
       sourceUrl: "https://research.lido.fi/t/allowed-lido-proposal/1001"
     });
     expect(topics[0].publishedAt).toBe("2026-05-01T10:00:00.000Z");
@@ -50,7 +51,8 @@ describe("LidoForumClient", () => {
       },
       publisher: {
         id: 1,
-        name: "Allowed Publisher"
+        name: "Allowed Publisher",
+        trust_level: 2
       }
     });
   });
@@ -108,8 +110,18 @@ describe("LidoForumClient", () => {
   it("prefers the original poster when multiple posters are present", async () => {
     const payload = {
       users: [
-        { id: 1, username: "recent", name: "Recent Poster" },
-        { id: 2, username: "original", name: "Original Publisher" }
+        {
+          id: 1,
+          username: "recent",
+          name: "Recent Poster",
+          trust_level: 4
+        },
+        {
+          id: 2,
+          username: "original",
+          name: "Original Publisher",
+          trust_level: 1
+        }
       ],
       topic_list: {
         topics: [
@@ -135,7 +147,127 @@ describe("LidoForumClient", () => {
     const topics = await client.fetchRecentTopics();
 
     expect(topics[0].publisherName).toBe("Original Publisher");
+    expect(topics[0].publisherTrustLevel).toBe(1);
   });
+
+  it("falls back to the first poster and never inherits a later poster's Leader level", async () => {
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch({
+        users: [
+          {
+            id: 1,
+            username: "regular-original",
+            name: "Regular Original",
+            trust_level: 2
+          },
+          {
+            id: 2,
+            username: "leader-replier",
+            name: "Leader Replier",
+            trust_level: 4
+          }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 56,
+              title: "Topic without poster descriptions",
+              slug: "topic-without-poster-descriptions",
+              created_at: "2026-05-01T10:00:00.000Z",
+              posters: [{ user_id: 1 }, { user_id: 2 }]
+            }
+          ]
+        }
+      })
+    });
+
+    await expect(client.fetchRecentTopics()).resolves.toEqual([
+      expect.objectContaining({
+        publisherName: "Regular Original",
+        publisherTrustLevel: 2
+      })
+    ]);
+  });
+
+  it("maps the live Lido Leader trust level from the original author", async () => {
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch({
+        users: [
+          { id: 392, username: "Izzy", name: "Izzy", trust_level: 4 }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 11987,
+              title: "Unveiling Lido Lend: Security-First Lending",
+              slug: "unveiling-lido-lend-security-first-lending",
+              created_at: "2026-10-27T08:00:00.000Z",
+              posters: [
+                {
+                  user_id: 392,
+                  description: "Original Poster, Most Recent Poster"
+                }
+              ]
+            }
+          ]
+        }
+      })
+    });
+
+    await expect(client.fetchRecentTopics()).resolves.toEqual([
+      expect.objectContaining({
+        sourceId: "11987",
+        publisherName: "Izzy",
+        publisherTrustLevel: 4
+      })
+    ]);
+  });
+
+  it("rejects malformed author trust-level values", async () => {
+    const client = new LidoForumClient({
+      baseUrl: "https://research.lido.fi",
+      apiBaseUrl: "https://research.lido.fi",
+      fetchImpl: jsonFetch({
+        users: [
+          { id: 392, username: "Izzy", name: "Izzy", trust_level: "leader" }
+        ],
+        topic_list: { topics: [] }
+      })
+    });
+
+    await expect(client.fetchRecentTopics()).rejects.toThrow(
+      "Invalid Lido recent topics response."
+    );
+  });
+
+  it.each([-1, 1.5, null])(
+    "rejects out-of-contract author trust level %p",
+    async (trustLevel) => {
+      const client = new LidoForumClient({
+        baseUrl: "https://research.lido.fi",
+        apiBaseUrl: "https://research.lido.fi",
+        fetchImpl: jsonFetch({
+          users: [
+            {
+              id: 392,
+              username: "Izzy",
+              name: "Izzy",
+              trust_level: trustLevel
+            }
+          ],
+          topic_list: { topics: [] }
+        })
+      });
+
+      await expect(client.fetchRecentTopics()).rejects.toThrow(
+        "Invalid Lido recent topics response."
+      );
+    }
+  );
 
   it("falls back from display name to username without treating a last commenter as the publisher", async () => {
     const payload = {

@@ -100,7 +100,24 @@ describe("monitor API", () => {
     expect(response.body).toMatchObject({
       ok: true,
       storageMode: "memory",
-      schedulerEnabled: false
+      schedulerEnabled: false,
+      forumGovernance: {
+        enabledProtocols: ["lido", "aave", "uniswap", "cow"],
+        schedule: "0 8 * * *"
+      }
+    });
+  });
+
+  it("reports explicitly disabled forum adapters accurately", async () => {
+    const { app } = createApp({
+      env: testEnv({ COW_ENABLED: "false", AAVE_ENABLED: "false" })
+    });
+
+    const response = await request(app).get("/health").expect(200);
+
+    expect(response.body.forumGovernance).toEqual({
+      enabledProtocols: ["lido", "uniswap"],
+      schedule: "0 8 * * *"
     });
   });
 

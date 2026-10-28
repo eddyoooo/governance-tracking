@@ -23,6 +23,36 @@ module.exports = {
       functions: 100,
       lines: 100
     },
+    "./src/protocols/allowlist.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
+    "./src/protocols/discourse/discourseForum.client.ts": {
+      statements: 96,
+      branches: 98,
+      functions: 87,
+      lines: 96
+    },
+    "./src/protocols/lido/lido.adapter.ts": {
+      statements: 100,
+      branches: 75,
+      functions: 100,
+      lines: 100
+    },
+    "./src/protocols/lido/lidoForum.client.ts": {
+      statements: 100,
+      branches: 87,
+      functions: 100,
+      lines: 100
+    },
+    "./src/protocols/lido/lido.normalizer.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
     "./src/scheduler/scheduler.ts": {
       statements: 100,
       branches: 100,

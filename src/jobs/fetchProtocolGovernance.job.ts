@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import { filterByPublisherAllowlist } from "../protocols/allowlist.js";
+import { filterByPublisherPolicy } from "../protocols/allowlist.js";
 import { NoopNotificationService } from "../notifications/noopNotification.service.js";
 import type { NotificationService } from "../notifications/notification.service.js";
 import { ProposalNotificationDispatcher } from "../notifications/proposalNotifications.js";
@@ -92,7 +92,9 @@ export class FetchProtocolGovernanceJob {
     return sourceActivityConfigFromEnv(env);
   }
 
-  async run(protocol: string): Promise<FetchProtocolResult> {
+  async run(protocolInput: string): Promise<FetchProtocolResult> {
+    const protocol = protocolInput.trim().toLowerCase();
+
     if (this.runningProtocols.has(protocol)) {
       throw new FetchAlreadyRunningError(protocol);
     }
@@ -165,7 +167,11 @@ export class FetchProtocolGovernanceJob {
         fetchedAt: new Date().toISOString(),
         config: sourceActivityConfig
       });
-      const filtered = filterByPublisherAllowlist(rawItems, adapter.publisherAllowlist);
+      const filtered = filterByPublisherPolicy(rawItems, {
+        publisherAllowlist: adapter.publisherAllowlist,
+        publisherTrustLevelAllowlist:
+          adapter.publisherTrustLevelAllowlist
+      });
       allowlistedCount = filtered.allowed.length;
       skippedCount = filtered.skipped.length;
 

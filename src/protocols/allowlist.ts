@@ -5,6 +5,11 @@ export interface AllowlistFilterResult<TItem extends RawGovernanceItem> {
   skipped: TItem[];
 }
 
+export interface PublisherFilterPolicy {
+  publisherAllowlist: string[];
+  publisherTrustLevelAllowlist?: readonly number[];
+}
+
 export function normalizePublisherName(value: string): string {
   return value
     .trim()
@@ -96,15 +101,29 @@ export function filterByPublisherAllowlist<TItem extends RawGovernanceItem>(
   items: TItem[],
   allowlist: string[]
 ): AllowlistFilterResult<TItem> {
+  return filterByPublisherPolicy(items, { publisherAllowlist: allowlist });
+}
+
+export function filterByPublisherPolicy<TItem extends RawGovernanceItem>(
+  items: TItem[],
+  policy: PublisherFilterPolicy
+): AllowlistFilterResult<TItem> {
   const allowed: TItem[] = [];
   const skipped: TItem[] = [];
+  const allowedTrustLevels = new Set(
+    policy.publisherTrustLevelAllowlist ?? []
+  );
 
   for (const item of items) {
-    if (
+    const publisherNameAllowed =
       getPublisherAliases(item).some((publisherAlias) =>
-        matchesPublisherAllowlist(publisherAlias, allowlist)
-      )
-    ) {
+        matchesPublisherAllowlist(publisherAlias, policy.publisherAllowlist)
+      );
+    const publisherTrustLevelAllowed =
+      item.publisherTrustLevel !== undefined &&
+      allowedTrustLevels.has(item.publisherTrustLevel);
+
+    if (publisherNameAllowed || publisherTrustLevelAllowed) {
       allowed.push(item);
     } else {
       skipped.push(item);

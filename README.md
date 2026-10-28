@@ -39,14 +39,11 @@ curl -s -X POST "$API/api/admin/fetch/lido"
 curl -s -X POST "$API/api/admin/fetch/aave"
 curl -s -X POST "$API/api/admin/fetch/uniswap"
 curl -s -X POST "$API/api/admin/fetch/cow"
-curl -s -X POST "$API/api/admin/fetch-onchain/uniswap"
 curl -s "$API/api/admin/fetch-runs"
 curl -s "$API/api/admin/source-activity"
-curl -s "$API/api/admin/governance-votes?protocol=uniswap&limit=10"
-curl -s "$API/api/admin/onchain-source-status"
-curl -s "$API/api/admin/onchain-scan-runs?limit=10"
-curl -s -X POST "$API/api/admin/status/send"
 ```
+
+These API fetches use the publisher policies configured for each adapter. Aave, Uniswap, and CoW require a publisher-name allowlist match. Lido accepts either a configured publisher-name match or an original author whose Discourse trust level is Leader (`trust_level=4`). Lido, Aave, Uniswap, and CoW are enabled by default, and each can be disabled explicitly with its protocol-specific `*_ENABLED=false` setting. The self-contained demo below supplies representative allowlists for all four protocols. The on-chain scan requires `UNISWAP_ONCHAIN_ENABLED=true` and an Ethereum RPC. Sending an admin report requires `ENABLE_ADMIN_STATUS_REPORTS=true` and Telegram credentials; see the platform manual for those operator commands.
 
 Run the end-to-end terminal walkthrough:
 
@@ -72,30 +69,12 @@ Before pointing the monitor at production Firestore/Telegram, run:
 
 ```bash
 npm run check
-npm audit --omit=dev --omit=optional
-DEMO_STEP_DELAY_MS=0 npm run demo
+npm run audit:prod
+ENABLE_TELEGRAM_NOTIFICATIONS=false DEMO_STEP_DELAY_MS=0 npm run demo
 docker build --load -t governance-tracker-bot .
 ```
 
-Then start the production-like service and verify:
-
-```bash
-API=http://localhost:3000
-curl -s "$API/health" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/lido" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/aave" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch/cow" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/fetch-onchain/uniswap" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/fetch-runs" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/source-activity" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/governance-votes?protocol=uniswap&limit=10" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/onchain-source-status" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s "$API/api/admin/onchain-scan-runs?limit=10" -H "Authorization: Bearer $API_AUTH_TOKEN"
-curl -s -X POST "$API/api/admin/status/send" -H "Authorization: Bearer $API_AUTH_TOKEN"
-```
-
-Expected result: all four forum fetches succeed, forum fetch-run and source-activity records exist, and the admin receives a compact health report. If Uniswap on-chain tracking is enabled, its manual scan validates Ethereum mainnet and the configured Governor, Timelock, UNI token, and Governor implementation before scanning finalized logs. On an empty database, both forum and on-chain history are seeded silently; only later discoveries generate Telegram alerts.
+After deployment, use the authenticated health and audit checks in [PLATFORM_MANUAL.md](./PLATFORM_MANUAL.md). A manual fetch changes Firestore state, and sending a status report dispatches a Telegram message. On an empty database, forum and on-chain history are seeded silently; later discoveries can alert subscribers. The first on-chain scan also validates Ethereum mainnet and the configured Governor, Timelock, UNI token, and Governor implementation.
 
 Production deployment note: if you run multiple backend replicas, prefer enabling `ENABLE_SCHEDULER=true` on only one worker. Firestore proposal upserts are transaction-backed to protect against duplicate proposal records and duplicate new-proposal notifications, but multiple active schedulers can still create duplicate polling load and extra fetch-run audit records.
 
@@ -104,7 +83,7 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 - Fetch recent proposal/forum activity for Lido, Aave, Uniswap, and CoW DAO.
 - Validate Discourse JSON responses with Zod.
 - Bound external forum and Telegram requests with timeouts so a stuck network call does not hang the monitor indefinitely.
-- Filter fetched items by protocol-specific trusted publisher allowlists.
+- Filter fetched items by protocol-specific publisher policies: name allowlists for every forum plus a Lido-only Leader original-author exemption.
 - Treat only the Discourse original poster as the publisher; a last commenter is never used as an author fallback.
 - Normalize allowlisted items into a common stored proposal shape.
 - Deduplicate by `protocol + sourceType + sourceId`.
@@ -151,7 +130,7 @@ Scheduler or admin fetch request
   -> Discourse client
   -> Zod response validation
   -> source-activity watchdog update
-  -> publisher allowlist filter
+  -> protocol publisher policy (name allowlist and optional trust levels)
   -> normalizer
   -> protocol baseline check
   -> proposal repository upsert
@@ -182,6 +161,8 @@ GET https://research.lido.fi/c/proposals/9/l/latest.json?page=<page>
 
 `9` is the Lido forum proposal category id. This keeps Lido polling focused on proposal-category topics instead of all latest forum discussion.
 
+Lido's publisher policy is an OR rule. A topic is tracked when the original poster matches `LIDO_ALLOWED_PUBLISHERS` or when that original poster has Discourse `trust_level=4` (Leader). The trust level comes from the same category response's `users` record, so no per-topic request is required. Only the original poster is evaluated: a Leader who replies, comments most recently, or appears as a frequent poster cannot make another author's topic eligible. Other protocols remain name-allowlist-only until their adapters explicitly opt into a trust-level policy.
+
 Aave, Uniswap, and CoW use broader forum coverage because proposal-like activity can appear across multiple public categories and subcategories:
 
 ```text
@@ -202,7 +183,7 @@ The Aave, Uniswap, and CoW adapters combine global latest pages with every publi
 
 If a forum still reports more pages after the configured page cap, the monitor logs that as an `info` message with the page limit and fetched count. That is coverage telemetry, not a failed fetch.
 
-Transient Discourse network failures, request timeouts, and `408`, `429`, or `5xx` responses are retried up to three attempts with bounded exponential backoff; a valid `Retry-After` header is respected up to 30 seconds. Invalid JSON and definitive client errors are not retried. If page zero succeeds but a later page fails, the adapter preserves the newer topics already fetched. Aave, Uniswap, and CoW also continue through other public categories when one redundant category feed fails. If no global or category feed can be read, the protocol fetch fails and is surfaced in the fetch run and daily admin status.
+Transient Discourse network failures, request timeouts, and `408`, `429`, or `5xx` responses are retried up to three attempts with bounded exponential backoff; a valid `Retry-After` header is respected up to 30 seconds. Invalid JSON and definitive client errors are not retried. If page zero succeeds but a later page fails, the adapter preserves the newer topics already fetched. Aave, Uniswap, and CoW also continue through other public categories when one redundant category feed fails. These partial-feed problems are logged as warnings, but a run with at least one readable feed can still report success; check container logs when investigating missing topics. If no global or category feed can be read, the protocol fetch fails and is surfaced in the fetch run and daily admin status.
 
 ### Uniswap On-chain Tracking
 
@@ -354,6 +335,7 @@ STORAGE_MODE=firestore
 DEMO_MODE=false
 ENABLE_SCHEDULER=true
 FETCH_INTERVAL_CRON=0 8 * * *
+FETCH_RUN_MAX_AGE_HOURS=48
 ETHEREUM_RPC_URL=https://replace-with-authenticated-ethereum-mainnet-rpc
 UNISWAP_ONCHAIN_ENABLED=true
 UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true
@@ -378,6 +360,8 @@ Allowed values:
 - `STORAGE_MODE`: `firestore` or `memory`.
 - `DEMO_MODE`: `true` or `false`.
 - `ENABLE_SCHEDULER`: `true` or `false`.
+- `LIDO_ENABLED`, `AAVE_ENABLED`, `UNISWAP_ENABLED`, and `COW_ENABLED`: `true` or `false`; all four forum adapters default to `true`.
+- `FETCH_RUN_MAX_AGE_HOURS`: positive integer; default `48`. With the production scheduler enabled, the admin report flags each protocol whose last successful forum fetch is older than this. Raise it if you schedule forum scans less often than daily.
 - `UNISWAP_ONCHAIN_ENABLED`: `true` or `false`; requires `ETHEREUM_RPC_URL` when enabled.
 - `UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED`: `true` or `false`; requires both on-chain tracking and global Telegram notifications.
 - `ONCHAIN_FETCH_INTERVAL_CRON`: valid cron expression; default `0 */6 * * *`.
@@ -414,6 +398,10 @@ LIDO_ALLOWED_PUBLISHERS='[
 ]'
 LIDO_FETCH_MAX_PAGES=5
 ```
+
+The three configured names continue to match exactly as before. In addition, Lido automatically treats an original poster with Discourse Leader trust level (`trust_level=4`) as trusted even when their display name or username is not in `LIDO_ALLOWED_PUBLISHERS`. This exemption is Lido-specific and is defined in the Lido adapter rather than through another environment variable.
+
+When this policy is first deployed, older Leader-authored topics already covered by a previous successful Lido poll are stored silently under the existing historical-backfill rule. Leader topics published after the previous successful poll follow the normal new-proposal path and notify configured recipients. This prevents the policy expansion from spamming historical posts while ensuring future Leader topics are alerted.
 
 Aave configuration:
 
@@ -550,7 +538,7 @@ TELEGRAM_ADMIN_USER_ID=1549323073
 ADMIN_STATUS_CRON=0 9 * * *
 ```
 
-Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from production notification recipients. When `ENABLE_SCHEDULER=true`, forum fetches run daily at `08:00`, enabled on-chain sources run every six hours, notification recovery checks run every 15 minutes, and the admin receives one daily status message at `09:00` server time. The report covers forum fetches, source activity, on-chain baseline/cursor/source health, latest on-chain scan status, aggregate forum and lifecycle delivery counts, masked unresolved recipients, and empty allowlists. It reports attention required if an enabled on-chain source has no successful scan within 12 hours, which catches a stopped or silently broken on-chain scheduler even when the last stored cursor looked healthy.
+Admin status reports use the same `TELEGRAM_BOT_TOKEN`, but they are separate from production notification recipients. When `ENABLE_SCHEDULER=true`, forum fetches run daily at `08:00`, enabled on-chain sources run every six hours, notification recovery checks run every 15 minutes, and the admin receives one daily status message at `09:00` server time. The report covers forum fetches, source activity, on-chain baseline/cursor/source health, latest on-chain scan status, aggregate forum and lifecycle delivery counts, masked unresolved recipients, and empty allowlists. It reports attention required when a scheduled forum fetch is older than `FETCH_RUN_MAX_AGE_HOURS` or an enabled on-chain source has no successful scan within 12 hours. These checks catch stopped or silently broken schedulers even when the last stored source state looked healthy.
 
 An incomplete Uniswap historical baseline also makes the daily report show `ATTENTION REQUIRED`. The on-chain section displays checkpointed and remaining block counts, progress percentage, the saved resume cursor, last attempt, last successful scan, consecutive failures, latest scan status, and persisted replay mode. It explicitly notes that historical alerts remain suppressed until the baseline completes. A pending live coverage replay is called out separately and remains notification-enabled, with deterministic IDs preventing duplicate alerts. A failed or interrupted scan therefore remains visible to the admin while the next scheduled or manual scan safely resumes from the persisted checkpoint.
 
@@ -667,7 +655,7 @@ Security notes:
 
 | Endpoint | External call? | Purpose |
 | --- | --- | --- |
-| `GET /health` | No | Confirms service health and storage/scheduler mode. |
+| `GET /health` | No | Confirms storage/scheduler mode plus the enabled forum and on-chain protocol lists. |
 | `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
 | `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
@@ -739,6 +727,7 @@ docker run -d \
   -e DEMO_MODE=false \
   -e ENABLE_SCHEDULER=true \
   -e FETCH_INTERVAL_CRON="0 8 * * *" \
+  -e FETCH_RUN_MAX_AGE_HOURS=48 \
   -e ETHEREUM_RPC_URL="https://replace-with-authenticated-ethereum-mainnet-rpc" \
   -e UNISWAP_ONCHAIN_ENABLED=true \
   -e UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=true \
@@ -770,7 +759,7 @@ docker run -d \
   governance-tracker-bot
 ```
 
-Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'`, and `-e COW_ALLOWED_PUBLISHERS='["notsoformal","Kowrigan","harisang","felixhenneke","KPK"]'` if they are not already provided by the deployment environment. CoW defaults to disabled unless `COW_ENABLED=true` is supplied, making deployment of an older runtime environment backward-safe.
+Add the protocol allowlists with `-e LIDO_ALLOWED_PUBLISHERS='[...]'`, `-e AAVE_ALLOWED_PUBLISHERS='[...]'`, `-e UNISWAP_ALLOWED_PUBLISHERS='[...]'`, and `-e COW_ALLOWED_PUBLISHERS='["notsoformal","Kowrigan","harisang","felixhenneke","KPK"]'` if they are not already provided by the deployment environment. All four forum adapters, including CoW, default to enabled; use the corresponding `*_ENABLED=false` setting only when intentionally pausing a source.
 
 For `FIREBASE_PRIVATE_KEY`, pass escaped newlines, for example `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n`. A deployment secret manager is preferable to pasting secrets into shell history.
 
@@ -782,7 +771,6 @@ Useful Docker commands:
 docker ps -a
 docker images
 docker build --load -t governance-tracker-bot .
-docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
 docker logs -f governance-tracker-bot
 docker stop governance-tracker-bot
 docker rm governance-tracker-bot
@@ -795,8 +783,9 @@ To replace a running container after rebuilding:
 docker stop governance-tracker-bot
 docker rm governance-tracker-bot
 docker build --load -t governance-tracker-bot .
-docker run -d -p 3000:3000 --name governance-tracker-bot --restart unless-stopped [env vars...] governance-tracker-bot
 ```
+
+Restart with the full `docker run` command above and the same runtime variables.
 
 Secrets are injected through environment variables and are not baked into the Docker image. Do not commit `.env` files or paste real secrets into shell history unless you are comfortable rotating them later.
 

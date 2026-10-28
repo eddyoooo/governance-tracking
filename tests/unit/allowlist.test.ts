@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "@jest/globals";
 import {
   filterByPublisherAllowlist,
+  filterByPublisherPolicy,
   getPublisherAliases,
   matchesPublisherAllowlist,
   normalizePublisherName
@@ -178,5 +179,56 @@ describe("publisher allowlist", () => {
     expect(result.skipped).toHaveLength(1);
     expect(result.allowed[0].sourceId).toBe("1001");
     expect(result.skipped[0].sourceId).toBe("1002");
+  });
+
+  it("allows an original poster through an explicitly configured trust-level policy", () => {
+    const leader = {
+      protocol: "lido",
+      sourceType: "forum",
+      sourceId: "11987",
+      title: "Unveiling Lido Lend: Security-First Lending",
+      publisherName: "Izzy",
+      publisherTrustLevel: 4,
+      sourceUrl:
+        "https://research.lido.fi/t/unveiling-lido-lend-security-first-lending/11987",
+      publishedAt: "2026-10-27T08:00:00.000Z",
+      fetchedAt: "2026-10-28T08:00:00.000Z",
+      raw: {}
+    } satisfies RawGovernanceItem;
+
+    expect(
+      filterByPublisherPolicy([leader], {
+        publisherAllowlist: ["Different Publisher"],
+        publisherTrustLevelAllowlist: [4]
+      }).allowed
+    ).toEqual([leader]);
+    expect(
+      filterByPublisherPolicy([leader], {
+        publisherAllowlist: ["Different Publisher"]
+      }).skipped
+    ).toEqual([leader]);
+  });
+
+  it("does not broaden trust-level matching below the configured level", () => {
+    const regular = {
+      protocol: "lido",
+      sourceType: "forum",
+      sourceId: "11988",
+      title: "Regular author topic",
+      publisherName: "Regular Author",
+      publisherTrustLevel: 3,
+      sourceUrl: "https://research.lido.fi/t/regular-author-topic/11988",
+      publishedAt: "2026-10-27T08:00:00.000Z",
+      fetchedAt: "2026-10-28T08:00:00.000Z",
+      raw: {}
+    } satisfies RawGovernanceItem;
+
+    const result = filterByPublisherPolicy([regular], {
+      publisherAllowlist: [],
+      publisherTrustLevelAllowlist: [4]
+    });
+
+    expect(result.allowed).toEqual([]);
+    expect(result.skipped).toEqual([regular]);
   });
 });

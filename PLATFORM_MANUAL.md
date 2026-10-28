@@ -1,6 +1,6 @@
 # Platform Manual
 
-Quick operator guide for the governance monitor. It tracks allowlisted Lido, Aave, Uniswap, and CoW forum topics plus Uniswap Governor Bravo proposal lifecycles on Ethereum mainnet, stores structured state, sends direct Telegram alerts, retries failed recipients, and reports health to the Telegram admin.
+Quick operator guide for the governance monitor. It tracks trusted Lido, Aave, Uniswap, and CoW forum topics plus Uniswap Governor Bravo proposal lifecycles on Ethereum mainnet, stores structured state, sends direct Telegram alerts, retries failed recipients, and reports health to the Telegram admin. Forum trust is based on protocol publisher-name allowlists; Lido additionally accepts original posters with Discourse Leader level (`trust_level=4`).
 
 Detailed architecture and configuration are in [README.md](./README.md).
 
@@ -17,8 +17,8 @@ Run before every production deployment:
 ```bash
 npm install
 npm run check
-npm audit --omit=dev --omit=optional
-DEMO_STEP_DELAY_MS=0 npm run demo
+npm run audit:prod
+ENABLE_TELEGRAM_NOTIFICATIONS=false DEMO_STEP_DELAY_MS=0 npm run demo
 docker build --load -t governance-tracker-bot .
 ```
 
@@ -66,6 +66,7 @@ npm run dev
 ```
 
 Memory-mode data exists only inside this process and disappears on restart.
+All four forum adapters, including CoW, are enabled by default. Set a protocol's `*_ENABLED=false` only when intentionally pausing that source. Enablement controls polling; only topics matching that protocol's publisher policy are stored and notified. Lido's policy also accepts Leader-level original authors; the other forum policies are name-allowlist-only.
 
 ## Terminal Demo
 
@@ -120,6 +121,10 @@ Expected:
   "ok": true,
   "storageMode": "memory",
   "schedulerEnabled": false,
+  "forumGovernance": {
+    "enabledProtocols": ["lido", "aave", "uniswap", "cow"],
+    "schedule": "0 8 * * *"
+  },
   "onchainGovernance": {
     "enabledProtocols": [],
     "schedule": "0 */6 * * *"
@@ -127,7 +132,7 @@ Expected:
 }
 ```
 
-This reads runtime state only. It does not call a forum.
+This reads runtime state only. It does not call a forum. Confirm that `cow` appears in `forumGovernance.enabledProtocols` unless CoW was intentionally disabled.
 
 ### Manual Fetch
 
@@ -143,7 +148,7 @@ Each call runs the same pipeline as the scheduler. Production mode calls the liv
 Important result fields:
 
 - `fetchedCount`: unique raw topics inspected.
-- `allowlistedCount`: topics matching the protocol publisher allowlist.
+- `allowlistedCount`: topics matching the protocol publisher policy. For Lido this includes configured publisher names and Leader-level original authors; for the other forums it means name-allowlist matches only.
 - `storedNewCount`: allowlisted proposals inserted for the first time.
 - `baselineSeededCount`: historical proposals stored silently during first-run seeding or after an allowlist expansion.
 - `updatedExistingCount`: known proposals with meaningful source changes.
@@ -156,6 +161,10 @@ Important result fields:
 On an empty database, the first successful fetch for each protocol that meets `SOURCE_ACTIVITY_MIN_FETCHED_COUNT` establishes a silent baseline. Historical allowlisted proposals are stored with notifications skipped. An empty or interrupted first fetch remains in seeding mode; later discoveries notify only after a valid baseline completes.
 
 When a publisher is added to an established allowlist, any of that publisher's topics dated at or before the previous successful protocol poll are stored silently instead of producing historical alerts. Topics newer than the previous successful poll notify normally.
+
+For Lido, only the topic's original poster can qualify through the Leader exemption. A Leader reply or last commenter does not affect filtering. The category JSON supplies the original author's trust level, so the normal fetch does not make one additional request per topic.
+
+On the first deployment of this policy, previously seen Leader-authored history is saved silently. A Leader topic newer than the last successful Lido poll is treated as a normal new proposal and can notify recipients.
 
 ### Uniswap On-chain Scan
 
@@ -350,6 +359,7 @@ Default schedule:
 
 ```bash
 FETCH_INTERVAL_CRON="0 8 * * *"
+FETCH_RUN_MAX_AGE_HOURS=48
 ONCHAIN_FETCH_INTERVAL_CRON="0 */6 * * *"
 NOTIFICATION_RETRY_CRON="*/15 * * * *"
 ADMIN_STATUS_CRON="0 9 * * *"
@@ -358,6 +368,7 @@ ADMIN_STATUS_CRON="0 9 * * *"
 At `08:00`, all enabled forums fetch. At `00:00`, `06:00`, `12:00`, and `18:00`, enabled on-chain sources scan finalized blocks. Every 15 minutes, unresolved forum and lifecycle recipients are retried when due. At `09:00`, the admin receives current system health. Cron uses the container/server timezone.
 
 The daily status changes to `ATTENTION REQUIRED` when an enabled on-chain source has no successful scan in the preceding 12 hours, even if its last stored cursor and health flag still look normal.
+In production, it also flags a forum whose most recent successful fetch is older than `FETCH_RUN_MAX_AGE_HOURS` (48 hours by default), including when the scheduler stops running.
 
 During the initial Uniswap historical baseline, the daily status also remains `ATTENTION REQUIRED` until seeding is complete. It reports checkpointed and remaining blocks, percentage complete, the persisted resume position, last attempt, last successful scan, consecutive failures, latest scan status, and replay mode. Historical alerts stay suppressed during this phase. A live coverage repair is reported explicitly and remains notification-enabled, while deterministic IDs prevent duplicate alerts. If a scan fails or the container restarts, the status keeps the interruption visible and the next scan resumes from the reported checkpoint.
 

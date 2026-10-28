@@ -4,6 +4,17 @@ import { createApp } from "../../src/server.js";
 import { testEnv } from "../helpers/builders.js";
 
 describe("production feature wiring", () => {
+  it("enables every supported forum adapter by default, including CoW", () => {
+    const { context } = createApp({ env: testEnv() });
+
+    expect(
+      context.protocolRegistry
+        .list()
+        .filter((adapter) => adapter.enabled)
+        .map((adapter) => adapter.protocol)
+    ).toEqual(["lido", "aave", "uniswap", "cow"]);
+  });
+
   it("keeps admin status reporting independent from normal governance recipients", () => {
     const { context } = createApp({
       env: testEnv({

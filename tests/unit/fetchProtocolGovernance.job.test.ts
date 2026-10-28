@@ -660,6 +660,144 @@ describe("FetchProtocolGovernanceJob", () => {
     await expect(proposalRepository.findAll()).resolves.toEqual([]);
   });
 
+  it("treats Lido Leader authors as allowlisted without weakening name matching", async () => {
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "lido",
+        publisherAllowlist: ["Allowed Publisher"],
+        publisherTrustLevelAllowlist: [4],
+        items: [
+          createRawGovernanceItem({
+            sourceId: "1001",
+            publisherName: "Allowed Publisher",
+            publisherTrustLevel: 1
+          }),
+          createRawGovernanceItem({
+            sourceId: "11987",
+            title: "Unveiling Lido Lend: Security-First Lending",
+            publisherName: "Izzy",
+            publisherTrustLevel: 4,
+            sourceUrl:
+              "https://research.lido.fi/t/unveiling-lido-lend-security-first-lending/11987"
+          }),
+          createRawGovernanceItem({
+            sourceId: "11988",
+            publisherName: "Regular Author",
+            publisherTrustLevel: 3
+          })
+        ]
+      })
+    );
+
+    const result = await job.run("lido");
+
+    expect(result).toMatchObject({
+      fetchedCount: 3,
+      allowlistedCount: 2,
+      storedNewCount: 2,
+      skippedCount: 1
+    });
+    expect(
+      (await proposalRepository.findAll()).map((proposal) => proposal.sourceId)
+    ).toEqual(expect.arrayContaining(["1001", "11987"]));
+  });
+
+  it("silently backfills older Lido Leader topics while notifying newly published ones", async () => {
+    const fetchRunRepository = new RecordingFetchRunRepository();
+    await fetchRunRepository.upsert({
+      id: "previous-lido-success",
+      protocol: "lido",
+      startedAt: "2026-10-28T07:55:00.000Z",
+      finishedAt: "2026-10-28T08:00:00.000Z",
+      status: "success",
+      fetchedCount: 150,
+      allowlistedCount: 23,
+      storedNewCount: 0,
+      baselineSeededCount: 0,
+      updatedExistingCount: 0,
+      unchangedExistingCount: 23,
+      skippedCount: 127,
+      notificationSentCount: 0,
+      notificationFailedCount: 0,
+      errors: []
+    });
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository, protocolStateRepository } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "lido",
+        publisherAllowlist: ["Allowed Publisher"],
+        publisherTrustLevelAllowlist: [4],
+        items: [
+          createRawGovernanceItem({
+            sourceId: "11987",
+            title: "Existing Leader topic",
+            publisherName: "Izzy",
+            publisherTrustLevel: 4,
+            publishedAt: "2026-10-27T08:00:00.000Z"
+          }),
+          createRawGovernanceItem({
+            sourceId: "11999",
+            title: "New Leader topic",
+            publisherName: "Another Leader",
+            publisherTrustLevel: 4,
+            publishedAt: "2026-10-29T08:00:00.000Z"
+          })
+        ]
+      }),
+      new MemoryProposalRepository(),
+      fetchRunRepository,
+      notificationService
+    );
+    await protocolStateRepository.initializeBaseline("lido", true);
+
+    const result = await job.run("lido");
+    const proposals = await proposalRepository.findAll();
+
+    expect(result).toMatchObject({
+      allowlistedCount: 2,
+      storedNewCount: 2,
+      baselineSeededCount: 1,
+      notificationSentCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(notificationService.messages.map((message) => message.title)).toEqual([
+      "New Leader topic"
+    ]);
+    expect(
+      proposals.find((proposal) => proposal.sourceId === "11987")
+        ?.notificationStatus
+    ).toBe("skipped");
+    expect(
+      proposals.find((proposal) => proposal.sourceId === "11999")
+        ?.notificationStatus
+    ).toBe("sent");
+  });
+
+  it("does not apply Lido's Leader exemption to protocols without that policy", async () => {
+    const { job, proposalRepository } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "aave",
+        publisherAllowlist: ["AaveLabs"],
+        items: [
+          createRawGovernanceItem({
+            protocol: "aave",
+            sourceId: "25000",
+            publisherName: "Unlisted Leader",
+            publisherTrustLevel: 4
+          })
+        ]
+      })
+    );
+
+    await expect(job.run("aave")).resolves.toMatchObject({
+      fetchedCount: 1,
+      allowlistedCount: 0,
+      storedNewCount: 0,
+      skippedCount: 1
+    });
+    await expect(proposalRepository.findAll()).resolves.toEqual([]);
+  });
+
   it("updates existing proposals instead of inserting duplicates", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-06-05T00:00:00.000Z"));
@@ -1043,6 +1181,19 @@ describe("FetchProtocolGovernanceJob", () => {
     expect(fetchRunRepository.upserts).toEqual([]);
   });
 
+  it("normalizes protocol input before locking, lookup, and fetch-run persistence", async () => {
+    const { job, fetchRunRepository } = createJob();
+
+    await expect(job.run(" LIDO ")).resolves.toMatchObject({
+      protocol: "lido",
+      run: { protocol: "lido" }
+    });
+    expect(fetchRunRepository.upserts).toHaveLength(2);
+    expect(
+      fetchRunRepository.upserts.every((run) => run.protocol === "lido")
+    ).toBe(true);
+  });
+
   it("prevents overlapping runs for the same protocol", async () => {
     let resolveFetch: (items: RawGovernanceItem[]) => void = () => undefined;
     const fetchRecent = jest.fn(
@@ -1061,10 +1212,12 @@ describe("FetchProtocolGovernanceJob", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await expect(job.run("lido")).rejects.toThrow(
+    await expect(job.run(" LIDO ")).rejects.toThrow(
       "Fetch already running for protocol: lido"
     );
-    await expect(job.run("lido")).rejects.toBeInstanceOf(FetchAlreadyRunningError);
+    await expect(job.run(" LIDO ")).rejects.toBeInstanceOf(
+      FetchAlreadyRunningError
+    );
 
     resolveFetch([createRawGovernanceItem()]);
     await expect(firstRun).resolves.toMatchObject({

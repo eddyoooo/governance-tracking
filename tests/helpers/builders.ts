@@ -64,6 +64,7 @@ export interface FakeProtocolAdapterOptions {
   enabled?: boolean;
   source?: GovernanceSource;
   publisherAllowlist?: string[];
+  publisherTrustLevelAllowlist?: readonly number[];
   items?: RawGovernanceItem[];
   fetchRecent?: () => Promise<RawGovernanceItem[]>;
   normalize?: (item: RawGovernanceItem) => NormalizedGovernanceItem;
@@ -86,6 +87,7 @@ export function createFakeProtocolAdapter(
         baseUrl: "https://example.com"
       },
     publisherAllowlist: options.publisherAllowlist ?? ["Allowed Publisher"],
+    publisherTrustLevelAllowlist: options.publisherTrustLevelAllowlist,
     fetchRecent:
       options.fetchRecent ??
       jest.fn(async () => options.items ?? [createRawGovernanceItem({ protocol })]),

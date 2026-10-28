@@ -49,6 +49,7 @@ describe("LidoAdapter", () => {
             title: "Allowed Lido Proposal",
             slug: "allowed-lido-proposal",
             publisherName: "Allowed Publisher",
+            publisherTrustLevel: 4,
             sourceUrl: "https://research.lido.fi/t/allowed-lido-proposal/1001",
             publishedAt: "2026-05-01T10:00:00.000Z",
             raw: { id: 1001 }
@@ -73,11 +74,13 @@ describe("LidoAdapter", () => {
       sourceId: "1001",
       title: "Allowed Lido Proposal",
       publisherName: "Allowed Publisher",
+      publisherTrustLevel: 4,
       sourceUrl: "https://research.lido.fi/t/allowed-lido-proposal/1001",
       publishedAt: "2026-05-01T10:00:00.000Z",
       raw: { id: 1001 }
     });
     expect(new Date(items[0].fetchedAt).toISOString()).toBe(items[0].fetchedAt);
+    expect(adapter.publisherTrustLevelAllowlist).toEqual([4]);
   });
 
   it("fetches multiple pages until Discourse has no more topics", async () => {

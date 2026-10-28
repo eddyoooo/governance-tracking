@@ -165,6 +165,7 @@ const rawEnvSchema = z
     FIREBASE_PRIVATE_KEY: z.string().default(""),
     ENABLE_SCHEDULER: booleanFromEnv.optional(),
     FETCH_INTERVAL_CRON: z.string().default("0 8 * * *"),
+    FETCH_RUN_MAX_AGE_HOURS: z.coerce.number().int().positive().default(48),
     ENABLE_SOURCE_ACTIVITY_ALERTS: booleanFromEnv.default(true),
     SOURCE_ACTIVITY_WARNING_DAYS: z.coerce.number().int().positive().default(14),
     SOURCE_ACTIVITY_CRITICAL_DAYS: z.coerce.number().int().positive().default(30),
@@ -210,7 +211,7 @@ const rawEnvSchema = z
       .default(2),
     COW_FORUM_BASE_URL: z.string().url().default("https://forum.cow.fi"),
     COW_FORUM_API_BASE_URL: z.string().url().default("https://forum.cow.fi"),
-    COW_ENABLED: booleanFromEnv.default(false),
+    COW_ENABLED: booleanFromEnv.default(true),
     COW_ALLOWED_PUBLISHERS: stringListFromEnv("COW_ALLOWED_PUBLISHERS").default(
       []
     ),
@@ -261,6 +262,7 @@ const rawEnvSchema = z
       value.ENABLE_SCHEDULER ??
       !(value.DEMO_MODE || value.STORAGE_MODE === "memory"),
     fetchIntervalCron: value.FETCH_INTERVAL_CRON,
+    fetchRunMaxAgeHours: value.FETCH_RUN_MAX_AGE_HOURS,
     enableSourceActivityAlerts: value.ENABLE_SOURCE_ACTIVITY_ALERTS,
     sourceActivityWarningDays: value.SOURCE_ACTIVITY_WARNING_DAYS,
     sourceActivityCriticalDays: value.SOURCE_ACTIVITY_CRITICAL_DAYS,

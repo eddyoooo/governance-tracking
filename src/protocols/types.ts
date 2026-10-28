@@ -28,6 +28,7 @@ export interface RawGovernanceItem {
   sourceId: string;
   title: string;
   publisherName: string;
+  publisherTrustLevel?: number;
   sourceUrl: string;
   publishedAt: string;
   fetchedAt: string;
@@ -62,6 +63,7 @@ export interface ProtocolAdapter {
   source: GovernanceSource;
   enabled: boolean;
   publisherAllowlist: string[];
+  publisherTrustLevelAllowlist?: readonly number[];
   fetchRecent(): Promise<RawGovernanceItem[]>;
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem;
 }

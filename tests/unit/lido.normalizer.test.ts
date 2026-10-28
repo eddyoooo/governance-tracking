@@ -68,6 +68,21 @@ describe("Lido normalizer", () => {
     expect(first.rawHash).toBe(second.rawHash);
   });
 
+  it("does not treat a publisher trust-level change as a proposal content update", async () => {
+    const raw = await loadRawFixture("allowed-publisher-raw.json");
+    const beforePromotion = normalizeLidoForumItem({
+      ...raw,
+      publisherTrustLevel: 3
+    });
+    const afterPromotion = normalizeLidoForumItem({
+      ...raw,
+      publisherTrustLevel: 4
+    });
+
+    expect(afterPromotion.id).toBe(beforePromotion.id);
+    expect(afterPromotion.rawHash).toBe(beforePromotion.rawHash);
+  });
+
   it("changes rawHash when meaningful source content changes", async () => {
     const raw = await loadRawFixture("allowed-publisher-raw.json");
     const first = normalizeLidoForumItem(raw);

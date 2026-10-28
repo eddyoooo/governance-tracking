@@ -279,9 +279,24 @@ export async function buildAdminStatusReport(options: {
               : "."
           }`
         );
+      } else if (
+        options.env.nodeEnv === "production" &&
+        options.env.enableScheduler
+      ) {
+        const finishedAt = Date.parse(latestRun.finishedAt ?? "");
+        const ageMs = checkedAt.getTime() - finishedAt;
+
+        if (
+          !Number.isFinite(finishedAt) ||
+          ageMs < 0 ||
+          ageMs > options.env.fetchRunMaxAgeHours * 3_600_000
+        ) {
+          problems.push(
+            `${protocol} latest successful fetch is missing, invalid, or older than ${options.env.fetchRunMaxAgeHours} hour(s).`
+          );
+        }
       }
     }
-
   }
 
   if (pendingNotificationCount && pendingNotificationCount > 0) {
@@ -349,8 +364,8 @@ export async function buildAdminStatusReport(options: {
       );
     } else if (latestScan.status !== "success") {
       problems.push(
-          `${adapter.protocol} latest on-chain governance scan is ${latestScan.status}${
-            latestScan.errors.length > 0
+        `${adapter.protocol} latest on-chain governance scan is ${latestScan.status}${
+          latestScan.errors.length > 0
             ? `: ${latestScan.errors.map(errorMessage).join("; ")}`
             : "."
         }`
@@ -399,16 +414,16 @@ export async function buildAdminStatusReport(options: {
     problems,
     message: appendOnchainAdminStatus(
       formatAdminStatusMessage({
-      env: options.env,
-      enabledProtocols,
-      latestByProtocol,
-      sourceActivityByProtocol,
-      pendingNotificationCount,
-      failedNotificationCount,
-      failedNotifications: failedNotifications ?? null,
-      healthy,
-      problems,
-      checkedAt: checkedAt.toISOString()
+        env: options.env,
+        enabledProtocols,
+        latestByProtocol,
+        sourceActivityByProtocol,
+        pendingNotificationCount,
+        failedNotificationCount,
+        failedNotifications: failedNotifications ?? null,
+        healthy,
+        problems,
+        checkedAt: checkedAt.toISOString()
       }),
       enabledOnchainAdapters.map((adapter) => adapter.sourceKey),
       onchainReads

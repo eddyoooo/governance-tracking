@@ -154,6 +154,96 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Problems:\n- None detected.");
   });
 
+  it("flags stale or malformed successful forum runs in production", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
+    await fetchRunRepository.upsert(
+      createRun({ protocol: "aave", finishedAt: "invalid" })
+    );
+    await fetchRunRepository.upsert(
+      createRun({
+        protocol: "uniswap",
+        finishedAt: "2026-07-01T10:00:00.000Z"
+      })
+    );
+
+    const report = await buildAdminStatusReport({
+      env: testEnv({
+        NODE_ENV: "production",
+        ENABLE_SCHEDULER: "true",
+        FETCH_RUN_MAX_AGE_HOURS: "48"
+      }),
+      protocolRegistry: createRegistry() as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository: new MemorySourceActivityRepository(),
+      checkedAt: new Date("2026-07-03T10:00:00.000Z")
+    });
+
+    expect(report.healthy).toBe(false);
+    expect(report.problems).toEqual(
+      expect.arrayContaining([
+        "lido latest successful fetch is missing, invalid, or older than 48 hour(s).",
+        "aave latest successful fetch is missing, invalid, or older than 48 hour(s)."
+      ])
+    );
+    expect(report.problems).not.toContain(
+      "uniswap latest successful fetch is missing, invalid, or older than 48 hour(s)."
+    );
+  });
+
+  it.each([
+    {
+      name: "a future timestamp in scheduled production",
+      nodeEnv: "production",
+      schedulerEnabled: "true",
+      finishedAt: "2026-07-03T10:00:01.000Z",
+      expectProblem: true
+    },
+    {
+      name: "a stale timestamp in development",
+      nodeEnv: "development",
+      schedulerEnabled: "true",
+      finishedAt: "2026-07-01T09:00:00.000Z",
+      expectProblem: false
+    },
+    {
+      name: "a stale timestamp while the scheduler is disabled",
+      nodeEnv: "production",
+      schedulerEnabled: "false",
+      finishedAt: "2026-07-01T09:00:00.000Z",
+      expectProblem: false
+    }
+  ])(
+    "handles $name without a false scheduler-health result",
+    async ({ nodeEnv, schedulerEnabled, finishedAt, expectProblem }) => {
+      const fetchRunRepository = new MemoryFetchRunRepository();
+      await fetchRunRepository.upsert(createRun({ finishedAt }));
+
+      const report = await buildAdminStatusReport({
+        env: testEnv({
+          NODE_ENV: nodeEnv,
+          ENABLE_SCHEDULER: schedulerEnabled,
+          ENABLE_SOURCE_ACTIVITY_ALERTS: "false",
+          FETCH_RUN_MAX_AGE_HOURS: "48"
+        }),
+        protocolRegistry: {
+          list: jest.fn(() => [createFakeProtocolAdapter({ protocol: "lido" })])
+        } as never,
+        fetchRunRepository,
+        proposalRepository: new MemoryProposalRepository(),
+        sourceActivityRepository: new MemorySourceActivityRepository(),
+        checkedAt: new Date("2026-07-03T10:00:00.000Z")
+      });
+
+      const freshnessProblem =
+        "lido latest successful fetch is missing, invalid, or older than 48 hour(s).";
+
+      expect(report.problems.includes(freshnessProblem)).toBe(expectProblem);
+      expect(report.healthy).toBe(!expectProblem);
+    }
+  );
+
   it("includes an enabled healthy CoW adapter in the daily operator report", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
     const proposalRepository = new MemoryProposalRepository();

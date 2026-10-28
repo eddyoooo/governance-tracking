@@ -52,6 +52,7 @@ export async function collectDiscourseTopicPages(
       sourceId: topic.sourceId,
       title: topic.title,
       publisherName: topic.publisherName,
+      publisherTrustLevel: topic.publisherTrustLevel,
       sourceUrl: topic.sourceUrl,
       publishedAt: topic.publishedAt,
       fetchedAt: options.fetchedAt,

@@ -9,6 +9,13 @@ export function createHealthRouter(context: AppContext): Router {
       ok: true,
       storageMode: context.env.demoMode ? "memory" : context.env.storageMode,
       schedulerEnabled: context.env.enableScheduler,
+      forumGovernance: {
+        enabledProtocols: context.protocolRegistry
+          .list()
+          .filter((adapter) => adapter.enabled)
+          .map((adapter) => adapter.protocol),
+        schedule: context.env.fetchIntervalCron
+      },
       onchainGovernance: {
         enabledProtocols: context.evmGovernanceRegistry
           .list()

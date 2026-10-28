@@ -1,11 +1,14 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
+export const DISCOURSE_TRUST_LEVEL_LEADER = 4;
+
 const discourseUserSchema = z
   .object({
     id: z.number(),
     username: z.string(),
-    name: z.string().nullable().optional()
+    name: z.string().nullable().optional(),
+    trust_level: z.number().int().nonnegative().optional()
   })
   .passthrough();
 
@@ -82,6 +85,7 @@ export interface DiscourseForumTopic {
   title: string;
   slug: string;
   publisherName: string;
+  publisherTrustLevel?: number;
   sourceUrl: string;
   publishedAt: string;
   raw: unknown;
@@ -278,9 +282,10 @@ export function mapDiscourseRecentTopics(
       topic.posters?.find((poster) =>
         poster.description?.toLowerCase().includes("original poster")
       ) ?? topic.posters?.[0];
-    const user = originalPoster?.user_id
-      ? usersById.get(originalPoster.user_id)
-      : undefined;
+    const user =
+      originalPoster?.user_id === undefined
+        ? undefined
+        : usersById.get(originalPoster.user_id);
     const publisherName =
       user?.name?.trim() ||
       user?.username.trim() ||
@@ -291,6 +296,7 @@ export function mapDiscourseRecentTopics(
       title: topic.title,
       slug: topic.slug,
       publisherName,
+      publisherTrustLevel: user?.trust_level,
       sourceUrl: `${normalizedBaseUrl}/t/${topic.slug}/${topic.id}`,
       publishedAt: topic.created_at,
       raw: {

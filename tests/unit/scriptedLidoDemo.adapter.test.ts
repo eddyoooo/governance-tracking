@@ -22,6 +22,8 @@ describe("ScriptedLidoDemoAdapter", () => {
   it("reveals one allowlisted proposal at a time", async () => {
     const adapter = createAdapter();
 
+    expect(adapter.publisherTrustLevelAllowlist).toEqual([4]);
+
     await expect(adapter.fetchRecent()).resolves.toMatchObject([
       {
         sourceId: nonAllowlistedDemoFixture.sourceId,

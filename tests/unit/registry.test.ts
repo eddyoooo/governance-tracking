@@ -112,6 +112,7 @@ describe("ProtocolRegistry", () => {
       protocol: "lido",
       enabled: false,
       publisherAllowlist: ["Allowed Publisher", "DAO Ops"],
+      publisherTrustLevelAllowlist: [4],
       source: {
         protocol: "lido",
         type: "forum",

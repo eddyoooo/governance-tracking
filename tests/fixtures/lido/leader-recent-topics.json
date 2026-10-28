@@ -1,0 +1,56 @@
+{
+  "users": [
+    {
+      "id": 392,
+      "username": "Izzy",
+      "name": "Izzy",
+      "trust_level": 4
+    },
+    {
+      "id": 501,
+      "username": "regular-author",
+      "name": "Regular Author",
+      "trust_level": 3
+    },
+    {
+      "id": 502,
+      "username": "leader-replier",
+      "name": "Leader Replier",
+      "trust_level": 4
+    }
+  ],
+  "topic_list": {
+    "topics": [
+      {
+        "id": 11987,
+        "title": "Unveiling Lido Lend: Security-First Lending",
+        "slug": "unveiling-lido-lend-security-first-lending",
+        "created_at": "2026-10-27T08:00:00.000Z",
+        "posters": [
+          {
+            "user_id": 392,
+            "description": "Original Poster, Most Recent Poster"
+          }
+        ]
+      },
+      {
+        "id": 11988,
+        "title": "Regular author with a Leader reply",
+        "slug": "regular-author-with-a-leader-reply",
+        "created_at": "2026-10-27T09:00:00.000Z",
+        "posters": [
+          {
+            "user_id": 501,
+            "description": "Original Poster"
+          },
+          {
+            "user_id": 502,
+            "description": "Most Recent Poster"
+          }
+        ]
+      }
+    ],
+    "more_topics_url": null,
+    "per_page": 30
+  }
+}

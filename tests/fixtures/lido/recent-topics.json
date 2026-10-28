@@ -3,12 +3,14 @@
     {
       "id": 1,
       "username": "allowed-publisher",
-      "name": "Allowed Publisher"
+      "name": "Allowed Publisher",
+      "trust_level": 2
     },
     {
       "id": 2,
       "username": "random-person",
-      "name": "Random Person"
+      "name": "Random Person",
+      "trust_level": 1
     }
   ],
   "topic_list": {

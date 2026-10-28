@@ -6,6 +6,7 @@ import type {
   RawGovernanceItem
 } from "../types.js";
 import { collectDiscourseTopicPages } from "../discourse/discoursePagination.js";
+import { DISCOURSE_TRUST_LEVEL_LEADER } from "../discourse/discourseForum.client.js";
 import { LidoForumClient } from "./lidoForum.client.js";
 import { normalizeLidoForumItem } from "./lido.normalizer.js";
 
@@ -24,6 +25,9 @@ export class LidoAdapter implements ProtocolAdapter {
   readonly source: GovernanceSource;
   readonly enabled: boolean;
   readonly publisherAllowlist: string[];
+  readonly publisherTrustLevelAllowlist = [
+    DISCOURSE_TRUST_LEVEL_LEADER
+  ] as const;
   private readonly client: LidoForumClient;
   private readonly logger?: Logger;
   private readonly maxPages: number;

@@ -44,6 +44,7 @@ describe("env parsing", () => {
     expect(env.storageMode).toBe("firestore");
     expect(env.enableScheduler).toBe(true);
     expect(env.fetchIntervalCron).toBe("0 8 * * *");
+    expect(env.fetchRunMaxAgeHours).toBe(48);
     expect(env.enableSourceActivityAlerts).toBe(true);
     expect(env.sourceActivityWarningDays).toBe(14);
     expect(env.sourceActivityCriticalDays).toBe(30);
@@ -64,7 +65,7 @@ describe("env parsing", () => {
     expect(env.uniswapCategoryFetchMaxPages).toBe(2);
     expect(env.cowForumBaseUrl).toBe("https://forum.cow.fi");
     expect(env.cowForumApiBaseUrl).toBe("https://forum.cow.fi");
-    expect(env.cowEnabled).toBe(false);
+    expect(env.cowEnabled).toBe(true);
     expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
     expect(env.cowFetchMaxPages).toBe(10);
     expect(env.cowCategoryFetchMaxPages).toBe(2);
@@ -112,6 +113,12 @@ describe("env parsing", () => {
     expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
     expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
     expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
+  });
+
+  it("validates the maximum age for a successful forum fetch", () => {
+    expect(loadEnv({ FETCH_RUN_MAX_AGE_HOURS: "72" }).fetchRunMaxAgeHours).toBe(72);
+    expect(() => loadEnv({ FETCH_RUN_MAX_AGE_HOURS: "0" })).toThrow();
+    expect(() => loadEnv({ FETCH_RUN_MAX_AGE_HOURS: "1.5" })).toThrow();
   });
 
   it("parses multiline JSON array allowlists", () => {
@@ -193,6 +200,10 @@ describe("env parsing", () => {
     expect(env.telegramE2EEnabled).toBe(true);
     expect(env.apiAuthEnabled).toBe(true);
     expect(env.apiAuthToken).toBe("test-token");
+  });
+
+  it("allows CoW tracking to be explicitly disabled despite being enabled by default", () => {
+    expect(loadEnv({ COW_ENABLED: "false" }).cowEnabled).toBe(false);
   });
 
   it("accepts already-parsed values from programmatic configuration sources", () => {

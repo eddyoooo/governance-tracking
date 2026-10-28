@@ -31,7 +31,7 @@ describe("Docker configuration", () => {
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toContain("RUN npm ci --omit=optional");
     expect(dockerfile).toContain("RUN npm ci --omit=dev --omit=optional");
-    expect(dockerfile).toContain("FROM node:24-alpine AS base");
+    expect(dockerfile).toMatch(/^FROM node:24(?:\.\d+){0,2}-alpine AS base/m);
     expect(dockerfile).not.toContain("node:20");
     expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');
     expect(dockerfile).toContain("USER node");
