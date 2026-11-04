@@ -91,6 +91,7 @@ Production deployment note: if you run multiple backend replicas, prefer enablin
 - Track raw source activity so silent forum migrations or abandoned feeds surface.
 - Avoid rewriting unchanged proposals on every poll.
 - Send direct Telegram notifications for newly discovered allowlisted proposals.
+- Store routine LlamaRisk `Risk Stewards` cap-only updates without sending Telegram alerts.
 - Avoid duplicate notifications for already-known proposals.
 - Track delivery separately for every configured Telegram recipient.
 - Retry unresolved recipient deliveries automatically with bounded backoff.
@@ -133,6 +134,7 @@ Scheduler or admin fetch request
   -> protocol publisher policy (name allowlist and optional trust levels)
   -> normalizer
   -> protocol baseline check
+  -> protocol notification policy
   -> proposal repository upsert
   -> recipient-aware Telegram notification dispatcher
   -> fetch-run repository audit record
@@ -180,6 +182,8 @@ GET https://forum.cow.fi/c/<category-path>/<category-id>/l/latest.json?page=<pag
 ```
 
 The Aave, Uniswap, and CoW adapters combine global latest pages with every public category/subcategory discovered from `/site.json`, then deduplicate by Discourse topic id. Lido also deduplicates topics repeated across adjacent proposal pages. CoW coverage therefore follows the forum as its public category structure changes and currently includes areas such as Governance, Closed Proposals, Governance Resources, Inactive Proposals, Delegates, Technical, Grants, Treasury, Announcements, and General. Private/read-restricted categories are ignored because the public API does not expose them without forum permissions.
+
+Aave applies one notification-only exception after allowlist filtering. A forum topic is still normalized, deduplicated, stored, and included in fetch-run audit data, but Telegram is suppressed when all of the following are true: the publisher identity is exactly LlamaRisk after case/spacing/punctuation normalization; the title starts with `Risk Stewards:`; it has a valid `/ YYYY.MM.DD` or `- YYYY-MM-DD` suffix; and the subject is a recognized cap-only increase, decrease, reduction, or change for Aave V3/V4. The rule deliberately fails open. Mixed or unfamiliar items such as `Cap and IRM Changes`, PT parameter changes, oracle changes, incidents, assessments, and posts by any other publisher continue to notify normally.
 
 If a forum still reports more pages after the configured page cap, the monitor logs that as an `info` message with the page limit and fetched count. That is coverage telemetry, not a failed fetch.
 
@@ -251,6 +255,8 @@ The repository derives the document ID itself from `protocol + sourceType + sour
 
 `notificationDeliveries` stores an opaque deterministic recipient key and masked Telegram ID, never the full Telegram user ID. A successful recipient remains `sent`; if another recipient fails, only that unresolved recipient is retried. The aggregate `notificationStatus` is `failed` while any recipient remains failed and becomes `sent` automatically after all remaining deliveries succeed.
 
+Policy-suppressed proposals have `notificationStatus: "skipped"` and an optional machine-readable `notificationSkipReason`, currently `aave_risk_stewards_routine_cap_change`. This is distinct from publisher filtering: suppressed proposals are retained in Firestore, while non-allowlisted topics are not stored as proposals. Automatic recovery also applies the current policy to unresolved records, so a matching pending or failed cap alert is closed as skipped rather than sent later.
+
 Uniswap on-chain decisions use separate collections because their lifecycle and vote data differ from forum topics:
 
 - `governanceDecisions/{decisionId}` stores proposal identity, proposer, title/description, status, voting and execution outcomes, vote totals, the exact voting-end block timestamp when known, ETA, action arrays, lifecycle transaction/block references, and timestamps.
@@ -277,11 +283,12 @@ Fetch runs are stored under `fetchRuns/{runId}`:
   "skippedCount": 116,
   "notificationSentCount": 1,
   "notificationFailedCount": 0,
+  "notificationSuppressedCount": 0,
   "errors": []
 }
 ```
 
-`storedNewCount` means a proposal was first discovered. `baselineSeededCount` is the subset inserted silently either during an empty-database baseline or when an allowlist expansion first exposes historical topics. `updatedExistingCount` means an already-stored proposal changed in a meaningful source field. `unchangedExistingCount` means the item was seen again but not rewritten. `skippedCount` means the publisher did not match the allowlist.
+`storedNewCount` means a proposal was first discovered. `baselineSeededCount` is the subset inserted silently either during an empty-database baseline or when an allowlist expansion first exposes historical topics. `updatedExistingCount` means an already-stored proposal changed in a meaningful source field. `unchangedExistingCount` means the item was seen again but not rewritten. `skippedCount` means the publisher did not match the eligibility policy and was not stored. `notificationSuppressedCount` means a newly stored, eligible proposal matched an explicit protocol notification policy; duplicate polls do not increment it again.
 
 Source activity records are stored under `sourceActivity/{protocol}`. These records are based on all raw fetched forum items, before publisher allowlist filtering, so they can detect a forum that still responds but appears abandoned or silently migrated.
 
@@ -361,6 +368,7 @@ Allowed values:
 - `DEMO_MODE`: `true` or `false`.
 - `ENABLE_SCHEDULER`: `true` or `false`.
 - `LIDO_ENABLED`, `AAVE_ENABLED`, `UNISWAP_ENABLED`, and `COW_ENABLED`: `true` or `false`; all four forum adapters default to `true`.
+- `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS`: `true` or `false`; defaults to `true`. Set it to `false` to restore Telegram alerts for future newly discovered routine LlamaRisk Risk Stewards cap-only posts without changing Aave ingestion. Previously skipped records are not replayed.
 - `FETCH_RUN_MAX_AGE_HOURS`: positive integer; default `48`. With the production scheduler enabled, the admin report flags each protocol whose last successful forum fetch is older than this. Raise it if you schedule forum scans less often than daily.
 - `UNISWAP_ONCHAIN_ENABLED`: `true` or `false`; requires `ETHEREUM_RPC_URL` when enabled.
 - `UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED`: `true` or `false`; requires both on-chain tracking and global Telegram notifications.
@@ -420,9 +428,12 @@ AAVE_ALLOWED_PUBLISHERS='[
 ]'
 AAVE_FETCH_MAX_PAGES=10
 AAVE_CATEGORY_FETCH_MAX_PAGES=2
+AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true
 ```
 
 Aave allowlist entries should use Discourse publisher usernames. The current tracked names correspond to LlamaRisk, TokenLogic, Certora, karpatkey, Aave Labs, and Stani. `karpatkey_TokenLogic` is included because Aave has used that joint provider account for finance-service-provider posts.
+
+With `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true`, routine dated LlamaRisk `Risk Stewards` cap-only posts remain queryable in Firestore but do not fan out to Telegram recipients. Their proposal document records `notificationStatus=skipped` and `notificationSkipReason=aave_risk_stewards_routine_cap_change`; the fetch run increments `notificationSuppressedCount`. The policy does not suppress mixed cap/IRM posts or any title it cannot classify confidently.
 
 Uniswap configuration:
 
@@ -653,20 +664,20 @@ Security notes:
 - Use a long random `API_AUTH_TOKEN` when the API is reachable outside your machine.
 - Request logs redact `Authorization`, `x-api-token`, Telegram, Firebase, and API token fields.
 
-| Endpoint | External call? | Purpose |
-| --- | --- | --- |
-| `GET /health` | No | Confirms storage/scheduler mode plus the enabled forum and on-chain protocol lists. |
-| `POST /api/admin/fetch/lido` | Yes | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run. |
-| `POST /api/admin/fetch/aave` | Yes | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
-| `POST /api/admin/fetch/uniswap` | Yes | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
-| `POST /api/admin/fetch/cow` | Yes | Fetches CoW global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
-| `POST /api/admin/fetch-onchain/uniswap` | RPC | Runs the same finalized Uniswap Governor scan as the six-hour scheduler. The first run silently seeds history. |
-| `POST /api/admin/status/send` | No | Sends the same operator Telegram status report used by the daily admin cron. |
-| `GET /api/admin/fetch-runs` | No | Returns latest stored fetch-run audit records, newest first. |
-| `GET /api/admin/source-activity` | No | Returns latest raw-source freshness records used by the silent-migration watchdog. |
-| `GET /api/admin/governance-votes?protocol=uniswap&limit=100` | No | Returns stored on-chain decisions, newest updated first. `limit` must be `1..500`. |
-| `GET /api/admin/onchain-source-status` | No | Returns stored on-chain baseline, cursor, implementation, finalized-head, and health state. |
-| `GET /api/admin/onchain-scan-runs?limit=100` | No | Returns stored on-chain scan audit records, newest first. `limit` must be `1..500`. |
+| Endpoint                                                     | External call? | Purpose                                                                                                                  |
+| ------------------------------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `GET /health`                                                | No             | Confirms storage/scheduler mode plus the enabled forum and on-chain protocol lists.                                      |
+| `POST /api/admin/fetch/lido`                                 | Yes            | Fetches Lido proposal-category topics, filters, stores, notifies, and writes a fetch run.                                |
+| `POST /api/admin/fetch/aave`                                 | Yes            | Fetches Aave global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run.    |
+| `POST /api/admin/fetch/uniswap`                              | Yes            | Fetches Uniswap global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run. |
+| `POST /api/admin/fetch/cow`                                  | Yes            | Fetches CoW global latest plus public category/subcategory feeds, filters, stores, notifies, and writes a fetch run.     |
+| `POST /api/admin/fetch-onchain/uniswap`                      | RPC            | Runs the same finalized Uniswap Governor scan as the six-hour scheduler. The first run silently seeds history.           |
+| `POST /api/admin/status/send`                                | No             | Sends the same operator Telegram status report used by the daily admin cron.                                             |
+| `GET /api/admin/fetch-runs`                                  | No             | Returns latest stored fetch-run audit records, newest first.                                                             |
+| `GET /api/admin/source-activity`                             | No             | Returns latest raw-source freshness records used by the silent-migration watchdog.                                       |
+| `GET /api/admin/governance-votes?protocol=uniswap&limit=100` | No             | Returns stored on-chain decisions, newest updated first. `limit` must be `1..500`.                                       |
+| `GET /api/admin/onchain-source-status`                       | No             | Returns stored on-chain baseline, cursor, implementation, finalized-head, and health state.                              |
+| `GET /api/admin/onchain-scan-runs?limit=100`                 | No             | Returns stored on-chain scan audit records, newest first. `limit` must be `1..500`.                                      |
 
 With auth enabled, include a token:
 
@@ -686,6 +697,7 @@ Demo mode shows:
 - Lido live discovery, historical allowlist backfill without old alerts, and duplicate suppression across multiple fetches.
 - Non-allowlisted Lido items being skipped.
 - Aave global latest plus category/subcategory coverage.
+- Aave routine-cap notification suppression, including the persisted reason and fetch-run count.
 - Uniswap global latest plus all discovered public category/subcategory coverage.
 - CoW global latest plus all discovered public category/subcategory coverage.
 - A real saved snapshot of Uniswap Governor proposal `#100` progressing through silent baseline, creation, successful result, queue, and execution.
@@ -753,6 +765,7 @@ docker run -d \
   -e ADMIN_STATUS_CRON="0 9 * * *" \
   -e LIDO_ENABLED=true \
   -e AAVE_ENABLED=true \
+  -e AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true \
   -e UNISWAP_ENABLED=true \
   -e COW_ENABLED=true \
   -e LOG_LEVEL=info \
@@ -770,7 +783,7 @@ Useful Docker commands:
 ```bash
 docker ps -a
 docker images
-docker build --load -t governance-tracker-bot .
+docker build -t governance-tracker-bot .
 docker logs -f governance-tracker-bot
 docker stop governance-tracker-bot
 docker rm governance-tracker-bot

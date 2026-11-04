@@ -1,6 +1,11 @@
 import type { Logger } from "pino";
 import type { Env } from "../config/env.js";
 import { isMemoryMode } from "../config/env.js";
+import {
+  NOTIFY_NOTIFICATION_DECISION,
+  type NotificationPolicyDecision,
+  type NotificationPolicyInput
+} from "../notifications/notificationPolicy.js";
 import { AaveAdapter } from "./aave/aave.adapter.js";
 import { createAaveDemoClient } from "./aave/aave.demoClient.js";
 import { LidoAdapter } from "./lido/lido.adapter.js";
@@ -33,6 +38,15 @@ export class ProtocolRegistry {
 
   list(): ProtocolAdapter[] {
     return [...this.adapters.values()];
+  }
+
+  evaluateNotificationPolicy(
+    input: NotificationPolicyInput
+  ): NotificationPolicyDecision {
+    return (
+      this.get(input.protocol)?.notificationPolicy?.evaluate(input) ??
+      NOTIFY_NOTIFICATION_DECISION
+    );
   }
 }
 
@@ -86,6 +100,8 @@ export function createProtocolRegistry(env: Env, logger: Logger): ProtocolRegist
       allowedPublishers: env.aaveAllowedPublishers,
       maxPages: env.aaveFetchMaxPages,
       categoryMaxPages: env.aaveCategoryFetchMaxPages,
+      suppressRoutineCapNotifications:
+        env.aaveSuppressRoutineCapNotifications,
       logger,
       client: aaveClient
     })

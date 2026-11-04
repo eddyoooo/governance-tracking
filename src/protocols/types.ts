@@ -1,3 +1,5 @@
+import type { NotificationPolicy } from "../notifications/notificationPolicy.js";
+
 export type GovernanceSourceType = "forum" | "snapshot" | "onchain";
 export type NotificationStatus = "pending" | "sent" | "skipped" | "failed";
 export type NotificationDeliveryStatus = NotificationStatus;
@@ -53,6 +55,7 @@ export interface StoredProposal extends NormalizedGovernanceItem {
   lastSeenAt: string;
   notificationStatus: NotificationStatus;
   notificationError?: string;
+  notificationSkipReason?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +67,7 @@ export interface ProtocolAdapter {
   enabled: boolean;
   publisherAllowlist: string[];
   publisherTrustLevelAllowlist?: readonly number[];
+  notificationPolicy?: NotificationPolicy;
   fetchRecent(): Promise<RawGovernanceItem[]>;
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem;
 }

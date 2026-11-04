@@ -59,6 +59,28 @@ describe("AaveAdapter", () => {
     expect(adapter.publisherAllowlist).toEqual(aaveAllowedPublishers);
   });
 
+  it("enables conservative routine-cap notification suppression by default", () => {
+    const adapter = new AaveAdapter(createAdapterOptions());
+
+    expect(
+      adapter.notificationPolicy?.evaluate({
+        protocol: "aave",
+        sourceType: "forum",
+        publisherName: "LlamaRisk",
+        title:
+          "Risk Stewards: Borrow Cap Increases on Aave V3 / 2026.11.01"
+      })
+    ).toMatchObject({ action: "suppress" });
+  });
+
+  it("can disable routine-cap notification suppression without changing ingestion", () => {
+    const adapter = new AaveAdapter(
+      createAdapterOptions({ suppressRoutineCapNotifications: false })
+    );
+
+    expect(adapter.notificationPolicy).toBeUndefined();
+  });
+
   it("returns no items and does not fetch when disabled", async () => {
     const client = {
       fetchRecentTopicPage: jest.fn(async () => {

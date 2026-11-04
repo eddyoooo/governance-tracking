@@ -221,6 +221,23 @@ function createFakeFirestore(
 }
 
 describe("FirestoreProposalRepository", () => {
+  it("round-trips an explicit notification skip reason", async () => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore());
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({ protocol: "aave", sourceId: "25987" })
+    );
+
+    await repository.upsert(proposal, {
+      notificationStatusForNew: "skipped",
+      notificationSkipReasonForNew:
+        "aave_risk_stewards_routine_cap_change"
+    });
+
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: "aave_risk_stewards_routine_cap_change"
+    });
+  });
   afterEach(() => {
     jest.useRealTimers();
   });

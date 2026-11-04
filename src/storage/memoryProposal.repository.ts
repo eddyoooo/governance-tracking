@@ -128,6 +128,7 @@ export class MemoryProposalRepository implements ProposalRepository {
     return this.updateNotificationState(id, (proposal) => ({
       notificationStatus: status,
       notificationError: error,
+      notificationSkipReason: proposal.notificationSkipReason,
       notificationDeliveries: proposal.notificationDeliveries
     }));
   }

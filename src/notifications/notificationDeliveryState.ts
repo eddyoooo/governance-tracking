@@ -148,6 +148,7 @@ export function currentNotificationState(
   return {
     notificationStatus: proposal.notificationStatus,
     notificationError: proposal.notificationError,
+    notificationSkipReason: proposal.notificationSkipReason,
     notificationDeliveries: proposal.notificationDeliveries
   };
 }

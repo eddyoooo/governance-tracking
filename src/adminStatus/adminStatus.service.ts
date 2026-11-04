@@ -672,6 +672,7 @@ export function formatAdminStatusMessage(options: {
       `silently seeded ${run.baselineSeededCount ?? 0}`,
       `unchanged ${run.unchangedExistingCount}`,
       `skipped ${run.skippedCount}`,
+      `notifications suppressed ${run.notificationSuppressedCount ?? 0}`,
       `initial notification failures ${run.notificationFailedCount}`
     ].join("; ");
   });

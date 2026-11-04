@@ -110,6 +110,7 @@ function summarizeFetch(result: FetchProtocolResult) {
     skippedCount: result.skippedCount,
     notificationSentCount: result.notificationSentCount,
     notificationFailedCount: result.notificationFailedCount,
+    notificationSuppressedCount: result.notificationSuppressedCount,
     errors: result.errors
   };
 }
@@ -126,6 +127,7 @@ function summarizeProposal(proposal: StoredProposal | null) {
     publisherName: proposal.publisherName,
     notificationStatus: proposal.notificationStatus,
     notificationError: proposal.notificationError,
+    notificationSkipReason: proposal.notificationSkipReason,
     notificationRecipients: Object.values(
       proposal.notificationDeliveries ?? {}
     ).map((delivery) => ({
@@ -155,6 +157,7 @@ function summarizeFetchRuns(fetchRuns: FetchRun[]) {
     skippedCount: run.skippedCount,
     notificationSentCount: run.notificationSentCount,
     notificationFailedCount: run.notificationFailedCount,
+    notificationSuppressedCount: run.notificationSuppressedCount ?? 0,
     errors: run.errors
   }));
 }
@@ -340,6 +343,7 @@ async function main(): Promise<void> {
     AAVE_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_AAVE_ALLOWED_PUBLISHERS),
     AAVE_FETCH_MAX_PAGES: "10",
     AAVE_CATEGORY_FETCH_MAX_PAGES: "2",
+    AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: "true",
     UNISWAP_ALLOWED_PUBLISHERS: JSON.stringify(DEMO_UNISWAP_ALLOWED_PUBLISHERS),
     UNISWAP_FETCH_MAX_PAGES: "10",
     UNISWAP_CATEGORY_FETCH_MAX_PAGES: "2",
@@ -368,6 +372,8 @@ async function main(): Promise<void> {
     allowedPublishers: env.aaveAllowedPublishers,
     maxPages: env.aaveFetchMaxPages,
     categoryMaxPages: env.aaveCategoryFetchMaxPages,
+    suppressRoutineCapNotifications:
+      env.aaveSuppressRoutineCapNotifications,
     client: createAaveDemoClient({
       forumBaseUrl: env.aaveForumBaseUrl,
       forumApiBaseUrl: env.aaveForumApiBaseUrl
@@ -603,7 +609,7 @@ async function main(): Promise<void> {
   }
 
   const aaveFirstFetch = await runStep(
-    "Aave fetch: scan global latest plus public category/subcategory feeds",
+    "Aave fetch: scan broad forum coverage and suppress the routine cap-only alert",
     async () => summarizeFetch(await context.fetchJob.run("aave")),
     stepDelayMs
   );

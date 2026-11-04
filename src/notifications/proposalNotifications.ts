@@ -19,6 +19,11 @@ import type {
   NotificationMessage,
   NotificationService
 } from "./notification.service.js";
+import {
+  NOTIFY_NOTIFICATION_DECISION,
+  type NotificationPolicyDecision,
+  type NotificationPolicyEvaluator
+} from "./notificationPolicy.js";
 
 export interface ProposalNotificationResult {
   status: "sent" | "failed" | "skipped";
@@ -41,6 +46,7 @@ export interface NotificationRecord {
   id: string;
   notificationStatus: NotificationStatus;
   notificationError?: string;
+  notificationSkipReason?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
   firstSeenAt: string;
   createdAt: string;
@@ -110,7 +116,8 @@ export class ProposalNotificationDispatcher<
     private readonly proposalRepository: NotificationRecordRepository<T>,
     private readonly notificationService: NotificationService,
     private readonly logger: Pick<Logger, "error" | "info" | "warn">,
-    messageBuilder?: (record: T) => NotificationMessage
+    messageBuilder?: (record: T) => NotificationMessage,
+    private readonly notificationPolicyEvaluator?: NotificationPolicyEvaluator<T>
   ) {
     this.messageBuilder = messageBuilder ?? defaultProposalNotificationMessage;
   }
@@ -133,6 +140,17 @@ export class ProposalNotificationDispatcher<
         current.notificationStatus === "skipped"
       ) {
         return { status: current.notificationStatus };
+      }
+
+      const notificationPolicy = this.evaluateNotificationPolicy(current);
+
+      if (notificationPolicy.action === "suppress") {
+        await this.suppressNotification(
+          current,
+          notificationPolicy.reason,
+          new Date().toISOString()
+        );
+        return { status: "skipped" };
       }
 
       if (current.notificationStatus === "failed") {
@@ -192,6 +210,7 @@ export class ProposalNotificationDispatcher<
       );
       const candidates = deduplicateProposals([...pending, ...failed])
         .filter((proposal) =>
+          this.evaluateNotificationPolicy(proposal).action === "suppress" ||
           needsRecoveryNow(proposal, activeRecipientKeys, now)
         )
         .slice(0, NOTIFICATION_RECOVERY_BATCH_SIZE);
@@ -243,6 +262,22 @@ export class ProposalNotificationDispatcher<
         recovered: false,
         status: "skipped",
         error: `Notification recovery proposal no longer exists: ${proposalId}`
+      };
+    }
+
+    const notificationPolicy = this.evaluateNotificationPolicy(current);
+
+    if (notificationPolicy.action === "suppress") {
+      await this.suppressNotification(
+        current,
+        notificationPolicy.reason,
+        now
+      );
+      return {
+        attempted: false,
+        attemptedRecipientCount: 0,
+        recovered: false,
+        status: "skipped"
       };
     }
 
@@ -561,6 +596,53 @@ export class ProposalNotificationDispatcher<
         "Failed to send proposal notification to configured recipient"
       );
     }
+  }
+
+  private evaluateNotificationPolicy(record: T): NotificationPolicyDecision {
+    if (!this.notificationPolicyEvaluator) {
+      return NOTIFY_NOTIFICATION_DECISION;
+    }
+
+    try {
+      return this.notificationPolicyEvaluator(record);
+    } catch (error) {
+      this.logger.error(
+        { recordId: record.id, error: safeErrorDetails(error) },
+        "Notification policy evaluation failed open"
+      );
+      return NOTIFY_NOTIFICATION_DECISION;
+    }
+  }
+
+  private async suppressNotification(
+    record: T,
+    reason: string,
+    now: string
+  ): Promise<void> {
+    const deliveries = record.notificationDeliveries
+      ? cloneDeliveries(record.notificationDeliveries)
+      : undefined;
+
+    for (const delivery of Object.values(deliveries ?? {})) {
+      if (delivery.status === "sent" || delivery.status === "skipped") {
+        continue;
+      }
+
+      delivery.status = "skipped";
+      delivery.updatedAt = now;
+      delete delivery.nextRetryAt;
+      delete delivery.lastError;
+    }
+
+    await this.proposalRepository.updateNotificationState(record.id, () => ({
+      notificationStatus: "skipped",
+      notificationSkipReason: reason,
+      notificationDeliveries: deliveries
+    }));
+    this.logger.info(
+      { recordId: record.id, notificationSkipReason: reason },
+      "Suppressed notification by protocol policy"
+    );
   }
 
   private async withProposalLock<T>(

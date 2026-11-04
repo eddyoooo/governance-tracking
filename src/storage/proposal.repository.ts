@@ -7,6 +7,7 @@ import type {
 
 export interface UpsertProposalOptions {
   notificationStatusForNew?: NotificationStatus;
+  notificationSkipReasonForNew?: string;
 }
 
 export interface UpsertResult {
@@ -18,6 +19,7 @@ export interface UpsertResult {
 export interface ProposalNotificationState {
   notificationStatus: NotificationStatus;
   notificationError?: string;
+  notificationSkipReason?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
 }
 

@@ -46,3 +46,9 @@ export {
   NOTIFICATION_RECOVERY_BATCH_SIZE,
   ProposalNotificationDispatcher
 } from "./proposalNotifications.js";
+export type {
+  NotificationPolicy,
+  NotificationPolicyDecision,
+  NotificationPolicyEvaluator,
+  NotificationPolicyInput
+} from "./notificationPolicy.js";

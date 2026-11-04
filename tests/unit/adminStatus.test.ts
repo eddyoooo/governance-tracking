@@ -122,7 +122,9 @@ describe("admin status reports", () => {
     const sourceActivityRepository = new MemorySourceActivityRepository();
 
     await fetchRunRepository.upsert(createRun({ protocol: "lido" }));
-    await fetchRunRepository.upsert(createRun({ protocol: "aave" }));
+    await fetchRunRepository.upsert(
+      createRun({ protocol: "aave", notificationSuppressedCount: 3 })
+    );
     await fetchRunRepository.upsert(createRun({ protocol: "uniswap" }));
     await sourceActivityRepository.upsert(createSourceActivity({ protocol: "lido" }));
     await sourceActivityRepository.upsert(createSourceActivity({ protocol: "aave" }));
@@ -149,6 +151,10 @@ describe("admin status reports", () => {
     expect(result.message).toContain("Enabled protocols: lido, aave, uniswap");
     expect(result.message).toContain("- lido: success");
     expect(result.message).toContain("silently seeded 0");
+    expect(result.message).toContain("notifications suppressed 0");
+    expect(result.message).toContain(
+      "- aave: success; finished 2026-07-01T09:00:00.000Z; fetched 10; allowlisted 2; new 1; silently seeded 0; unchanged 1; skipped 8; notifications suppressed 3"
+    );
     expect(result.message).toContain("Source activity:");
     expect(result.message).toContain("- lido: healthy");
     expect(result.message).toContain("Problems:\n- None detected.");

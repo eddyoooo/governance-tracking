@@ -10,6 +10,10 @@ import type {
 } from "../../src/notifications/index.js";
 import { TelegramNotificationService } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
+import {
+  AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
+  aaveRoutineCapNotificationPolicy
+} from "../../src/protocols/aave/aaveNotificationPolicy.js";
 import type { RawGovernanceItem } from "../../src/protocols/types.js";
 import {
   type FetchRun,
@@ -989,6 +993,138 @@ describe("FetchProtocolGovernanceJob", () => {
     expect((await proposalRepository.findAll())[0]).toMatchObject({
       notificationStatus: "sent"
     });
+  });
+
+  it("stores routine Aave cap changes without notifying while preserving mixed LlamaRisk alerts", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-11-02T08:00:00.000Z"));
+    const baselineItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25900",
+      publisherName: "LlamaRisk",
+      title: "[ARFC] Aave risk framework update",
+      publishedAt: "2026-11-01T10:00:00.000Z"
+    });
+    const routineCapItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25987",
+      publisherName: "LlamaRisk",
+      title:
+        "Risk Stewards: Supply and Borrow Cap Changes on Aave V3 / 2026.11.03",
+      publishedAt: "2026-11-03T10:00:00.000Z",
+      raw: {
+        publisher: { username: "LlamaRisk", name: "Llama Risk Team" }
+      }
+    });
+    const mixedCapAndIrmItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25988",
+      publisherName: "LlamaRisk",
+      title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.03",
+      publishedAt: "2026-11-03T11:00:00.000Z"
+    });
+    let items = [baselineItem];
+    const notificationService = new RecordingNotificationService();
+    const { job, proposalRepository, fetchRunRepository } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "aave",
+        publisherAllowlist: ["LlamaRisk"],
+        notificationPolicy: aaveRoutineCapNotificationPolicy,
+        fetchRecent: jest.fn(async () => items)
+      }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    await job.run("aave");
+    items = [baselineItem, routineCapItem, mixedCapAndIrmItem];
+    jest.setSystemTime(new Date("2026-11-04T08:00:00.000Z"));
+    const discovery = await job.run("aave");
+    const duplicate = await job.run("aave");
+
+    expect(discovery).toMatchObject({
+      fetchedCount: 3,
+      allowlistedCount: 3,
+      storedNewCount: 2,
+      notificationSuppressedCount: 1,
+      notificationSentCount: 1,
+      notificationFailedCount: 0
+    });
+    expect(duplicate).toMatchObject({
+      storedNewCount: 0,
+      unchangedExistingCount: 3,
+      notificationSuppressedCount: 0,
+      notificationSentCount: 0
+    });
+    expect(notificationService.messages.map((message) => message.title)).toEqual([
+      mixedCapAndIrmItem.title
+    ]);
+    await expect(
+      proposalRepository.findBySourceIdentity("aave", "forum", "25987")
+    ).resolves.toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON
+    });
+    const mixedStored = await proposalRepository.findBySourceIdentity(
+      "aave",
+      "forum",
+      "25988"
+    );
+    expect(mixedStored).toMatchObject({ notificationStatus: "sent" });
+    expect(mixedStored).not.toHaveProperty("notificationSkipReason");
+    expect(fetchRunRepository.upserts.at(-1)).toMatchObject({
+      notificationSuppressedCount: 0
+    });
+    expect(fetchRunRepository.upserts.at(-3)).toMatchObject({
+      notificationSuppressedCount: 1
+    });
+  });
+
+  it("sends a routine Aave cap alert when the suppression policy is disabled", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-11-02T08:00:00.000Z"));
+    const baselineItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25900",
+      publisherName: "LlamaRisk",
+      title: "[ARFC] Aave risk framework update",
+      publishedAt: "2026-11-01T10:00:00.000Z"
+    });
+    const routineCapItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25987",
+      publisherName: "LlamaRisk",
+      title:
+        "Risk Stewards: Supply and Borrow Cap Changes on Aave V3 / 2026.11.03",
+      publishedAt: "2026-11-03T10:00:00.000Z"
+    });
+    let items = [baselineItem];
+    const notificationService = new RecordingNotificationService();
+    const { job } = createJob(
+      createFakeProtocolAdapter({
+        protocol: "aave",
+        publisherAllowlist: ["LlamaRisk"],
+        fetchRecent: jest.fn(async () => items)
+      }),
+      new MemoryProposalRepository(),
+      new RecordingFetchRunRepository(),
+      notificationService
+    );
+
+    await job.run("aave");
+    items = [baselineItem, routineCapItem];
+    jest.setSystemTime(new Date("2026-11-04T08:00:00.000Z"));
+    const result = await job.run("aave");
+
+    expect(result).toMatchObject({
+      storedNewCount: 1,
+      notificationSuppressedCount: 0,
+      notificationSentCount: 1
+    });
+    expect(notificationService.messages.map((message) => message.title)).toEqual([
+      routineCapItem.title
+    ]);
   });
 
   it("fans out production Telegram proposal notifications to every configured allowed user and notifies duplicates only once", async () => {

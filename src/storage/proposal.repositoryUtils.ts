@@ -50,6 +50,8 @@ export function buildStoredProposal(
     notificationStatus:
       existing?.notificationStatus ?? options.notificationStatusForNew ?? "skipped",
     notificationError: existing?.notificationError,
+    notificationSkipReason:
+      existing?.notificationSkipReason ?? options.notificationSkipReasonForNew,
     notificationDeliveries: existing?.notificationDeliveries,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
@@ -65,6 +67,7 @@ export function applyProposalNotificationState(
     ...proposal,
     notificationStatus: state.notificationStatus,
     notificationError: state.notificationError,
+    notificationSkipReason: state.notificationSkipReason,
     notificationDeliveries: state.notificationDeliveries,
     updatedAt: now
   };
@@ -75,6 +78,10 @@ export function applyProposalNotificationState(
 
   if (!state.notificationDeliveries) {
     delete updated.notificationDeliveries;
+  }
+
+  if (!state.notificationSkipReason) {
+    delete updated.notificationSkipReason;
   }
 
   return updated;

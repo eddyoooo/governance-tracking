@@ -132,6 +132,15 @@ describe("ProtocolRegistry", () => {
         baseUrl: "https://governance.aave.com"
       }
     });
+    expect(
+      aave?.notificationPolicy?.evaluate({
+        protocol: "aave",
+        sourceType: "forum",
+        publisherName: "LlamaRisk",
+        title:
+          "Risk Stewards: Borrow Cap Increases on Aave V3 / 2026.11.01"
+      })
+    ).toMatchObject({ action: "suppress" });
     expect(uniswap).toBeDefined();
     expect(uniswap).toMatchObject({
       protocol: "uniswap",
@@ -155,6 +164,24 @@ describe("ProtocolRegistry", () => {
         baseUrl: "https://forum.cow.fi"
       }
     });
+  });
+
+  it("honors the Aave routine-cap suppression kill switch", () => {
+    const registry = createProtocolRegistry(
+      testEnv({ AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: "false" }),
+      createSilentLogger()
+    );
+
+    expect(registry.get("aave")?.notificationPolicy).toBeUndefined();
+    expect(
+      registry.evaluateNotificationPolicy({
+        protocol: "aave",
+        sourceType: "forum",
+        publisherName: "LlamaRisk",
+        title:
+          "Risk Stewards: Borrow Cap Increases on Aave V3 / 2026.11.01"
+      })
+    ).toEqual({ action: "notify" });
   });
 
   it("uses fixture-backed protocol fetching in demo or memory mode", async () => {

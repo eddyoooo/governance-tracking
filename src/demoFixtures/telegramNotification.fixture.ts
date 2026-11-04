@@ -50,11 +50,11 @@ export const telegramTestNotificationFixtures: TelegramTestNotificationFixture[]
   {
     protocol: "aave",
     sourceType: "forum",
-    sourceId: "25168",
+    sourceId: "25491",
     publisherName: "LlamaRisk",
-    title: "Risk Stewards: Supply Cap Increases on Aave V3 / 2026.06.18",
-    sourceUrl: "https://governance.aave.com/t/risk-stewards-supply-cap-increases-on-aave-v3-2026-06-18/25168",
-    publishedAt: "2026-06-18T20:17:30.736Z"
+    title: "Risk Stewards: PT Parameter Changes on Aave V3 / 2026.08.15",
+    sourceUrl: "https://governance.aave.com/t/risk-stewards-pt-parameter-changes-on-aave-v3-2026-08-15/25491",
+    publishedAt: "2026-08-15T12:47:01.728Z"
   },
   {
     protocol: "aave",

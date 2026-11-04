@@ -193,6 +193,7 @@ const rawEnvSchema = z
       .positive()
       .max(5)
       .default(2),
+    AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: booleanFromEnv.default(true),
     UNISWAP_FORUM_BASE_URL: z.string().url().default("https://gov.uniswap.org"),
     UNISWAP_FORUM_API_BASE_URL: z
       .string()
@@ -278,6 +279,8 @@ const rawEnvSchema = z
     aaveAllowedPublishers: value.AAVE_ALLOWED_PUBLISHERS,
     aaveFetchMaxPages: value.AAVE_FETCH_MAX_PAGES,
     aaveCategoryFetchMaxPages: value.AAVE_CATEGORY_FETCH_MAX_PAGES,
+    aaveSuppressRoutineCapNotifications:
+      value.AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS,
     uniswapForumBaseUrl: value.UNISWAP_FORUM_BASE_URL,
     uniswapForumApiBaseUrl: value.UNISWAP_FORUM_API_BASE_URL,
     uniswapEnabled: value.UNISWAP_ENABLED,

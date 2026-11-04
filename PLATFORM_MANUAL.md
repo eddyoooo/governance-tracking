@@ -66,7 +66,7 @@ npm run dev
 ```
 
 Memory-mode data exists only inside this process and disappears on restart.
-All four forum adapters, including CoW, are enabled by default. Set a protocol's `*_ENABLED=false` only when intentionally pausing that source. Enablement controls polling; only topics matching that protocol's publisher policy are stored and notified. Lido's policy also accepts Leader-level original authors; the other forum policies are name-allowlist-only.
+All four forum adapters, including CoW, are enabled by default. Set a protocol's `*_ENABLED=false` only when intentionally pausing that source. Enablement controls polling; only topics matching that protocol's publisher eligibility policy are stored. Lido also accepts Leader-level original authors. Aave can store routine LlamaRisk cap-only topics without notifying, as described below.
 
 ## Terminal Demo
 
@@ -88,6 +88,7 @@ The demo uses locally saved real forum samples and memory storage. It shows:
 - Protocol-specific publisher allowlists.
 - Non-allowlisted topics being skipped.
 - New allowlisted proposals being normalized and stored.
+- Routine LlamaRisk cap-only topics being stored with Telegram suppressed.
 - Duplicate topics not creating duplicate records.
 - Unchanged topics not causing Firestore-style write churn.
 - Fetch-run audit records.
@@ -156,7 +157,10 @@ Important result fields:
 - `skippedCount`: non-allowlisted topics.
 - `notificationSentCount`: newly discovered proposals delivered during this fetch.
 - `notificationFailedCount`: newly discovered proposals with at least one initial recipient failure.
+- `notificationSuppressedCount`: newly stored eligible proposals intentionally silenced by a protocol notification policy.
 - `errors`: non-fatal notification errors, or the persisted failure reason for a failed run.
+
+For Aave, `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true` stores but does not notify narrowly recognized dated LlamaRisk `Risk Stewards` cap-only changes. Expect `notificationStatus=skipped`, `notificationSkipReason=aave_risk_stewards_routine_cap_change`, and an incremented `notificationSuppressedCount`. `skippedCount` is different: it counts non-eligible publishers that were not stored. Mixed cap/IRM, PT parameter, oracle, incident, assessment, unknown-title, and non-LlamaRisk posts remain alertable. Set the flag to `false` to restore notifications for future newly discovered matching posts; already skipped records are not replayed.
 
 On an empty database, the first successful fetch for each protocol that meets `SOURCE_ACTIVITY_MIN_FETCHED_COUNT` establishes a silent baseline. Historical allowlisted proposals are stored with notifications skipped. An empty or interrupted first fetch remains in seeding mode; later discoveries notify only after a valid baseline completes.
 
@@ -241,6 +245,7 @@ Expected: the configured Telegram admin receives the same status report used by 
 The report shows:
 
 - Latest fetch status per enabled protocol.
+- Per-run intentional notification-suppression count.
 - Current exact pending and failed proposal counts.
 - Masked failed recipient IDs, attempts, next retry time, and last error.
 - Raw source freshness and silent-migration warnings.
@@ -263,7 +268,7 @@ Retry delays are:
 - Third failure: 6 hours.
 - Later failures: 24 hours.
 
-Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` marks that delivery skipped and also allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
+Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. If an unresolved Aave proposal now matches the routine-cap policy, recovery closes its unsent recipients as skipped without contacting Telegram. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` also marks that delivery skipped and allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
 
 The monitor accepts delivery only after Telegram returns valid JSON with `ok: true`. A misleading HTTP `2xx` proxy page, malformed response, empty response, or Telegram `ok: false` response stays unresolved and is retried automatically.
 
@@ -431,6 +436,12 @@ Current CoW publisher configuration:
 
 ```bash
 -e COW_ALLOWED_PUBLISHERS='["notsoformal","Kowrigan","harisang","felixhenneke","KPK"]' \
+```
+
+Current Aave routine-cap notification policy:
+
+```bash
+-e AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true \
 ```
 
 Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally.

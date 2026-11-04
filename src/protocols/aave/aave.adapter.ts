@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { NotificationPolicy } from "../../notifications/notificationPolicy.js";
 import type {
   GovernanceSource,
   NormalizedGovernanceItem,
@@ -8,6 +9,7 @@ import type {
 import { collectDiscourseTopicPages } from "../discourse/discoursePagination.js";
 import { AaveForumClient } from "./aaveForum.client.js";
 import { normalizeAaveForumItem } from "./aave.normalizer.js";
+import { aaveRoutineCapNotificationPolicy } from "./aaveNotificationPolicy.js";
 
 export interface AaveAdapterOptions {
   enabled: boolean;
@@ -16,6 +18,7 @@ export interface AaveAdapterOptions {
   allowedPublishers: string[];
   maxPages: number;
   categoryMaxPages: number;
+  suppressRoutineCapNotifications?: boolean;
   logger?: Logger;
   client?: AaveForumClient;
 }
@@ -25,6 +28,7 @@ export class AaveAdapter implements ProtocolAdapter {
   readonly source: GovernanceSource;
   readonly enabled: boolean;
   readonly publisherAllowlist: string[];
+  readonly notificationPolicy?: NotificationPolicy;
   private readonly client: AaveForumClient;
   private readonly logger?: Logger;
   private readonly maxPages: number;
@@ -33,6 +37,10 @@ export class AaveAdapter implements ProtocolAdapter {
   constructor(options: AaveAdapterOptions) {
     this.enabled = options.enabled;
     this.publisherAllowlist = options.allowedPublishers;
+    this.notificationPolicy =
+      options.suppressRoutineCapNotifications === false
+        ? undefined
+        : aaveRoutineCapNotificationPolicy;
     this.maxPages = options.maxPages;
     this.categoryMaxPages = options.categoryMaxPages;
     this.source = {

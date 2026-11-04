@@ -12,6 +12,30 @@ async function loadRawFixture(name: string): Promise<RawGovernanceItem> {
 }
 
 describe("MemoryProposalRepository", () => {
+  it("persists and preserves an explicit notification skip reason", async () => {
+    const repository = new MemoryProposalRepository();
+    const normalized = normalizeLidoForumItem(
+      createRawGovernanceItem({ protocol: "aave", sourceId: "25987" })
+    );
+
+    const first = await repository.upsert(normalized, {
+      notificationStatusForNew: "skipped",
+      notificationSkipReasonForNew:
+        "aave_risk_stewards_routine_cap_change"
+    });
+    const duplicate = await repository.upsert(normalized, {
+      notificationStatusForNew: "pending"
+    });
+
+    expect(first.proposal).toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: "aave_risk_stewards_routine_cap_change"
+    });
+    expect(duplicate.proposal).toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: "aave_risk_stewards_routine_cap_change"
+    });
+  });
   afterEach(() => {
     jest.useRealTimers();
   });

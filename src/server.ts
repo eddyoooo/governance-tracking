@@ -107,7 +107,9 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
     new ProposalNotificationDispatcher(
       repositories.proposalRepository,
       notificationService,
-      logger
+      logger,
+      undefined,
+      (proposal) => protocolRegistry.evaluateNotificationPolicy(proposal)
     );
   const governanceNotificationDispatcher =
     options.governanceNotificationDispatcher ??

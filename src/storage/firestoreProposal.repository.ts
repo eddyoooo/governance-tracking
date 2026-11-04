@@ -56,6 +56,10 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
     cleaned.notificationError = proposal.notificationError;
   }
 
+  if (proposal.notificationSkipReason) {
+    cleaned.notificationSkipReason = proposal.notificationSkipReason;
+  }
+
   if (proposal.notificationDeliveries) {
     cleaned.notificationDeliveries = proposal.notificationDeliveries;
   }
@@ -314,6 +318,7 @@ export class FirestoreProposalRepository implements ProposalRepository {
     return this.updateNotificationState(id, (proposal) => ({
       notificationStatus: status,
       notificationError: error,
+      notificationSkipReason: proposal.notificationSkipReason,
       notificationDeliveries: proposal.notificationDeliveries
     }));
   }

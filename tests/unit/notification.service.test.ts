@@ -15,6 +15,10 @@ import {
   TelegramNotificationService
 } from "../../src/notifications/index.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
+import {
+  AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
+  aaveRoutineCapNotificationPolicy
+} from "../../src/protocols/aave/aaveNotificationPolicy.js";
 import { MemoryProposalRepository } from "../../src/storage/memoryProposal.repository.js";
 import {
   createRawGovernanceItem,
@@ -656,6 +660,134 @@ describe("notification services", () => {
     await expect(repository.findById(proposal.id)).resolves.toMatchObject({
       notificationStatus: "skipped"
     });
+  });
+
+  it("suppresses a policy-matched pending proposal before any recipient is contacted", async () => {
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        protocol: "aave",
+        sourceId: "25987",
+        publisherName: "LlamaRisk",
+        title:
+          "Risk Stewards: Supply and Borrow Cap Changes on Aave V3 / 2026.11.03"
+      })
+    );
+    const stored = await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    const service = new TargetedNotificationService([
+      { key: "recipient-1", maskedId: "*****1111" }
+    ]);
+    const dispatcher = new ProposalNotificationDispatcher(
+      repository,
+      service,
+      createSilentLogger(),
+      undefined,
+      (record) => aaveRoutineCapNotificationPolicy.evaluate(record)
+    );
+
+    await expect(dispatcher.notifyNewProposal(stored.proposal)).resolves.toEqual({
+      status: "skipped"
+    });
+    expect(service.calls).toEqual([]);
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON
+    });
+  });
+
+  it("automatically closes policy-matched failed recipients before their retry is due", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-11-04T08:00:00.000Z"));
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(
+      createRawGovernanceItem({
+        protocol: "aave",
+        sourceId: "25987",
+        publisherName: "LlamaRisk",
+        title: "Risk Stewards: Borrow Cap Increases on Aave V3 / 2026.11.01"
+      })
+    );
+    const stored = await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    const initialService = new TargetedNotificationService([
+      { key: "recipient-1", maskedId: "*****1111" },
+      { key: "recipient-2", maskedId: "*****2222" }
+    ]);
+    initialService.failingRecipientKeys.add("recipient-2");
+    const initialDispatcher = new ProposalNotificationDispatcher(
+      repository,
+      initialService,
+      createSilentLogger()
+    );
+
+    await expect(
+      initialDispatcher.notifyNewProposal(stored.proposal)
+    ).resolves.toMatchObject({ status: "failed" });
+
+    const recoveryService = new TargetedNotificationService([
+      { key: "recipient-1", maskedId: "*****1111" },
+      { key: "recipient-2", maskedId: "*****2222" }
+    ]);
+    const recoveryDispatcher = new ProposalNotificationDispatcher(
+      repository,
+      recoveryService,
+      createSilentLogger(),
+      undefined,
+      (record) => aaveRoutineCapNotificationPolicy.evaluate(record)
+    );
+    const result = await recoveryDispatcher.recoverOutstanding(
+      "2026-11-04T08:01:00.000Z"
+    );
+
+    expect(result).toMatchObject({
+      candidateCount: 1,
+      attemptedProposalCount: 0,
+      attemptedRecipientCount: 0,
+      stillFailedCount: 0,
+      skippedCount: 1
+    });
+    expect(recoveryService.calls).toEqual([]);
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
+      notificationDeliveries: {
+        "recipient-1": { status: "sent" },
+        "recipient-2": { status: "skipped" }
+      }
+    });
+  });
+
+  it("fails open and sends normally when a notification policy unexpectedly throws", async () => {
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const stored = await repository.upsert(proposal, {
+      notificationStatusForNew: "pending"
+    });
+    const service = new TargetedNotificationService([
+      { key: "recipient-1", maskedId: "*****1111" }
+    ]);
+    const logger = createSilentLogger();
+    const dispatcher = new ProposalNotificationDispatcher(
+      repository,
+      service,
+      logger,
+      undefined,
+      () => {
+        throw new Error("Policy unavailable");
+      }
+    );
+
+    await expect(dispatcher.notifyNewProposal(stored.proposal)).resolves.toEqual({
+      status: "sent"
+    });
+    expect(service.calls).toHaveLength(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ recordId: proposal.id }),
+      "Notification policy evaluation failed open"
+    );
   });
 
   it.each(["sent", "skipped"] as const)(

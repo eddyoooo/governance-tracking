@@ -21,6 +21,7 @@ export interface FetchRun {
   skippedCount: number;
   notificationSentCount: number;
   notificationFailedCount: number;
+  notificationSuppressedCount?: number;
   errors: string[];
 }
 

@@ -57,6 +57,7 @@ describe("env parsing", () => {
     expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
     expect(env.aaveFetchMaxPages).toBe(10);
     expect(env.aaveCategoryFetchMaxPages).toBe(2);
+    expect(env.aaveSuppressRoutineCapNotifications).toBe(true);
     expect(env.uniswapForumBaseUrl).toBe("https://gov.uniswap.org");
     expect(env.uniswapForumApiBaseUrl).toBe("https://gov.uniswap.org");
     expect(env.uniswapEnabled).toBe(true);
@@ -113,6 +114,20 @@ describe("env parsing", () => {
     expect(env.aaveAllowedPublishers).toEqual(aaveAllowedPublishers);
     expect(env.uniswapAllowedPublishers).toEqual(uniswapAllowedPublishers);
     expect(env.cowAllowedPublishers).toEqual(cowAllowedPublishers);
+  });
+
+  it("parses the Aave routine-cap notification suppression kill switch", () => {
+    expect(
+      loadEnv({ AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: "true" })
+        .aaveSuppressRoutineCapNotifications
+    ).toBe(true);
+    expect(
+      loadEnv({ AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: "false" })
+        .aaveSuppressRoutineCapNotifications
+    ).toBe(false);
+    expect(() =>
+      loadEnv({ AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS: "yes" })
+    ).toThrow();
   });
 
   it("validates the maximum age for a successful forum fetch", () => {

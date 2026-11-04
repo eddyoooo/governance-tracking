@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
 import type { Logger } from "pino";
 import { loadEnv, type Env } from "../../src/config/env.js";
+import type { NotificationPolicy } from "../../src/notifications/notificationPolicy.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import type {
   GovernanceSource,
@@ -65,6 +66,7 @@ export interface FakeProtocolAdapterOptions {
   source?: GovernanceSource;
   publisherAllowlist?: string[];
   publisherTrustLevelAllowlist?: readonly number[];
+  notificationPolicy?: NotificationPolicy;
   items?: RawGovernanceItem[];
   fetchRecent?: () => Promise<RawGovernanceItem[]>;
   normalize?: (item: RawGovernanceItem) => NormalizedGovernanceItem;
@@ -88,6 +90,7 @@ export function createFakeProtocolAdapter(
       },
     publisherAllowlist: options.publisherAllowlist ?? ["Allowed Publisher"],
     publisherTrustLevelAllowlist: options.publisherTrustLevelAllowlist,
+    notificationPolicy: options.notificationPolicy,
     fetchRecent:
       options.fetchRecent ??
       jest.fn(async () => options.items ?? [createRawGovernanceItem({ protocol })]),

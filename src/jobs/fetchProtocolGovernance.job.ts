@@ -1,5 +1,8 @@
 import type { Logger } from "pino";
-import { filterByPublisherPolicy } from "../protocols/allowlist.js";
+import {
+  filterByPublisherPolicy,
+  getPublisherAliases
+} from "../protocols/allowlist.js";
 import { NoopNotificationService } from "../notifications/noopNotification.service.js";
 import type { NotificationService } from "../notifications/notification.service.js";
 import { ProposalNotificationDispatcher } from "../notifications/proposalNotifications.js";
@@ -32,6 +35,7 @@ export interface FetchProtocolResult {
   skippedCount: number;
   notificationSentCount: number;
   notificationFailedCount: number;
+  notificationSuppressedCount: number;
   startedAt: string;
   finishedAt: string;
   errors: string[];
@@ -79,7 +83,9 @@ export class FetchProtocolGovernanceJob {
       new ProposalNotificationDispatcher(
         this.proposalRepository,
         this.notificationService,
-        this.logger
+        this.logger,
+        undefined,
+        (proposal) => this.registry.evaluateNotificationPolicy(proposal)
       );
     this.protocolStateRepository =
       options.protocolStateRepository ?? new MemoryProtocolStateRepository();
@@ -122,6 +128,7 @@ export class FetchProtocolGovernanceJob {
       skippedCount: 0,
       notificationSentCount: 0,
       notificationFailedCount: 0,
+      notificationSuppressedCount: 0,
       errors: []
     };
 
@@ -134,6 +141,7 @@ export class FetchProtocolGovernanceJob {
     let unchangedExistingCount = 0;
     let notificationSentCount = 0;
     let notificationFailedCount = 0;
+    let notificationSuppressedCount = 0;
     const errors: string[] = [];
 
     try {
@@ -176,6 +184,19 @@ export class FetchProtocolGovernanceJob {
       skippedCount = filtered.skipped.length;
 
       for (const rawItem of filtered.allowed) {
+        const notificationDecision = this.registry.evaluateNotificationPolicy({
+          protocol: rawItem.protocol,
+          sourceType: rawItem.sourceType,
+          title: rawItem.title,
+          publisherName: rawItem.publisherName,
+          publisherAliases: getPublisherAliases(rawItem)
+        });
+        const notificationSuppressed =
+          notificationDecision.action === "suppress";
+        const notificationSkipReason =
+          notificationDecision.action === "suppress"
+            ? notificationDecision.reason
+            : undefined;
         const historicalSeed =
           !baselineSeeding &&
           this.notificationService.enabled &&
@@ -184,6 +205,7 @@ export class FetchProtocolGovernanceJob {
             previousSuccessfulRun
           );
         const notificationStatusForNew =
+          notificationSuppressed ||
           baselineSeeding ||
           historicalSeed ||
           !this.notificationService.enabled
@@ -191,11 +213,16 @@ export class FetchProtocolGovernanceJob {
             : "pending";
         const normalizedItem = adapter.normalize(rawItem);
         const upsertResult = await this.proposalRepository.upsert(normalizedItem, {
-          notificationStatusForNew
+          notificationStatusForNew,
+          notificationSkipReasonForNew: notificationSkipReason
         });
 
         if (upsertResult.created) {
           storedNewCount += 1;
+
+          if (notificationSuppressed) {
+            notificationSuppressedCount += 1;
+          }
 
           if (baselineSeeding || historicalSeed) {
             baselineSeededCount += 1;
@@ -260,6 +287,7 @@ export class FetchProtocolGovernanceJob {
         skippedCount,
         notificationSentCount,
         notificationFailedCount,
+        notificationSuppressedCount,
         errors
       };
 
@@ -276,7 +304,8 @@ export class FetchProtocolGovernanceJob {
           unchangedExistingCount: finishedRun.unchangedExistingCount,
           skippedCount: finishedRun.skippedCount,
           notificationSentCount: finishedRun.notificationSentCount,
-          notificationFailedCount: finishedRun.notificationFailedCount
+          notificationFailedCount: finishedRun.notificationFailedCount,
+          notificationSuppressedCount
         },
         "Finished governance fetch"
       );
@@ -304,6 +333,7 @@ export class FetchProtocolGovernanceJob {
         skippedCount: finishedRun.skippedCount,
         notificationSentCount: finishedRun.notificationSentCount,
         notificationFailedCount: finishedRun.notificationFailedCount,
+        notificationSuppressedCount,
         startedAt: finishedRun.startedAt,
         finishedAt,
         errors: finishedRun.errors
@@ -323,6 +353,7 @@ export class FetchProtocolGovernanceJob {
         skippedCount,
         notificationSentCount,
         notificationFailedCount,
+        notificationSuppressedCount,
         errors: [...errors, message]
       };
 
