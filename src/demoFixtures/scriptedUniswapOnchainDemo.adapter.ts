@@ -215,7 +215,8 @@ export class ScriptedUniswapOnchainDemoAdapter
   private block(blockNumber: number): GovernanceBlockReference {
     return {
       number: blockNumber,
-      hash: `0x${blockNumber.toString(16).padStart(64, "0")}`,
+      hash: this.events().find((event) => event.blockNumber === blockNumber)?.blockHash ??
+        `0x${blockNumber.toString(16).padStart(64, "0")}`,
       timestamp: "2026-07-27T11:46:00.000Z"
     };
   }

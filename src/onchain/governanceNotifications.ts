@@ -19,6 +19,23 @@ export function buildGovernanceLifecycleMessage(
   decision: StoredGovernanceDecision,
   transition: GovernanceTransitionType
 ): LifecycleNotificationMessage {
+  if (decision.aave) {
+    const total = parseUniVotes(decision.forVotes) + parseUniVotes(decision.againstVotes);
+    const fields = [{ label: "Status", value: transition === "executed"
+      ? "Forwarded to payload controllers" : statusLabel(transition) }];
+    if (transition === "succeeded" || transition === "defeated") {
+      if (decision.aave.resultReceivedAt) fields.push({ label: "Result settled",
+        value: formatUtcTimestamp(decision.aave.resultReceivedAt) });
+      fields.push(
+        { label: "For", value: formatVoteResult(parseUniVotes(decision.forVotes), total, "AAVE") },
+        { label: "Against", value: formatVoteResult(parseUniVotes(decision.againstVotes), total, "AAVE") }
+      );
+    }
+    return { kind: "lifecycle", heading: transition === "executed"
+      ? "GOVERNANCE PROPOSAL FORWARDED" : TRANSITION_HEADINGS[transition],
+      protocol: decision.protocol, sourceType: decision.sourceType,
+      title: decision.title, sourceUrl: decision.sourceUrl, fields };
+  }
   const fields = [{ label: "Status", value: statusLabel(transition) }];
 
   if (transition === "succeeded" || transition === "defeated") {
@@ -88,7 +105,7 @@ function parseUniVotes(value: string): bigint {
   return BigInt(value);
 }
 
-function formatUniVoteAmount(amount: bigint): string {
+function formatUniVoteAmount(amount: bigint, symbol = "UNI"): string {
   const whole = amount / 10n ** 18n;
   const fraction = amount % 10n ** 18n;
   const fractionDigits = fraction
@@ -98,11 +115,11 @@ function formatUniVoteAmount(amount: bigint): string {
     .replace(/0+$/, "");
   const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
-  return `${grouped}${fractionDigits ? `.${fractionDigits}` : ""} UNI`;
+  return `${grouped}${fractionDigits ? `.${fractionDigits}` : ""} ${symbol}`;
 }
 
-function formatVoteResult(amount: bigint, total: bigint): string {
-  return `${formatUniVoteAmount(amount)} (${formatVotePercentage(amount, total)})`;
+function formatVoteResult(amount: bigint, total: bigint, symbol = "UNI"): string {
+  return `${formatUniVoteAmount(amount, symbol)} (${formatVotePercentage(amount, total)})`;
 }
 
 function formatVotePercentage(amount: bigint, total: bigint): string {

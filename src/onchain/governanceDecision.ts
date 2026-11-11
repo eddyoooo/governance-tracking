@@ -1,4 +1,5 @@
 import { hashObject, sha256 } from "../utils/hash.js";
+import { assertAaveObservation } from "./aave/aaveGovernance.model.js";
 import type {
   GovernanceAction,
   GovernanceDecisionObservation,
@@ -148,6 +149,19 @@ export function deriveGovernanceTransitions(
   previous: StoredGovernanceDecision | null,
   current: StoredGovernanceDecision
 ): GovernanceTransitionType[] {
+  if (current.aave) {
+    if (previous) assertValidGovernanceStatusTransition(previous.status, current.status);
+    const implied = (decision: StoredGovernanceDecision): GovernanceTransitionType[] => [
+      "created",
+      ...(decision.voteOutcome === "succeeded" || decision.voteOutcome === "defeated"
+        ? [decision.voteOutcome] : []),
+      ...(decision.aave!.queuingTime > 0 ? ["queued" as const] : []),
+      ...(["canceled", "expired", "executed"].includes(decision.status)
+        ? [decision.status as GovernanceTransitionType] : [])
+    ];
+    const known = new Set(previous ? implied(previous) : []);
+    return implied(current).filter((transition) => !known.has(transition));
+  }
   if (!previous) {
     switch (current.status) {
       case "pending":
@@ -256,7 +270,7 @@ export function mergeGovernanceDecision(
     title:
       observation.title ??
       existing?.title ??
-      `Uniswap governance proposal #${observation.proposalId}`,
+      `${observation.protocol === "aave" ? "Aave" : "Uniswap"} governance proposal #${observation.proposalId}`,
     description: observation.description ?? existing?.description ?? "",
     votingEndedAt:
       observation.votingEndedAt ?? existing?.votingEndedAt ?? null,
@@ -314,8 +328,11 @@ export function assertGovernanceDecisionObservation(
       observation.voteOutcome === "succeeded" ||
       observation.voteOutcome === "defeated") &&
     (!wasQueued(observation) || observation.voteOutcome === "succeeded");
+  const expiredWithoutResult = observation.aave && observation.status === "expired" &&
+    observation.aave.queuingTime === 0 && observation.voteOutcome === "pending" &&
+    observation.executionOutcome === "expired";
   if (
-    !validCanceledVoteOutcome &&
+    !validCanceledVoteOutcome && !expiredWithoutResult &&
     (observation.voteOutcome !== expectedOutcomes.voteOutcome ||
       observation.executionOutcome !== expectedOutcomes.executionOutcome)
   ) {
@@ -324,21 +341,26 @@ export function assertGovernanceDecisionObservation(
     );
   }
 
-  if (!/^[1-9]\d*$/.test(observation.proposalId)) {
+  if (!(observation.aave ? /^(?:0|[1-9]\d*)$/ : /^[1-9]\d*$/).test(observation.proposalId)) {
     throw new Error(
       `Governance decision proposal id must be a positive integer: ${observation.proposalId}`
     );
   }
 
-  assertSafeBlockNumber(observation.startBlock, "proposal start block");
-  assertSafeBlockNumber(observation.endBlock, "proposal end block");
+  if (observation.aave) {
+    assertAaveObservation(observation);
+  } else {
+    if (observation.protocol === "aave") throw new Error("Aave governance data is required.");
+    assertSafeBlockNumber(observation.startBlock!, "proposal start block");
+    assertSafeBlockNumber(observation.endBlock!, "proposal end block");
+    if (observation.endBlock! <= observation.startBlock!) {
+      throw new Error("Governance proposal end block must be after its start block.");
+    }
+  }
   assertSafeBlockNumber(
     observation.lastObservedBlockNumber,
     "proposal observation block"
   );
-  if (observation.endBlock <= observation.startBlock) {
-    throw new Error("Governance proposal end block must be after its start block.");
-  }
 
   if (
     observation.votingEndedAt !== undefined &&
@@ -426,10 +448,10 @@ function wasQueued(
   decision: Pick<
     GovernanceDecisionObservation | StoredGovernanceDecision,
     "eta" | "queuedBlockNumber"
-  >
+  > & { aave?: { queuingTime: number } }
 ): boolean {
   return (
-    decision.eta !== null ||
+    decision.eta !== null || (decision.aave?.queuingTime ?? 0) > 0 ||
     (decision.queuedBlockNumber !== undefined &&
       decision.queuedBlockNumber !== null)
   );
@@ -460,6 +482,28 @@ function assertImmutableProposalData(
   existing: StoredGovernanceDecision,
   observation: GovernanceDecisionObservation
 ): void {
+  if (Boolean(existing.aave) !== Boolean(observation.aave)) {
+    throw new Error("Governance proposal model cannot change.");
+  }
+  if (existing.aave && observation.aave) {
+    for (const field of ["queuingTime", "cancelTimestamp", "resultReceivedAt", "resultBlockNumber", "resultTransactionHash"] as const) {
+      const previous = existing.aave[field];
+      if (previous !== undefined && previous !== 0 && previous !== observation.aave[field]) {
+        throw new Error(`Aave established lifecycle evidence ${field} cannot change.`);
+      }
+    }
+    for (const field of ["creationTime", "votingPortal", "ipfsHash", "payloads"] as const) {
+      if (hashObject(existing.aave[field]) !== hashObject(observation.aave[field])) {
+        throw new Error(`Aave immutable proposal field ${field} cannot change.`);
+      }
+    }
+    if (existing.aave.votingActivationTime > 0 &&
+        (existing.aave.votingActivationTime !== observation.aave.votingActivationTime ||
+         existing.aave.snapshotBlockHash !== observation.aave.snapshotBlockHash ||
+         existing.aave.votingDuration !== observation.aave.votingDuration)) {
+      throw new Error("Aave voting window cannot change after activation.");
+    }
+  }
   if (existing.proposer.toLowerCase() !== observation.proposer.toLowerCase()) {
     throw new Error("Governance proposal proposer cannot change.");
   }

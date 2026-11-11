@@ -26,7 +26,7 @@ import {
 } from "./notificationPolicy.js";
 
 export interface ProposalNotificationResult {
-  status: "sent" | "failed" | "skipped";
+  status: "sent" | "failed" | "skipped" | "pending";
   error?: string;
 }
 
@@ -45,6 +45,7 @@ export interface NotificationRecoveryResult {
 export interface NotificationRecord {
   id: string;
   notificationStatus: NotificationStatus;
+  notificationReady?: boolean;
   notificationError?: string;
   notificationSkipReason?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
@@ -71,7 +72,6 @@ type ProposalNotificationFields = Pick<
 >;
 
 export const NOTIFICATION_RECOVERY_BATCH_SIZE = 100;
-const NOTIFICATION_RECOVERY_SCAN_SIZE = 1_000;
 const RETRY_DELAYS_MS = [
   15 * 60_000,
   60 * 60_000,
@@ -109,6 +109,7 @@ export class ProposalNotificationDispatcher<
   T extends NotificationRecord = StoredProposal
 > {
   private recoveryRunning = false;
+  private lastRecoveryCandidateId: string | undefined;
   private readonly proposalLocks = new Map<string, Promise<void>>();
   private readonly messageBuilder: (record: T) => NotificationMessage;
 
@@ -117,7 +118,8 @@ export class ProposalNotificationDispatcher<
     private readonly notificationService: NotificationService,
     private readonly logger: Pick<Logger, "error" | "info" | "warn">,
     messageBuilder?: (record: T) => NotificationMessage,
-    private readonly notificationPolicyEvaluator?: NotificationPolicyEvaluator<T>
+    private readonly notificationPolicyEvaluator?: NotificationPolicyEvaluator<T>,
+    private readonly deliveryEnabled?: (record: T) => boolean
   ) {
     this.messageBuilder = messageBuilder ?? defaultProposalNotificationMessage;
   }
@@ -141,6 +143,8 @@ export class ProposalNotificationDispatcher<
       ) {
         return { status: current.notificationStatus };
       }
+
+      if (!this.canDeliver(current)) return { status: current.notificationStatus };
 
       const notificationPolicy = this.evaluateNotificationPolicy(current);
 
@@ -196,11 +200,11 @@ export class ProposalNotificationDispatcher<
       const [pending, failed] = await Promise.all([
         this.proposalRepository.findByNotificationStatus(
           "pending",
-          NOTIFICATION_RECOVERY_SCAN_SIZE
+          Number.MAX_SAFE_INTEGER
         ),
         this.proposalRepository.findByNotificationStatus(
           "failed",
-          NOTIFICATION_RECOVERY_SCAN_SIZE
+          Number.MAX_SAFE_INTEGER
         )
       ]);
       const activeRecipientKeys = new Set(
@@ -208,20 +212,47 @@ export class ProposalNotificationDispatcher<
           .getRecipients()
           .map((recipient) => recipient.key)
       );
-      const candidates = deduplicateProposals([...pending, ...failed])
+      // Repositories already read the single-field queues in full. Limit sends,
+      // not visibility: paused or backed-off records must not starve due alerts.
+      const eligible = deduplicateProposals([...pending, ...failed])
         .filter((proposal) =>
-          this.evaluateNotificationPolicy(proposal).action === "suppress" ||
-          needsRecoveryNow(proposal, activeRecipientKeys, now)
-        )
-        .slice(0, NOTIFICATION_RECOVERY_BATCH_SIZE);
+          this.canDeliver(proposal) &&
+          (this.evaluateNotificationPolicy(proposal).action === "suppress" ||
+            needsRecoveryNow(proposal, activeRecipientKeys, now))
+        );
+      const previousIndex = eligible.findIndex(
+        (record) => record.id === this.lastRecoveryCandidateId
+      );
+      const candidates = [
+        ...eligible.slice(previousIndex + 1),
+        ...eligible.slice(0, previousIndex + 1)
+      ].slice(0, NOTIFICATION_RECOVERY_BATCH_SIZE);
+      this.lastRecoveryCandidateId = candidates.at(-1)?.id;
       const result = emptyRecoveryResult(false);
       result.candidateCount = candidates.length;
 
       for (const candidate of candidates) {
-        const candidateResult = await this.withProposalLock(
-          candidate.id,
-          async () => this.recoverProposal(candidate.id, now)
-        );
+        let candidateResult: Awaited<ReturnType<typeof this.recoverProposal>>;
+        try {
+          candidateResult = await this.withProposalLock(
+            candidate.id,
+            async () => this.recoverProposal(candidate.id, now)
+          );
+        } catch (error) {
+          result.errors.push(
+            `Notification recovery failed for ${candidate.id}: ${errorMessage(error)}`
+          );
+          this.logger.error(
+            { recordId: candidate.id, error: safeErrorDetails(error) },
+            "Notification recovery failed for one record; continuing the batch"
+          );
+          candidateResult = {
+            attempted: false,
+            attemptedRecipientCount: 0,
+            recovered: false,
+            status: candidate.notificationStatus
+          };
+        }
 
         result.attemptedProposalCount += candidateResult.attempted
           ? 1
@@ -262,6 +293,15 @@ export class ProposalNotificationDispatcher<
         recovered: false,
         status: "skipped",
         error: `Notification recovery proposal no longer exists: ${proposalId}`
+      };
+    }
+
+    if (!this.canDeliver(current)) {
+      return {
+        attempted: false,
+        attemptedRecipientCount: 0,
+        recovered: false,
+        status: current.notificationStatus
       };
     }
 
@@ -596,6 +636,10 @@ export class ProposalNotificationDispatcher<
         "Failed to send proposal notification to configured recipient"
       );
     }
+  }
+
+  private canDeliver(record: T): boolean {
+    return record.notificationReady !== false && (this.deliveryEnabled?.(record) ?? true);
   }
 
   private evaluateNotificationPolicy(record: T): NotificationPolicyDecision {

@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
 import {
   filterByPublisherPolicy,
   getPublisherAliases
@@ -62,6 +63,13 @@ export class UnknownProtocolAdapterError extends Error {
   }
 }
 
+export class DisabledProtocolAdapterError extends Error {
+  constructor(readonly protocol: string) {
+    super(`Forum tracking is disabled for protocol: ${protocol}`);
+    this.name = "DisabledProtocolAdapterError";
+  }
+}
+
 export class FetchProtocolGovernanceJob {
   private readonly runningProtocols = new Set<string>();
   private readonly notificationService: NotificationService;
@@ -110,10 +118,11 @@ export class FetchProtocolGovernanceJob {
     if (!adapter) {
       throw new UnknownProtocolAdapterError(protocol);
     }
+    if (!adapter.enabled) throw new DisabledProtocolAdapterError(protocol);
 
     this.runningProtocols.add(protocol);
     const startedAt = new Date().toISOString();
-    const runId = createFetchRunId(protocol, startedAt);
+    const runId = createFetchRunId(protocol, startedAt, randomUUID());
     const run: FetchRun = {
       id: runId,
       protocol,
@@ -159,7 +168,15 @@ export class FetchProtocolGovernanceJob {
           startedAt
         ));
       const baselineSeeding = protocolState.baselineStatus === "seeding";
-      const rawItems = await adapter.fetchRecent();
+      const batch = adapter.fetchRecentWithDiagnostics
+        ? await adapter.fetchRecentWithDiagnostics()
+        : { items: await adapter.fetchRecent(), warnings: [] };
+      const rawItems = batch.items;
+      const coverageComplete = batch.warnings.length === 0;
+      if (!coverageComplete) {
+        run.coverageComplete = false;
+        errors.push(...batch.warnings);
+      }
       fetchedCount = rawItems.length;
       const sourceActivityConfig =
         this.sourceActivityConfig ??
@@ -256,6 +273,7 @@ export class FetchProtocolGovernanceJob {
 
       if (
         baselineSeeding &&
+        coverageComplete &&
         fetchedCount >= sourceActivityConfig.minFetchedCount
       ) {
         await this.protocolStateRepository.markBaselineComplete(
@@ -269,7 +287,9 @@ export class FetchProtocolGovernanceJob {
             fetchedCount,
             minFetchedCount: sourceActivityConfig.minFetchedCount
           },
-          "Protocol baseline remains in seeding mode because the fetch returned too few items"
+          coverageComplete
+            ? "Protocol baseline remains in seeding mode because the fetch returned too few items"
+            : "Protocol baseline remains in seeding mode because source coverage was partial"
         );
       }
 
@@ -392,9 +412,8 @@ function wasPublishedByPreviousSuccessfulRun(
   }
 
   const publishedTimestamp = Date.parse(publishedAt);
-  const previousRunTimestamp = Date.parse(
-    previousSuccessfulRun.finishedAt ?? previousSuccessfulRun.startedAt
-  );
+  // Items published during a poll may not have appeared in its source pages yet.
+  const previousRunTimestamp = Date.parse(previousSuccessfulRun.startedAt);
 
   return (
     Number.isFinite(publishedTimestamp) &&

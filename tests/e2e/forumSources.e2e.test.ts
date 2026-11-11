@@ -30,6 +30,8 @@ describeLive("live Discourse forum sources", () => {
     ENABLE_ADMIN_STATUS_REPORTS: "false",
     UNISWAP_ONCHAIN_ENABLED: "false",
     UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
+    AAVE_ONCHAIN_ENABLED: "false",
+    AAVE_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
     LOG_LEVEL: "silent"
   });
   const lido = new LidoForumClient({

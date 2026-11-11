@@ -40,6 +40,6 @@ export function createProposalId(
   return `${protocol}_${sourceType}_${safeSourceId}_${suffix}`;
 }
 
-export function createFetchRunId(protocol: string, startedAt: string): string {
-  return `fetchRun_${protocol}_${sha256(`${protocol}:${startedAt}`).slice(0, 12)}`;
+export function createFetchRunId(protocol: string, startedAt: string, nonce = ""): string {
+  return `fetchRun_${protocol}_${sha256(`${protocol}:${startedAt}${nonce ? `:${nonce}` : ""}`).slice(0, 12)}`;
 }

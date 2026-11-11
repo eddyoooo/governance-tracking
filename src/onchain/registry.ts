@@ -1,6 +1,8 @@
 import type { Env } from "../config/env.js";
+import type { Logger } from "pino";
 import type { EvmGovernanceAdapter } from "./types.js";
 import { UniswapOnchainGovernanceAdapter } from "./uniswap/uniswapOnchain.adapter.js";
+import { AaveOnchainGovernanceAdapter } from "./aave/aaveOnchain.adapter.js";
 
 export class EvmGovernanceRegistry {
   private readonly adapters: Map<string, EvmGovernanceAdapter>;
@@ -67,12 +69,13 @@ function assertAdapterConfiguration(adapter: EvmGovernanceAdapter): void {
   }
 }
 
-export function createEvmGovernanceRegistry(env: Env): EvmGovernanceRegistry {
+export function createEvmGovernanceRegistry(env: Env, logger?: Pick<Logger, "warn">): EvmGovernanceRegistry {
   const adapters: EvmGovernanceAdapter[] = [];
 
   if (env.uniswapOnchainEnabled) {
     adapters.push(new UniswapOnchainGovernanceAdapter(env));
   }
+  if (env.aaveOnchainEnabled) adapters.push(new AaveOnchainGovernanceAdapter(env, undefined, logger));
 
   return new EvmGovernanceRegistry(adapters);
 }

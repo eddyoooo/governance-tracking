@@ -12,6 +12,28 @@ async function loadRawFixture(name: string): Promise<RawGovernanceItem> {
 }
 
 describe("MemoryProposalRepository", () => {
+  it("inserts a concurrently discovered source identity exactly once", async () => {
+    const repository = new MemoryProposalRepository();
+    const proposal = normalizeLidoForumItem(createRawGovernanceItem());
+    const results = await Promise.all(Array.from({ length: 20 }, () => repository.upsert(proposal)));
+    expect(results.filter((result) => result.created)).toHaveLength(1);
+    await expect(repository.findAll()).resolves.toHaveLength(1);
+  });
+
+  it("does not lose concurrent notification-state updates", async () => {
+    const repository = new MemoryProposalRepository();
+    const { proposal } = await repository.upsert(normalizeLidoForumItem(createRawGovernanceItem()));
+    await Promise.all(Array.from({ length: 20 }, () => repository.updateNotificationState(proposal.id, (current) => ({
+      notificationStatus: "pending", notificationDeliveries: { recipient: {
+        recipientKey: "recipient", recipientMaskedId: "***1111", status: "pending",
+        attemptCount: (current.notificationDeliveries?.recipient.attemptCount ?? 0) + 1,
+        createdAt: current.createdAt, updatedAt: current.updatedAt
+      } }
+    }))));
+    await expect(repository.findById(proposal.id)).resolves.toMatchObject({
+      notificationDeliveries: { recipient: { attemptCount: 20 } }
+    });
+  });
   it("persists and preserves an explicit notification skip reason", async () => {
     const repository = new MemoryProposalRepository();
     const normalized = normalizeLidoForumItem(

@@ -1,7 +1,8 @@
 import type { Logger } from "pino";
-import { collectDiscourseTopicPages } from "../discourse/discoursePagination.js";
+import { collectDiscourseForumTopics } from "../discourse/discoursePagination.js";
 import type {
   GovernanceSource,
+  GovernanceFetchBatch,
   NormalizedGovernanceItem,
   ProtocolAdapter,
   RawGovernanceItem
@@ -52,104 +53,27 @@ export class CowAdapter implements ProtocolAdapter {
   }
 
   async fetchRecent(): Promise<RawGovernanceItem[]> {
+    return (await this.fetchRecentWithDiagnostics()).items;
+  }
+
+  async fetchRecentWithDiagnostics(): Promise<GovernanceFetchBatch> {
     if (!this.enabled) {
-      this.logger?.info(
-        { protocol: this.protocol },
-        "Skipping disabled protocol adapter"
-      );
-      return [];
+      this.logger?.info({ protocol: this.protocol }, "Skipping disabled protocol adapter");
+      return { items: [], warnings: [] };
     }
 
-    const fetchedAt = new Date().toISOString();
-    const itemsBySourceId = new Map<string, RawGovernanceItem>();
-    const feedFailures: Array<{ feed: string; error: unknown }> = [];
-    let successfulFeedCount = 0;
-
-    try {
-      await collectDiscourseTopicPages({
-        protocol: this.protocol,
-        sourceType: this.source.type,
-        fetchedAt,
-        itemsBySourceId,
-        maxPages: this.maxPages,
-        fetchPage: (page) => this.client.fetchRecentTopicPage({ page }),
-        logger: this.logger,
-        paginationLimitMessage:
-          "Reached CoW global latest pagination limit before exhausting pages",
-        laterPageFailureMessage:
-          "Stopped CoW global latest pagination after a later page failed"
-      });
-      successfulFeedCount += 1;
-    } catch (error) {
-      feedFailures.push({ feed: "global latest", error });
-    }
-
-    let categories: Awaited<ReturnType<CowForumClient["fetchCategories"]>> = [];
-
-    try {
-      categories = await this.client.fetchCategories();
-    } catch (error) {
-      feedFailures.push({ feed: "category discovery", error });
-    }
-
-    for (const category of categories) {
-      try {
-        await collectDiscourseTopicPages({
-          protocol: this.protocol,
-          sourceType: this.source.type,
-          fetchedAt,
-          itemsBySourceId,
-          maxPages: this.categoryMaxPages,
-          fetchPage: (page) =>
-            this.client.fetchCategoryTopicPage(category, { page }),
-          logger: this.logger,
-          logContext: {
-            categoryId: category.id,
-            categoryName: category.name,
-            categoryPath: category.path
-          },
-          paginationLimitMessage:
-            "Reached CoW category pagination limit before exhausting pages",
-          laterPageFailureMessage:
-            "Stopped CoW category pagination after a later page failed"
-        });
-        successfulFeedCount += 1;
-      } catch (error) {
-        feedFailures.push({
-          feed: `category ${category.id} (${category.name})`,
-          error
-        });
-      }
-    }
-
-    if (successfulFeedCount === 0) {
-      throw new Error(
-        `CoW forum fetch failed because no governance feed could be read: ${feedFailures
-          .map(({ feed, error }) => `${feed}: ${errorMessage(error)}`)
-          .join("; ")}`
-      );
-    }
-
-    if (feedFailures.length > 0) {
-      this.logger?.warn(
-        {
-          protocol: this.protocol,
-          failedFeedCount: feedFailures.length,
-          successfulFeedCount,
-          failures: feedFailures
-        },
-        "CoW forum fetch completed with partial feed failures"
-      );
-    }
-
-    return [...itemsBySourceId.values()];
+    return collectDiscourseForumTopics({
+      protocol: this.protocol,
+      label: "CoW",
+      sourceType: this.source.type,
+      maxPages: this.maxPages,
+      categoryMaxPages: this.categoryMaxPages,
+      client: this.client,
+      logger: this.logger
+    });
   }
 
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem {
     return normalizeCowForumItem(item);
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

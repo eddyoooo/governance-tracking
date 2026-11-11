@@ -32,6 +32,8 @@ describeLive("Uniswap on-chain full historical replay E2E", () => {
         ENABLE_ADMIN_STATUS_REPORTS: "false",
         UNISWAP_ONCHAIN_ENABLED: "true",
         UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
+        AAVE_ONCHAIN_ENABLED: "false",
+        AAVE_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
         LOG_LEVEL: "silent"
       });
       if (!env.ethereumRpcUrl) {

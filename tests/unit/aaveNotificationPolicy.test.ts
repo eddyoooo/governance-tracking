@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON,
   AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
   aaveRoutineCapNotificationPolicy,
   isRoutineAaveRiskStewardsCapChange
@@ -36,6 +37,20 @@ describe("Aave routine cap notification policy", () => {
     expect(aaveRoutineCapNotificationPolicy.evaluate(input(title))).toEqual({
       action: "suppress",
       reason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON
+    });
+  });
+
+  it.each([
+    "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.06",
+    "Risk Stewards: Cap and IRM Changes on Aave V3 / 2026.10.29",
+    "Risk Stewards: Cap Reductions and USDT IRM Change on Aave V3 / 2026.10.19",
+    "Risk Stewards: Supply and Borrow Cap and IRM Changes on Aave V3 / 2026.11.06",
+    "Risk Stewards: Borrow Cap Reductions and USDT IRM Changes on Aave V3 / 2026.11.06"
+  ])("suppresses a recognized cap-and-IRM title: %s", (title) => {
+    expect(isRoutineAaveRiskStewardsCapChange(input(title))).toBe(true);
+    expect(aaveRoutineCapNotificationPolicy.evaluate(input(title))).toEqual({
+      action: "suppress",
+      reason: AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON
     });
   });
 
@@ -81,8 +96,10 @@ describe("Aave routine cap notification policy", () => {
   });
 
   it.each([
-    "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.03",
-    "Risk Stewards: Cap Reductions and USDT IRM Change on Aave V3 / 2026.10.27",
+    "Risk Stewards: IRM Changes on Aave V4 / 2026.11.03",
+    "Risk Stewards: Stablecoin IRM Changes on Aave V3 / 2026.09.02",
+    "Risk Stewards: Cap and IRM and Oracle Changes on Aave V4 / 2026.11.03",
+    "Risk Stewards: Cap Reductions and USDT IRM and Oracle Changes on Aave V3 / 2026.10.27",
     "Risk Stewards: PT Parameter Changes on Aave V3 / 2026.08.15",
     "Risk Stewards: Temporary Slope2 Reductions on Aave V3 / 2026.08.07",
     "Risk Stewards: JAAA Reserve Parameter Update on Aave V3 / 2026.07.20",
@@ -103,6 +120,44 @@ describe("Aave routine cap notification policy", () => {
       action: "notify"
     });
   });
+
+  it.each([
+    "Oracle and",
+    "Slope2 and",
+    "PT and",
+    "Oracle plus",
+    "Emergency",
+    "Incident Response",
+    "Unrecognized Asset"
+  ])("does not consume additional operations as an IRM qualifier: %s", (qualifier) => {
+    for (const operation of ["Cap and", "Cap Reductions and"]) {
+      const title = `Risk Stewards: ${operation} ${qualifier} IRM Changes on Aave V4 / 2026.11.06`;
+
+      expect(aaveRoutineCapNotificationPolicy.evaluate(input(title))).toEqual({
+        action: "notify"
+      });
+    }
+  });
+
+  it.each(["Cap and IRM Changes", "Cap Reductions and USDT IRM Change"])(
+    "preserves the publisher and protocol boundary for %s",
+    (operation) => {
+      const title = `Risk Stewards: ${operation} on Aave V4 / 2026.11.06`;
+
+      for (const overrides of [
+        { publisherName: "TokenLogic" },
+        { publisherName: "LlamaRis" },
+        { protocol: "lido" },
+        { protocol: "uniswap" },
+        { protocol: "cow" },
+        { sourceType: "onchain" }
+      ]) {
+        expect(aaveRoutineCapNotificationPolicy.evaluate(input(title, overrides))).toEqual({
+          action: "notify"
+        });
+      }
+    }
+  );
 
   it.each([
     { protocol: "lido" },

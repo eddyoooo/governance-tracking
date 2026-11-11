@@ -121,6 +121,29 @@ describe("monitor API", () => {
     });
   });
 
+  it.each(["lido", "aave", "uniswap", "cow"])("rejects disabled %s manual fetches without changing tracking state", async (protocol) => {
+    const { app, context } = createApp({ env: testEnv({ [`${protocol.toUpperCase()}_ENABLED`]: "false" }) });
+    const response = await request(app).post(`/api/admin/fetch/${protocol}`).expect(409);
+    expect(response.body.error).toBe(`Forum tracking is disabled for protocol: ${protocol}`);
+    await expect(context.fetchRunRepository.findAll()).resolves.toEqual([]);
+    await expect(context.sourceActivityRepository.findAll()).resolves.toEqual([]);
+    await expect(context.protocolStateRepository.findByProtocol(protocol)).resolves.toBeNull();
+  });
+
+  it("does not overwrite sequential audit runs that start within the same millisecond", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-11-10T08:00:00.000Z"));
+    try {
+      const { context } = createApp({ env: testEnv() });
+      const first = await context.fetchJob.run("lido");
+      const second = await context.fetchJob.run("lido");
+      expect(first.startedAt).toBe(second.startedAt);
+      expect(first.run.id).not.toBe(second.run.id);
+      await expect(context.fetchRunRepository.findAll()).resolves.toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("does not expose the Express x-powered-by header", async () => {
     const { app } = createApp({ env: testEnv() });
 

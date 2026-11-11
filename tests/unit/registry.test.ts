@@ -218,9 +218,15 @@ describe("ProtocolRegistry", () => {
     ]);
     const aaveItems = await aave?.fetchRecent();
 
-    expect(aaveItems).toHaveLength(6);
+    expect(aaveItems).toHaveLength(7);
     expect(aaveItems).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          protocol: "aave",
+          sourceType: "forum",
+          sourceId: "26073",
+          publisherName: "LlamaRisk"
+        }),
         expect.objectContaining({
           protocol: "aave",
           sourceType: "forum",

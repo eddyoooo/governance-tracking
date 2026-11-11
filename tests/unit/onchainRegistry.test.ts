@@ -1,15 +1,50 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
+import { encodeFunctionResult } from "viem";
+import { AAVE_GOVERNANCE_ABI } from "../../src/onchain/aave/aaveGovernance.abi.js";
+import { aaveRawProposal } from "../helpers/aaveBuilders.js";
 import {
   createEvmGovernanceRegistry,
   EvmGovernanceRegistry
 } from "../../src/onchain/registry.js";
-import { testEnv } from "../helpers/builders.js";
+import { createSilentLogger, testEnv } from "../helpers/builders.js";
 import {
   createFakeEvmGovernanceAdapter,
   TEST_GOVERNOR_ADDRESS
 } from "../helpers/onchainBuilders.js";
 
 describe("EvmGovernanceRegistry", () => {
+  it("wires production metadata failures to the application logger without disrupting tracking", async () => {
+    const logger = createSilentLogger();
+    const encoded = encodeFunctionResult({ abi: AAVE_GOVERNANCE_ABI, functionName: "getProposal",
+      result: { ...aaveRawProposal(), cancellationFee: 0n } as never });
+    const spy = jest.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
+      if (String(url).startsWith("https://rpc.example.invalid")) {
+        const request = JSON.parse(options!.body as string);
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: encoded }),
+          { headers: { "content-type": "application/json" } });
+      }
+      throw new Error("Mock metadata gateway unavailable");
+    });
+    try {
+      const registry = createEvmGovernanceRegistry(testEnv({
+        AAVE_ONCHAIN_ENABLED: "true", ETHEREUM_RPC_URL: "https://rpc.example.invalid"
+      }), logger);
+      await expect(registry.get("aave")!.getDecision("0", [], null, 18_119_325))
+        .resolves.toMatchObject({ protocol: "aave", title: "Aave governance proposal #0" });
+      expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ proposalId: "0" }),
+        "Aave metadata unavailable; retaining on-chain identity and proposal link");
+    } finally { spy.mockRestore(); }
+  });
+  it("registers Aave independently or alongside Uniswap without sharing identities", () => {
+    const env = testEnv({ ETHEREUM_RPC_URL: "https://example.invalid/rpc", AAVE_ONCHAIN_ENABLED: "true" });
+    const aave = createEvmGovernanceRegistry(env).get(" AAVE ");
+    expect(aave).toMatchObject({ protocol: "aave", chainId: 1,
+      contractAddress: "0x9AEE0B04504CeF83A65AC3f0e838D0593BCb2BC7",
+      deploymentBlock: 18_119_225, proposalIdScheme: "zero-based-count", enabled: true });
+    const both = createEvmGovernanceRegistry({ ...env, uniswapOnchainEnabled: true });
+    expect(both.list()).toHaveLength(2);
+    expect(both.get("aave")?.sourceKey).not.toBe(both.get("uniswap")?.sourceKey);
+  });
   it("normalizes protocol lookup", () => {
     const first = createFakeEvmGovernanceAdapter().adapter;
     const registry = new EvmGovernanceRegistry([first]);

@@ -11,6 +11,7 @@ import type {
 import { TelegramNotificationService } from "../../src/notifications/index.js";
 import { ProtocolRegistry } from "../../src/protocols/registry.js";
 import {
+  AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON,
   AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
   aaveRoutineCapNotificationPolicy
 } from "../../src/protocols/aave/aaveNotificationPolicy.js";
@@ -396,6 +397,20 @@ describe("FetchProtocolGovernanceJob", () => {
       expectedStatus: "sent",
       expectedSeededCount: 0,
       expectedSentCount: 1
+    },
+    {
+      label: "silently stores items published exactly at the previous poll start",
+      publishedAt: "2026-07-23T07:55:00.000Z",
+      expectedStatus: "skipped",
+      expectedSeededCount: 1,
+      expectedSentCount: 0
+    },
+    {
+      label: "notifies unseen items published exactly at the previous poll finish",
+      publishedAt: "2026-07-23T08:00:00.000Z",
+      expectedStatus: "sent",
+      expectedSeededCount: 0,
+      expectedSentCount: 1
     }
   ])(
     "$label",
@@ -459,6 +474,59 @@ describe("FetchProtocolGovernanceJob", () => {
       });
       expect(stored?.notificationStatus).toBe(expectedStatus);
       expect(notificationService.messages).toHaveLength(expectedSentCount);
+    }
+  );
+
+  it.each(["lido", "aave", "uniswap", "cow"])(
+    "notifies %s topics published during the previous poll but first visible on the next poll",
+    async (protocol) => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-11-09T08:00:00.000Z"));
+      const baselineItem = createRawGovernanceItem({
+        protocol,
+        sourceId: "old-topic",
+        publishedAt: "2026-11-08T08:00:00.000Z"
+      });
+      const newItem = createRawGovernanceItem({
+        protocol,
+        sourceId: "new-topic",
+        publishedAt: "2026-11-09T08:00:05.000Z"
+      });
+      const fetchRecent = jest
+        .fn<() => Promise<RawGovernanceItem[]>>()
+        .mockImplementationOnce(async () => {
+          jest.setSystemTime(new Date("2026-11-09T08:00:10.000Z"));
+          return [baselineItem];
+        })
+        .mockResolvedValue([baselineItem, newItem]);
+      const notificationService = new RecordingNotificationService();
+      const { job, proposalRepository } = createJob(
+        createFakeProtocolAdapter({ protocol, fetchRecent }),
+        new MemoryProposalRepository(),
+        new RecordingFetchRunRepository(),
+        notificationService
+      );
+
+      await expect(job.run(protocol)).resolves.toMatchObject({
+        baselineSeededCount: 1,
+        notificationSentCount: 0
+      });
+      jest.setSystemTime(new Date("2026-11-09T09:00:00.000Z"));
+      await expect(job.run(protocol)).resolves.toMatchObject({
+        storedNewCount: 1,
+        unchangedExistingCount: 1,
+        baselineSeededCount: 0,
+        notificationSentCount: 1
+      });
+      await expect(job.run(protocol)).resolves.toMatchObject({
+        storedNewCount: 0,
+        notificationSentCount: 0,
+        unchangedExistingCount: 2
+      });
+      expect(notificationService.messages).toHaveLength(1);
+      await expect(proposalRepository.findBySourceIdentity(
+        protocol, "forum", "new-topic"
+      )).resolves.toMatchObject({ notificationStatus: "sent" });
     }
   );
 
@@ -995,7 +1063,7 @@ describe("FetchProtocolGovernanceJob", () => {
     });
   });
 
-  it("stores routine Aave cap changes without notifying while preserving mixed LlamaRisk alerts", async () => {
+  it("stores routine Aave cap and cap-plus-IRM changes without notifying while preserving other LlamaRisk alerts", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-11-02T08:00:00.000Z"));
     const baselineItem = createRawGovernanceItem({
@@ -1018,10 +1086,17 @@ describe("FetchProtocolGovernanceJob", () => {
     });
     const mixedCapAndIrmItem = createRawGovernanceItem({
       protocol: "aave",
-      sourceId: "25988",
+      sourceId: "26073",
       publisherName: "LlamaRisk",
-      title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.03",
-      publishedAt: "2026-11-03T11:00:00.000Z"
+      title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.06",
+      publishedAt: "2026-11-06T11:00:00.000Z"
+    });
+    const ptParameterItem = createRawGovernanceItem({
+      protocol: "aave",
+      sourceId: "25491",
+      publisherName: "LlamaRisk",
+      title: "Risk Stewards: PT Parameter Changes on Aave V3 / 2026.08.15",
+      publishedAt: "2026-11-06T12:00:00.000Z"
     });
     let items = [baselineItem];
     const notificationService = new RecordingNotificationService();
@@ -1038,27 +1113,27 @@ describe("FetchProtocolGovernanceJob", () => {
     );
 
     await job.run("aave");
-    items = [baselineItem, routineCapItem, mixedCapAndIrmItem];
-    jest.setSystemTime(new Date("2026-11-04T08:00:00.000Z"));
+    items = [baselineItem, routineCapItem, mixedCapAndIrmItem, ptParameterItem];
+    jest.setSystemTime(new Date("2026-11-07T08:00:00.000Z"));
     const discovery = await job.run("aave");
     const duplicate = await job.run("aave");
 
     expect(discovery).toMatchObject({
-      fetchedCount: 3,
-      allowlistedCount: 3,
-      storedNewCount: 2,
-      notificationSuppressedCount: 1,
+      fetchedCount: 4,
+      allowlistedCount: 4,
+      storedNewCount: 3,
+      notificationSuppressedCount: 2,
       notificationSentCount: 1,
       notificationFailedCount: 0
     });
     expect(duplicate).toMatchObject({
       storedNewCount: 0,
-      unchangedExistingCount: 3,
+      unchangedExistingCount: 4,
       notificationSuppressedCount: 0,
       notificationSentCount: 0
     });
     expect(notificationService.messages.map((message) => message.title)).toEqual([
-      mixedCapAndIrmItem.title
+      ptParameterItem.title
     ]);
     await expect(
       proposalRepository.findBySourceIdentity("aave", "forum", "25987")
@@ -1069,19 +1144,29 @@ describe("FetchProtocolGovernanceJob", () => {
     const mixedStored = await proposalRepository.findBySourceIdentity(
       "aave",
       "forum",
-      "25988"
+      "26073"
     );
-    expect(mixedStored).toMatchObject({ notificationStatus: "sent" });
-    expect(mixedStored).not.toHaveProperty("notificationSkipReason");
+    expect(mixedStored).toMatchObject({
+      notificationStatus: "skipped",
+      notificationSkipReason:
+        AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON
+    });
+    const ptStored = await proposalRepository.findBySourceIdentity(
+      "aave",
+      "forum",
+      "25491"
+    );
+    expect(ptStored).toMatchObject({ notificationStatus: "sent" });
+    expect(ptStored).not.toHaveProperty("notificationSkipReason");
     expect(fetchRunRepository.upserts.at(-1)).toMatchObject({
       notificationSuppressedCount: 0
     });
     expect(fetchRunRepository.upserts.at(-3)).toMatchObject({
-      notificationSuppressedCount: 1
+      notificationSuppressedCount: 2
     });
   });
 
-  it("sends a routine Aave cap alert when the suppression policy is disabled", async () => {
+  it("sends a routine Aave cap-plus-IRM alert when the suppression policy is disabled", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-11-02T08:00:00.000Z"));
     const baselineItem = createRawGovernanceItem({
@@ -1093,11 +1178,10 @@ describe("FetchProtocolGovernanceJob", () => {
     });
     const routineCapItem = createRawGovernanceItem({
       protocol: "aave",
-      sourceId: "25987",
+      sourceId: "26073",
       publisherName: "LlamaRisk",
-      title:
-        "Risk Stewards: Supply and Borrow Cap Changes on Aave V3 / 2026.11.03",
-      publishedAt: "2026-11-03T10:00:00.000Z"
+      title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.06",
+      publishedAt: "2026-11-06T10:00:00.000Z"
     });
     let items = [baselineItem];
     const notificationService = new RecordingNotificationService();
@@ -1114,7 +1198,7 @@ describe("FetchProtocolGovernanceJob", () => {
 
     await job.run("aave");
     items = [baselineItem, routineCapItem];
-    jest.setSystemTime(new Date("2026-11-04T08:00:00.000Z"));
+    jest.setSystemTime(new Date("2026-11-07T08:00:00.000Z"));
     const result = await job.run("aave");
 
     expect(result).toMatchObject({

@@ -34,15 +34,19 @@ export function sourceActivityConfigFromEnv(env: Env): SourceActivityConfig {
 export function findNewestRawGovernanceItem(
   rawItems: RawGovernanceItem[]
 ): RawGovernanceItem | null {
-  const itemsWithValidPublishedAt = rawItems.filter((item) =>
-    Number.isFinite(Date.parse(item.publishedAt))
-  );
+  let newest: RawGovernanceItem | null = null;
+  let newestTimestamp = -Infinity;
 
-  return (
-    itemsWithValidPublishedAt.sort(
-      (left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt)
-    )[0] ?? null
-  );
+  for (const item of rawItems) {
+    const timestamp = Date.parse(item.publishedAt);
+
+    if (timestamp > newestTimestamp) {
+      newest = item;
+      newestTimestamp = timestamp;
+    }
+  }
+
+  return newest;
 }
 
 export async function updateSourceActivity(

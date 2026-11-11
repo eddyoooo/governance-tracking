@@ -31,6 +31,7 @@ export interface GovernanceDecisionUpsertResult {
   created: boolean;
   updated: boolean;
   lifecycleEventsCreated: GovernanceLifecycleEvent[];
+  lifecycleEventsUpdated?: GovernanceLifecycleEvent[];
 }
 
 export interface GovernanceRepository {
@@ -142,7 +143,8 @@ export class MemoryGovernanceRepository implements GovernanceRepository {
     return {
       ...result,
       decision: clone(result.decision),
-      lifecycleEventsCreated: lifecycleEventsCreated.map(clone)
+      lifecycleEventsCreated: lifecycleEventsCreated.map(clone),
+      ...(result.decision.aave ? { lifecycleEventsUpdated: lifecycleEventUpdates.map(clone) } : {})
     };
   }
 
@@ -313,6 +315,7 @@ export class FirestoreGovernanceRepository implements GovernanceRepository {
         )
       );
       const lifecycleEventsCreated: GovernanceLifecycleEvent[] = [];
+      const lifecycleEventsUpdated: GovernanceLifecycleEvent[] = [];
 
       if (result.updated) {
         transaction.set(decisionRef, result.decision);
@@ -336,10 +339,12 @@ export class FirestoreGovernanceRepository implements GovernanceRepository {
         );
         if (merged.updated) {
           transaction.set(this.lifecycleEvents.doc(event.id), merged.event);
+          lifecycleEventsUpdated.push(merged.event);
         }
       }
 
-      return { ...result, lifecycleEventsCreated };
+      return { ...result, lifecycleEventsCreated,
+        ...(result.decision.aave ? { lifecycleEventsUpdated } : {}) };
     });
   }
 
@@ -494,10 +499,23 @@ function buildLifecycleEvent(
     transactionHash: transactionHashForTransition(decision, transition),
     message: buildGovernanceLifecycleMessage(decision, transition),
     notificationStatus,
+    ...(decision.aave ? { notificationReady: aaveLifecycleReady(decision, transition) } : {}),
     firstSeenAt: now,
     createdAt: now,
     updatedAt: now
   };
+}
+
+function aaveLifecycleReady(decision: StoredGovernanceDecision, transition: GovernanceTransitionType): boolean {
+  switch (transition) {
+    case "created": return Boolean(decision.createdTransactionHash);
+    case "succeeded":
+    case "defeated": return Boolean(decision.aave?.resultTransactionHash);
+    case "queued": return Boolean(decision.queuedTransactionHash);
+    case "executed": return Boolean(decision.executedTransactionHash);
+    case "canceled": return Boolean(decision.canceledTransactionHash);
+    case "expired": return true;
+  }
 }
 
 function impliedLifecycleEvents(
@@ -536,7 +554,8 @@ function blockNumberForTransition(
       return decision.executedBlockNumber ?? decision.lastObservedBlockNumber;
     case "succeeded":
     case "defeated":
-      return decision.endBlock + 1;
+      return decision.aave?.resultBlockNumber ?? (decision.endBlock !== undefined
+        ? decision.endBlock + 1 : decision.lastObservedBlockNumber);
     case "expired":
       return decision.lastObservedBlockNumber;
   }
@@ -557,6 +576,7 @@ function transactionHashForTransition(
       return decision.executedTransactionHash;
     case "succeeded":
     case "defeated":
+      return decision.aave?.resultTransactionHash ?? null;
     case "expired":
       return null;
   }
@@ -596,7 +616,7 @@ function mergeLifecycleEventMetadata(
   const updated =
     transactionHash !== existing.transactionHash ||
     blockNumber !== existing.blockNumber ||
-    messageChanged;
+    messageChanged || candidate.notificationReady !== existing.notificationReady;
 
   if (!updated) {
     return { event: existing, updated: false };
@@ -608,6 +628,7 @@ function mergeLifecycleEventMetadata(
       blockNumber,
       transactionHash,
       message: candidate.message,
+      ...(candidate.notificationReady !== undefined ? { notificationReady: candidate.notificationReady } : {}),
       updatedAt: now
     },
     updated: true
@@ -650,6 +671,7 @@ function assertSourceIdentity(
     previous.chainId !== current.chainId ||
     previous.contractAddress !== current.contractAddress ||
     previous.deploymentBlock !== current.deploymentBlock ||
+    previous.proposalIdScheme !== current.proposalIdScheme ||
     ((previous as Partial<GovernanceSourceState>).initialProposalId !==
       undefined &&
       previous.initialProposalId !== current.initialProposalId)

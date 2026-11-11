@@ -1,6 +1,6 @@
 # Platform Manual
 
-Quick operator guide for the governance monitor. It tracks trusted Lido, Aave, Uniswap, and CoW forum topics plus Uniswap Governor Bravo proposal lifecycles on Ethereum mainnet, stores structured state, sends direct Telegram alerts, retries failed recipients, and reports health to the Telegram admin. Forum trust is based on protocol publisher-name allowlists; Lido additionally accepts original posters with Discourse Leader level (`trust_level=4`).
+Quick operator guide for the governance monitor. It tracks trusted Lido, Aave, Uniswap, and CoW forum topics, plus Uniswap Governor Bravo and Aave Governance V3 lifecycles on Ethereum mainnet. It stores structured state, sends direct Telegram alerts, retries failed recipients, and reports health to the Telegram admin. Forum trust is based on publisher-name allowlists; Lido also accepts original posters with Leader level (`trust_level=4`). Aave core forwarding is not destination-chain execution confirmation.
 
 Detailed architecture and configuration are in [README.md](./README.md).
 
@@ -18,7 +18,10 @@ Run before every production deployment:
 npm install
 npm run check
 npm run audit:prod
-ENABLE_TELEGRAM_NOTIFICATIONS=false DEMO_STEP_DELAY_MS=0 npm run demo
+ENABLE_TELEGRAM_NOTIFICATIONS=false \
+UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=false \
+AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=false \
+DEMO_STEP_DELAY_MS=0 npm run demo
 docker build --load -t governance-tracker-bot .
 ```
 
@@ -29,7 +32,7 @@ Expected:
 - Coverage remains above the enforced global thresholds.
 - The production dependency set reports no known npm vulnerabilities.
 - The live Telegram E2E test remains skipped unless explicitly requested.
-- The credential-free demo completes for all four forums and the Uniswap on-chain lifecycle.
+- The credential-free demo completes for all four forums and both Uniswap and Aave on-chain lifecycles.
 - The production Docker image builds.
 
 ## Local Start
@@ -47,6 +50,8 @@ ENABLE_TELEGRAM_NOTIFICATIONS=false
 ENABLE_ADMIN_STATUS_REPORTS=false
 UNISWAP_ONCHAIN_ENABLED=false
 UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=false
+AAVE_ONCHAIN_ENABLED=false
+AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=false
 LOG_LEVEL=info
 ```
 
@@ -61,12 +66,14 @@ ENABLE_TELEGRAM_NOTIFICATIONS=false \
 ENABLE_ADMIN_STATUS_REPORTS=false \
 UNISWAP_ONCHAIN_ENABLED=false \
 UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED=false \
+AAVE_ONCHAIN_ENABLED=false \
+AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=false \
 API_AUTH_ENABLED=false \
 npm run dev
 ```
 
 Memory-mode data exists only inside this process and disappears on restart.
-All four forum adapters, including CoW, are enabled by default. Set a protocol's `*_ENABLED=false` only when intentionally pausing that source. Enablement controls polling; only topics matching that protocol's publisher eligibility policy are stored. Lido also accepts Leader-level original authors. Aave can store routine LlamaRisk cap-only topics without notifying, as described below.
+All four forum adapters, including CoW, are enabled by default. Set a protocol's `*_ENABLED=false` only when intentionally pausing that source. Enablement controls polling; only topics matching that protocol's publisher eligibility policy are stored. Lido also accepts Leader-level original authors. Aave can store routine LlamaRisk cap-only and cap-plus-IRM topics without notifying, as described below.
 
 ## Terminal Demo
 
@@ -88,7 +95,7 @@ The demo uses locally saved real forum samples and memory storage. It shows:
 - Protocol-specific publisher allowlists.
 - Non-allowlisted topics being skipped.
 - New allowlisted proposals being normalized and stored.
-- Routine LlamaRisk cap-only topics being stored with Telegram suppressed.
+- Routine LlamaRisk cap-only and cap-plus-IRM topics being stored with Telegram suppressed.
 - Duplicate topics not creating duplicate records.
 - Unchanged topics not causing Firestore-style write churn.
 - Fetch-run audit records.
@@ -145,6 +152,7 @@ curl -s -X POST "$API/api/admin/fetch/cow"
 ```
 
 Each call runs the same pipeline as the scheduler. Production mode calls the live forum; memory/demo mode uses local samples.
+Disabled forum sources return `409` without changing baseline, fetch-run, or activity state.
 
 Important result fields:
 
@@ -158,13 +166,14 @@ Important result fields:
 - `notificationSentCount`: newly discovered proposals delivered during this fetch.
 - `notificationFailedCount`: newly discovered proposals with at least one initial recipient failure.
 - `notificationSuppressedCount`: newly stored eligible proposals intentionally silenced by a protocol notification policy.
-- `errors`: non-fatal notification errors, or the persisted failure reason for a failed run.
+- `errors`: partial-feed warnings, notification errors, or a failed run's reason.
+- `run.coverageComplete=false`: a feed/page failed; usable topics were retained, but the initial baseline and historical cutoff do not advance. The next fully covered run clears the admin warning.
 
-For Aave, `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true` stores but does not notify narrowly recognized dated LlamaRisk `Risk Stewards` cap-only changes. Expect `notificationStatus=skipped`, `notificationSkipReason=aave_risk_stewards_routine_cap_change`, and an incremented `notificationSuppressedCount`. `skippedCount` is different: it counts non-eligible publishers that were not stored. Mixed cap/IRM, PT parameter, oracle, incident, assessment, unknown-title, and non-LlamaRisk posts remain alertable. Set the flag to `false` to restore notifications for future newly discovered matching posts; already skipped records are not replayed.
+For Aave, `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true` stores but does not notify narrowly recognized dated LlamaRisk `Risk Stewards` cap-only or cap-plus-IRM changes (`IRM` or the observed `USDT IRM` variant). Expect `notificationStatus=skipped`, a cap-specific `notificationSkipReason`, and an incremented `notificationSuppressedCount`. `skippedCount` is different: it counts non-eligible publishers that were not stored. IRM-only, PT parameter, Slope2, oracle, incident, assessment, unfamiliar-title, and non-LlamaRisk posts remain alertable. Set the flag to `false` to restore notifications for future newly discovered matching posts; already skipped records are not replayed.
 
-On an empty database, the first successful fetch for each protocol that meets `SOURCE_ACTIVITY_MIN_FETCHED_COUNT` establishes a silent baseline. Historical allowlisted proposals are stored with notifications skipped. An empty or interrupted first fetch remains in seeding mode; later discoveries notify only after a valid baseline completes.
+On an empty database, the first fully covered fetch that meets `SOURCE_ACTIVITY_MIN_FETCHED_COUNT` establishes a silent baseline. Historical eligible proposals are stored with notifications skipped. Empty, interrupted, or partial first fetches remain in seeding mode.
 
-When a publisher is added to an established allowlist, any of that publisher's topics dated at or before the previous successful protocol poll are stored silently instead of producing historical alerts. Topics newer than the previous successful poll notify normally.
+When a publisher is added to an established allowlist, topics dated at or before the last fully successful poll's start are stored silently. Newer unseen topics notify, including topics recovered after a partial-feed failure. Page caps still limit discovery after long outages or heavy traffic; inspect pagination telemetry before reducing polling frequency.
 
 For Lido, only the topic's original poster can qualify through the Leader exemption. A Leader reply or last commenter does not affect filtering. The category JSON supplies the original author's trust level, so the normal fetch does not make one additional request per topic.
 
@@ -249,7 +258,8 @@ The report shows:
 - Current exact pending and failed proposal counts.
 - Masked failed recipient IDs, attempts, next retry time, and last error.
 - Raw source freshness and silent-migration warnings.
-- Uniswap on-chain baseline progress, cursor/finalized head, source health, latest scan, and unresolved lifecycle deliveries.
+- Uniswap/Aave on-chain baseline progress, cursor/finalized head, source health, latest scan, and unresolved lifecycle deliveries, shown before verbose forum diagnostics.
+- Partial forum coverage, invalid/future scan timestamps, and unresolved lifecycle counts even if all on-chain sources are paused.
 - Enabled protocols with an empty publisher allowlist.
 - Storage and scheduler mode.
 
@@ -270,9 +280,12 @@ Retry delays are:
 
 Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. If an unresolved Aave proposal now matches the routine-cap policy, recovery closes its unsent recipients as skipped without contacting Telegram. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` also marks that delivery skipped and allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
 
+For Uniswap or Aave on-chain alerts, either `*_ONCHAIN_ENABLED=false` or `*_ONCHAIN_NOTIFICATIONS_ENABLED=false` pauses queued deliveries too. Re-enable both flags to resume due unresolved recipients; successful recipients are preserved. Paused pending/failed records remain in admin counts. Events whose source identity is no longer registered stay paused for operator review.
+
 The monitor accepts delivery only after Telegram returns valid JSON with `ok: true`. A misleading HTTP `2xx` proxy page, malformed response, empty response, or Telegram `ok: false` response stays unresolved and is retried automatically.
 
 The daily admin report continues to say `ATTENTION REQUIRED` while unresolved state remains.
+Recovery handles up to 100 eligible records per dispatcher per cycle, rotating batches and isolating individual record failures. More than 1,000 paused or not-yet-due records cannot hide newer due alerts.
 
 ## API Auth
 
@@ -330,7 +343,7 @@ Real Telegram E2E:
 npm run test:e2e:telegram
 ```
 
-Expected: forum samples and one real Uniswap vote-result sample are inserted into memory repositories, delivered to the admin only, and verified as `sent`.
+Expected: forum samples and real Uniswap/Aave vote-result samples are inserted into memory repositories, delivered to the admin only, and verified as `sent`.
 
 Read-only live forum E2E:
 
@@ -358,6 +371,35 @@ Expected: every Governor Bravo proposal is replayed into memory without ID gaps 
 
 `npm test` and `npm run check` never call the live RPC or send live Telegram messages.
 
+## Aave On-chain Operations
+
+Both on-chain scanners cross-check tracked logs against finalized RPC block headers before writes or alerts. A mismatch preserves the last safe checkpoint and appears in the admin report. Aave also cross-checks activation snapshots and settlement timestamps against contract state, and rejects conflicting duplicate stages. IPFS lookup failures do not stop tracking.
+
+Set `AAVE_ONCHAIN_ENABLED=true`, reusing `ETHEREUM_RPC_URL`. Both Aave on-chain flags are initially `false` in `.env`; forum tracking is independent and unchanged.
+
+```bash
+curl -s -X POST "$API/api/admin/fetch-onchain/aave"
+curl -s "$API/api/admin/onchain-source-status"
+curl -s "$API/api/admin/governance-votes?protocol=aave&limit=100"
+```
+
+Use the authentication header shown above when API auth is enabled. Keep Aave alerts off during this initial deployment. The POST writes the silent baseline, including proposal `0`, with resumable checkpoints. Wait for `baselineStatus=complete` and `healthStatus=healthy`. The GETs only read stored data.
+
+Then set `AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=true` (and `ENABLE_TELEGRAM_NOTIFICATIONS=true`) and recreate the container to alert on new events. With runtime `-e` deployment, pass both Aave flags explicitly. Aave uses the existing six-hour on-chain schedule and appears in the same daily admin status report.
+
+Aave result notifications report settled For/Against totals and percentages in AAVE voting power, plus the Ethereum **Result settled** date. Remote live voting totals and exact remote voting-end dates are not collected. **GOVERNANCE PROPOSAL FORWARDED** means the Ethereum core dispatched payloads, not that all destination-chain actions executed. The database retains payload identities and native timestamps. IPFS metadata failure falls back to the proposal ID/link rather than blocking monitoring.
+
+Read-only verification with the configured Ethereum RPC:
+
+```bash
+npm run test:e2e:aave-onchain       # Quick check of real proposal 0
+npm run test:e2e:aave-onchain:full  # Full baseline and repeat scan, many RPC reads
+```
+
+Both tests use no Firestore writes or Telegram sends. The full replay uses memory storage, checks every native ID and settled result at a fixed finalized head, and may take several minutes.
+
+The credential-free preflight demo command above includes the real saved Aave lifecycle and verifies silent seeding, discovery, settled results, forwarding, and duplicate suppression. It exits unsuccessfully if an on-chain scan fails. Enabling Telegram in the demo restricts all messages to the configured admin, never teammate IDs.
+
 ## Scheduled Production Flow
 
 Default schedule:
@@ -375,9 +417,9 @@ At `08:00`, all enabled forums fetch. At `00:00`, `06:00`, `12:00`, and `18:00`,
 The daily status changes to `ATTENTION REQUIRED` when an enabled on-chain source has no successful scan in the preceding 12 hours, even if its last stored cursor and health flag still look normal.
 In production, it also flags a forum whose most recent successful fetch is older than `FETCH_RUN_MAX_AGE_HOURS` (48 hours by default), including when the scheduler stops running.
 
-During the initial Uniswap historical baseline, the daily status also remains `ATTENTION REQUIRED` until seeding is complete. It reports checkpointed and remaining blocks, percentage complete, the persisted resume position, last attempt, last successful scan, consecutive failures, latest scan status, and replay mode. Historical alerts stay suppressed during this phase. A live coverage repair is reported explicitly and remains notification-enabled, while deterministic IDs prevent duplicate alerts. If a scan fails or the container restarts, the status keeps the interruption visible and the next scan resumes from the reported checkpoint.
+During an initial on-chain historical baseline (Uniswap or Aave), the daily status also remains `ATTENTION REQUIRED` until seeding is complete. It reports checkpointed and remaining blocks, percentage complete, the persisted resume position, last attempt, last successful scan, consecutive failures, latest scan status, and replay mode. Historical alerts stay suppressed during this phase. A live coverage repair is reported explicitly and remains notification-enabled, while deterministic IDs prevent duplicate alerts. If a scan fails or the container restarts, the status keeps the interruption visible and the next scan resumes from the reported checkpoint.
 
-Run only one scheduler-enabled replica where practical to avoid duplicate polling and audit runs.
+Run one active monitor process per database/bot. Delivery locks are process-local, not distributed. A crash between Telegram acceptance and saving `sent` state can still cause a duplicate on retry.
 
 Forum requests retry transient network failures, timeouts, and `408`, `429`, or `5xx` responses up to three attempts. Invalid JSON and definitive client errors are not retried. If a later page or one redundant Aave/Uniswap/CoW category feed fails after recent topics were obtained, the monitor preserves the usable data and continues. A protocol run fails when no usable governance feed can be read.
 
@@ -444,9 +486,9 @@ Current Aave routine-cap notification policy:
 -e AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true \
 ```
 
-Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally.
+Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally. Set `API=http://127.0.0.1:3001` on the Docker host for the operator commands above.
 
-For Uniswap on-chain tracking, include the seven RPC/on-chain `-e` values from the README. After deployment, manually run the first scan and monitor logs until `/api/admin/onchain-source-status` reports `baselineStatus: "complete"`. The historical baseline is silent and resumable.
+Use the RPC and source flags from the README for Uniswap or Aave on-chain tracking. For each enabled source, run its first scan and wait for `/api/admin/onchain-source-status` to report `baselineStatus: "complete"` and `healthStatus: "healthy"`. Aave's first-deployment example leaves its lifecycle alerts off until that check passes.
 
 Do not use the local pretty multi-line `.env` directly with `--env-file`; Docker requires every value, including JSON publisher arrays, on one physical line.
 

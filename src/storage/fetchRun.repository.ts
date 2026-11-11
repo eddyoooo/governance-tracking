@@ -12,6 +12,7 @@ export interface FetchRun {
   startedAt: string;
   finishedAt?: string;
   status: FetchRunStatus;
+  coverageComplete?: boolean;
   fetchedCount: number;
   allowlistedCount: number;
   storedNewCount: number;
@@ -73,7 +74,7 @@ export class MemoryFetchRunRepository implements FetchRunRepository {
     return (
       [...this.runs.values()]
         .filter(
-          (run) => run.protocol === protocol && run.status === "success"
+          (run) => run.protocol === protocol && run.status === "success" && run.coverageComplete !== false
         )
         .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
       null
@@ -132,7 +133,7 @@ export class FirestoreFetchRunRepository implements FetchRunRepository {
     return (
       snapshot.docs
         .map((doc) => doc.data() as FetchRun)
-        .filter((run) => run.status === "success")
+        .filter((run) => run.status === "success" && run.coverageComplete !== false)
         .sort((left, right) => -left.startedAt.localeCompare(right.startedAt))[0] ??
       null
     );

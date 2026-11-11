@@ -53,7 +53,7 @@ export interface GovernanceBlockReference {
 
 export interface GovernanceContractEvent {
   id: string;
-  type: "created" | "canceled" | "queued" | "executed";
+  type: "created" | "canceled" | "queued" | "executed" | "activated" | "defeated";
   proposalId: string;
   blockNumber: number;
   blockHash: string;
@@ -64,7 +64,30 @@ export interface GovernanceContractEvent {
   startBlock?: number;
   endBlock?: number;
   eta?: string;
+  forVotes?: string;
+  againstVotes?: string;
+  metadataHash?: string;
+  snapshotBlockHash?: string;
+  votingDuration?: number;
   actions?: GovernanceAction[];
+}
+
+export interface AaveGovernanceData {
+  nativeState: number;
+  creationTime: number;
+  votingActivationTime: number;
+  votingDuration: number;
+  queuingTime: number;
+  cancelTimestamp: number;
+  votingPortal: string;
+  snapshotBlockHash: string;
+  ipfsHash: string;
+  metadataCid: string;
+  resultReceivedAt?: string;
+  resultBlockNumber?: number;
+  resultTransactionHash?: string;
+  payloads: Array<{ chain: string; accessLevel: number; payloadsController: string; payloadId: string }>;
+  executionScope: "governance-core";
 }
 
 export interface GovernanceDecisionObservation {
@@ -82,8 +105,9 @@ export interface GovernanceDecisionObservation {
   status: GovernanceDecisionStatus;
   voteOutcome: GovernanceVoteOutcome;
   executionOutcome: GovernanceExecutionOutcome;
-  startBlock: number;
-  endBlock: number;
+  startBlock?: number;
+  endBlock?: number;
+  aave?: AaveGovernanceData;
   votingEndedAt?: string;
   eta: string | null;
   forVotes: string;
@@ -145,6 +169,7 @@ export interface GovernanceLifecycleEvent {
   transactionHash: string | null;
   message: NotificationMessage;
   notificationStatus: NotificationStatus;
+  notificationReady?: boolean;
   notificationError?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
   firstSeenAt: string;
@@ -162,6 +187,7 @@ export interface GovernanceSourceState {
   contractAddress: string;
   deploymentBlock: number;
   initialProposalId: string;
+  proposalIdScheme?: "zero-based-count";
   baselineStatus: "seeding" | "complete";
   replayMode?: "silent" | "live" | null;
   baselineTargetBlock: number;
@@ -186,10 +212,11 @@ export interface GovernanceSourceValidation {
   implementationAddress: string;
   proposalCount: string;
   initialProposalId: string;
-  votingDelay: string;
-  votingPeriod: string;
-  proposalThreshold: string;
-  quorumVotes: string;
+  proposalIdScheme?: "zero-based-count";
+  votingDelay?: string;
+  votingPeriod?: string;
+  proposalThreshold?: string;
+  quorumVotes?: string;
 }
 
 export interface EvmGovernanceAdapter {
@@ -203,6 +230,7 @@ export interface EvmGovernanceAdapter {
   readonly reorgOverlapBlocks: number;
   readonly enabled: boolean;
   readonly notificationsEnabled: boolean;
+  readonly proposalIdScheme?: "zero-based-count";
   validateSource(): Promise<GovernanceSourceValidation>;
   getBlock(blockNumber: number): Promise<GovernanceBlockReference>;
   getEvents(
@@ -213,7 +241,8 @@ export interface EvmGovernanceAdapter {
     proposalId: string,
     events: GovernanceContractEvent[],
     existing: StoredGovernanceDecision | null,
-    observedAtBlock: number
+    observedAtBlock: number,
+    options?: { historical: boolean }
   ): Promise<GovernanceDecisionObservation>;
 }
 

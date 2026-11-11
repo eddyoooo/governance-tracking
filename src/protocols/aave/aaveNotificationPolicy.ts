@@ -7,6 +7,8 @@ import {
 
 export const AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON =
   "aave_risk_stewards_routine_cap_change";
+export const AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON =
+  "aave_risk_stewards_routine_cap_and_irm_change";
 
 const LLAMA_RISK_PUBLISHER = "llamarisk";
 const RISK_STEWARDS_PREFIX = /^risk\s+stewards\s*:\s*(.+)$/i;
@@ -20,55 +22,83 @@ const CAP_SUBJECT =
 const CAP_ACTION_PATTERN = new RegExp(`^${CAP_SUBJECT} ${CAP_ACTION}$`, "i");
 const CHANGE_OF_CAPS_PATTERN =
   /^changes? of (?:supply and borrow|borrow and supply|borrow and draw|draw and borrow) caps?$/i;
+// Recognize the observed USDT variant, not arbitrary words that could hide other actions.
+const IRM_SUBJECT = "(?:usdt )?irm";
+const CAP_AND_IRM_SHARED_ACTION_PATTERN = new RegExp(
+  `^${CAP_SUBJECT} and ${IRM_SUBJECT} ${CAP_ACTION}$`,
+  "i"
+);
+const CAP_ACTION_AND_IRM_ACTION_PATTERN = new RegExp(
+  `^${CAP_SUBJECT} ${CAP_ACTION} and ${IRM_SUBJECT} ${CAP_ACTION}$`,
+  "i"
+);
 
 export const aaveRoutineCapNotificationPolicy: NotificationPolicy = {
   evaluate(input): NotificationPolicyDecision {
-    return isRoutineAaveRiskStewardsCapChange(input)
-      ? {
-          action: "suppress",
-          reason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON
-        }
-      : NOTIFY_NOTIFICATION_DECISION;
+    const reason = getAaveRoutineRiskStewardsSkipReason(input);
+
+    return reason ? { action: "suppress", reason } : NOTIFY_NOTIFICATION_DECISION;
   }
 };
 
 export function isRoutineAaveRiskStewardsCapChange(
   input: NotificationPolicyInput
 ): boolean {
+  return getAaveRoutineRiskStewardsSkipReason(input) !== undefined;
+}
+
+function getAaveRoutineRiskStewardsSkipReason(
+  input: NotificationPolicyInput
+): string | undefined {
   if (
     input.protocol.trim().toLowerCase() !== "aave" ||
     input.sourceType.trim().toLowerCase() !== "forum" ||
     !hasExactLlamaRiskAlias(input)
   ) {
-    return false;
+    return undefined;
   }
 
   const prefixedTitle = collapseWhitespace(input.title).match(RISK_STEWARDS_PREFIX);
 
   if (!prefixedTitle) {
-    return false;
+    return undefined;
   }
 
   const datedTitle = prefixedTitle[1].match(DATED_TITLE_SUFFIX);
 
   if (!datedTitle || !hasValidDateSuffix(datedTitle)) {
-    return false;
+    return undefined;
   }
 
   const titleWithoutDate = datedTitle[1].trim();
   const targetSeparator = titleWithoutDate.toLowerCase().lastIndexOf(" on ");
 
   if (targetSeparator < 1) {
-    return false;
+    return undefined;
   }
 
   const operation = titleWithoutDate.slice(0, targetSeparator).trim();
   const target = titleWithoutDate.slice(targetSeparator + 4).trim();
 
-  return (
-    AAVE_VERSION_TARGET.test(target) &&
-    (CAP_ACTION_PATTERN.test(operation) || CHANGE_OF_CAPS_PATTERN.test(operation))
-  );
+  if (!AAVE_VERSION_TARGET.test(target)) {
+    return undefined;
+  }
+
+  if (
+    CAP_ACTION_PATTERN.test(operation) ||
+    CHANGE_OF_CAPS_PATTERN.test(operation)
+  ) {
+    return AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON;
+  }
+
+  if (
+    CAP_AND_IRM_SHARED_ACTION_PATTERN.test(operation) ||
+    CAP_ACTION_AND_IRM_ACTION_PATTERN.test(operation)
+  ) {
+    return AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON;
+  }
+
+  return undefined;
 }
 
 function hasExactLlamaRiskAlias(input: NotificationPolicyInput): boolean {

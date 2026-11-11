@@ -5,6 +5,10 @@ import {
   sendTelegramTestNotifications
 } from "./telegramTestSend.runner.js";
 import { createLogger } from "./utils/logger.js";
+import { ScriptedAaveOnchainDemoAdapter } from "./demoFixtures/scriptedAaveOnchainDemo.adapter.js";
+import { aaveOnchainEventFixtures } from "./demoFixtures/aaveOnchain.fixture.js";
+import { mergeGovernanceDecision } from "./onchain/governanceDecision.js";
+import { buildGovernanceLifecycleMessage } from "./onchain/governanceNotifications.js";
 
 async function main(): Promise<void> {
   if (!env.telegramE2EEnabled) {
@@ -26,6 +30,12 @@ async function main(): Promise<void> {
     logger
   });
   const notifications = createTelegramTestNotifications();
+  const aave = new ScriptedAaveOnchainDemoAdapter(env);
+  aave.setPhase("executed");
+  const observation = await aave.getDecision("0", aaveOnchainEventFixtures, null,
+    aaveOnchainEventFixtures[3].blockNumber);
+  const decision = mergeGovernanceDecision(null, observation, new Date().toISOString()).decision;
+  notifications.push(buildGovernanceLifecycleMessage(decision, "succeeded"));
   const delayMs = env.telegramTestSendDelayMs;
 
   await sendTelegramTestNotifications({

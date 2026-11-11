@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type {
   GovernanceSource,
+  GovernanceFetchBatch,
   NormalizedGovernanceItem,
   ProtocolAdapter,
   RawGovernanceItem
@@ -53,15 +54,19 @@ export class LidoAdapter implements ProtocolAdapter {
   }
 
   async fetchRecent(): Promise<RawGovernanceItem[]> {
+    return (await this.fetchRecentWithDiagnostics()).items;
+  }
+
+  async fetchRecentWithDiagnostics(): Promise<GovernanceFetchBatch> {
     if (!this.enabled) {
       this.logger?.info({ protocol: this.protocol }, "Skipping disabled protocol adapter");
-      return [];
+      return { items: [], warnings: [] };
     }
 
     const fetchedAt = new Date().toISOString();
     const itemsBySourceId = new Map<string, RawGovernanceItem>();
 
-    await collectDiscourseTopicPages({
+    const warnings = await collectDiscourseTopicPages({
       protocol: this.protocol,
       sourceType: this.source.type,
       fetchedAt,
@@ -75,7 +80,7 @@ export class LidoAdapter implements ProtocolAdapter {
         "Stopped Lido proposal pagination after a later page failed"
     });
 
-    return [...itemsBySourceId.values()];
+    return { items: [...itemsBySourceId.values()], warnings };
   }
 
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem {

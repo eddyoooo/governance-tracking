@@ -19,6 +19,7 @@ import { CowAdapter } from "./protocols/cow/cow.adapter.js";
 import { createCowDemoClient } from "./protocols/cow/cow.demoClient.js";
 import { ProtocolRegistry } from "./protocols/registry.js";
 import { EvmGovernanceRegistry } from "./onchain/registry.js";
+import { ScriptedAaveOnchainDemoAdapter } from "./demoFixtures/scriptedAaveOnchainDemo.adapter.js";
 import type {
   GovernanceScanResult,
   GovernanceSourceState,
@@ -177,6 +178,10 @@ function summarizeSourceActivity(records: SourceActivityRecord[]) {
 }
 
 function summarizeOnchainScan(result: GovernanceScanResult) {
+  if (result.status !== "success") {
+    throw new Error(`Demo ${result.protocol} on-chain scan failed: ${result.errors.join("; ")}`);
+  }
+
   return {
     protocol: result.protocol,
     status: result.status,
@@ -353,6 +358,8 @@ async function main(): Promise<void> {
     COW_CATEGORY_FETCH_MAX_PAGES: "2",
     ETHEREUM_RPC_URL: "https://demo.invalid/rpc",
     UNISWAP_ONCHAIN_ENABLED: "true",
+    AAVE_ONCHAIN_ENABLED: "true",
+    AAVE_ONCHAIN_NOTIFICATIONS_ENABLED: telegramDemoEnabled ? "true" : "false",
     UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: telegramDemoEnabled
       ? "true"
       : "false",
@@ -406,6 +413,7 @@ async function main(): Promise<void> {
   const uniswapOnchainAdapter = new ScriptedUniswapOnchainDemoAdapter(
     env.uniswapOnchainNotificationsEnabled
   );
+  const aaveOnchainAdapter = new ScriptedAaveOnchainDemoAdapter(env);
   const { context } = createApp({
     env,
     protocolRegistry: createDemoRegistry(
@@ -415,7 +423,8 @@ async function main(): Promise<void> {
       cowAdapter
     ),
     evmGovernanceRegistry: new EvmGovernanceRegistry([
-      uniswapOnchainAdapter
+      uniswapOnchainAdapter,
+      aaveOnchainAdapter
     ])
   });
   await Promise.all(
@@ -431,7 +440,7 @@ async function main(): Promise<void> {
 
   console.log("Governance monitor demo");
   console.log(
-    "Using memory storage plus locally saved forum samples and a real Uniswap Governor Bravo proposal snapshot."
+    "Using memory storage, saved forum samples, and real Uniswap/Aave on-chain proposal snapshots."
   );
   console.log(
     "The scripted records exercise live discovery, historical backfill, and duplicate suppression after an established baseline."
@@ -461,6 +470,8 @@ async function main(): Promise<void> {
       uniswapOnchainEnabled: env.uniswapOnchainEnabled,
       uniswapOnchainNotificationsEnabled:
         env.uniswapOnchainNotificationsEnabled,
+      aaveOnchainEnabled: env.aaveOnchainEnabled,
+      aaveOnchainNotificationsEnabled: env.aaveOnchainNotificationsEnabled,
       lidoAllowedPublishers: env.lidoAllowedPublishers,
       aaveAllowedPublishers: env.aaveAllowedPublishers,
       uniswapAllowedPublishers: env.uniswapAllowedPublishers,
@@ -556,6 +567,43 @@ async function main(): Promise<void> {
     stepDelayMs
   );
 
+  const aaveOnchainBaseline = await runStep("Aave on-chain baseline: seed history silently", async () =>
+    summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
+  aaveOnchainAdapter.setPhase("created");
+  const aaveOnchainCreation = await runStep("Aave on-chain discovery: track real native proposal #0", async () =>
+    summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
+  aaveOnchainAdapter.setPhase("executed");
+  const aaveOnchainExecution = await runStep("Aave on-chain result: accepted votes and forwarding to payload controllers", async () =>
+    summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
+  const aaveDuplicate = await runStep("Aave on-chain repeated scan: no duplicate records or alerts", async () =>
+    summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
+  if (aaveDuplicate.lifecycleEventsCreated !== 0 || aaveDuplicate.notificationSentCount !== 0) {
+    throw new Error("Aave demo duplicate scan was not idempotent.");
+  }
+  const aaveGovernanceDecisions = await context.governanceRepository.findDecisionsBySource(
+    aaveOnchainAdapter.sourceKey
+  );
+  const aaveSourceState = await context.governanceRepository.findSourceState(aaveOnchainAdapter.sourceKey);
+  const aaveDecision = aaveGovernanceDecisions[0];
+  if (
+    !aaveOnchainBaseline.baselineSeeding ||
+    aaveOnchainBaseline.notificationSentCount !== 0 ||
+    aaveOnchainCreation.decisionsCreated !== 1 ||
+    aaveOnchainCreation.lifecycleEventsCreated !== 1 ||
+    aaveOnchainExecution.lifecycleEventsCreated !== 3 ||
+    aaveGovernanceDecisions.length !== 1 ||
+    aaveDecision.proposalId !== "0" ||
+    aaveDecision.status !== "executed" ||
+    !aaveDecision.aave?.resultReceivedAt ||
+    aaveDecision.aave.executionScope !== "governance-core" ||
+    aaveDecision.aave.payloads.length !== 7 ||
+    aaveSourceState?.baselineStatus !== "complete" ||
+    aaveSourceState.healthStatus !== "healthy" ||
+    aaveSourceState.cursorBlockNumber !== aaveSourceState.latestFinalizedBlockNumber
+  ) {
+    throw new Error("Aave demo lifecycle or source checkpoint is incomplete.");
+  }
+
   const discoverySummaries: Array<{
     discovered: string | undefined;
     fetch: ReturnType<typeof summarizeFetch>;
@@ -609,7 +657,7 @@ async function main(): Promise<void> {
   }
 
   const aaveFirstFetch = await runStep(
-    "Aave fetch: scan broad forum coverage and suppress the routine cap-only alert",
+    "Aave fetch: scan broad forum coverage and suppress routine cap and cap-plus-IRM alerts",
     async () => summarizeFetch(await context.fetchJob.run("aave")),
     stepDelayMs
   );
@@ -736,6 +784,14 @@ async function main(): Promise<void> {
       execution: onchainExecution,
       duplicate: onchainDuplicate,
       storedDecisionCount: governanceDecisions.length
+    },
+    aaveOnchain: {
+      baseline: aaveOnchainBaseline,
+      creation: aaveOnchainCreation,
+      execution: aaveOnchainExecution,
+      duplicate: aaveDuplicate,
+      storedDecisionCount: aaveGovernanceDecisions.length,
+      integrityChecks: "passed"
     },
     telegram:
       env.enableTelegramNotifications

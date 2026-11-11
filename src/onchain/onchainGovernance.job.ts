@@ -37,6 +37,7 @@ import {
 } from "./onchainGovernance.validation.js";
 import type {
   EvmGovernanceAdapter,
+  GovernanceBlockReference,
   GovernanceContractEvent,
   GovernanceLifecycleEvent,
   GovernanceScanResult,
@@ -147,7 +148,8 @@ export class OnchainGovernanceScanJob {
         );
         assertProposalCountCoversStoredDecisions(
           knownDecisions,
-          validation.proposalCount
+          validation.proposalCount,
+          adapter.proposalIdScheme
         );
         await assertCanonicalCursor(sourceState, validation, adapter);
         const baselineSeeding = sourceState.baselineStatus === "seeding";
@@ -291,7 +293,8 @@ export class OnchainGovernanceScanJob {
     const historicalGaps = findMissingProposalIds(
       baselineDecisions,
       sourceState.initialProposalId,
-      sourceState.baselineProposalCount
+      sourceState.baselineProposalCount,
+      adapter.proposalIdScheme
     );
 
     if (historicalGaps.length > 0) {
@@ -365,7 +368,8 @@ export class OnchainGovernanceScanJob {
     const historicalGaps = findMissingProposalIds(
       knownDecisions,
       sourceState.initialProposalId,
-      sourceState.baselineProposalCount
+      sourceState.baselineProposalCount,
+      adapter.proposalIdScheme
     );
 
     if (historicalGaps.length > 0) {
@@ -382,7 +386,8 @@ export class OnchainGovernanceScanJob {
       const historicalLifecycleGaps = findMissingLifecycleReferences(
         decisionsUpToProposalId(
           knownDecisions,
-          sourceState.baselineProposalCount
+          sourceState.baselineProposalCount,
+          adapter.proposalIdScheme
         )
       );
       if (historicalLifecycleGaps.length > 0) {
@@ -436,7 +441,8 @@ export class OnchainGovernanceScanJob {
     const liveGaps = findMissingProposalIds(
       liveDecisions,
       sourceState.initialProposalId,
-      validation.proposalCount
+      validation.proposalCount,
+      adapter.proposalIdScheme
     );
 
     if (liveGaps.length > 0) {
@@ -480,15 +486,37 @@ export class OnchainGovernanceScanJob {
       const sourceEvents = validateGovernanceEvents(
         await adapter.getEvents(range.from, range.to),
         range.from,
-        range.to
+        range.to,
+        adapter.proposalIdScheme
       );
       const events = trackedProposalEvents(
         sourceEvents,
         validation.initialProposalId,
-        validation.proposalCount
+        validation.proposalCount,
+        adapter.proposalIdScheme
       );
       run.rangesScanned += 1;
       run.contractEventsRead += events.length;
+      const canonicalBlocks = new Map<number, GovernanceBlockReference>();
+      for (const event of events) {
+        let block = canonicalBlocks.get(event.blockNumber);
+        if (!block) {
+          block = await adapter.getBlock(event.blockNumber);
+          assertReturnedBlock(block, event.blockNumber, "event");
+          canonicalBlocks.set(event.blockNumber, block);
+        }
+        if (block.hash.toLowerCase() !== event.blockHash.toLowerCase()) {
+          throw new Error(
+            `Governance event ${event.id} does not match its canonical block hash at ${event.blockNumber}.`
+          );
+        }
+      }
+      const cursorBlock = canonicalBlocks.get(range.to) ?? await adapter.getBlock(range.to);
+      assertReturnedBlock(cursorBlock, range.to, "cursor");
+      if (range.to === validation.latestFinalizedBlock.number &&
+          cursorBlock.hash.toLowerCase() !== validation.latestFinalizedBlock.hash.toLowerCase()) {
+        throw new Error(`On-chain governance range endpoint ${range.to} does not match the validated finalized head hash.`);
+      }
       const byProposal = groupEventsByProposal(events);
 
       for (const [proposalId, proposalEvents] of byProposal) {
@@ -503,8 +531,6 @@ export class OnchainGovernanceScanJob {
         );
       }
 
-      const cursorBlock = await adapter.getBlock(range.to);
-      assertReturnedBlock(cursorBlock, range.to, "cursor");
       sourceState = requirePersistedSourceState(
         await this.repository.updateSourceState(
           adapter.sourceKey,
@@ -631,7 +657,8 @@ export class OnchainGovernanceScanJob {
       proposalId,
       events,
       existing,
-      observedAtBlock
+      observedAtBlock,
+      ...(adapter.proposalIdScheme ? [{ historical: suppressNotifications }] as const : [] as const)
     );
     assertDecisionMatchesRequest(
       observation,
@@ -660,10 +687,14 @@ export class OnchainGovernanceScanJob {
 
     run.lifecycleEventsCreated += result.lifecycleEventsCreated.length;
 
-    for (const lifecycleEvent of result.lifecycleEventsCreated) {
+    for (const lifecycleEvent of [
+      ...result.lifecycleEventsCreated,
+      ...(result.decision.aave ? result.lifecycleEventsUpdated ?? [] : [])
+    ]) {
       if (lifecycleEvent.notificationStatus !== "pending") {
         continue;
       }
+      if (lifecycleEvent.notificationReady === false) continue;
 
       const notificationResult =
         await this.notificationDispatcher.notifyNewProposal(lifecycleEvent);
@@ -827,6 +858,7 @@ function initialSourceState(
     contractAddress: adapter.contractAddress,
     deploymentBlock: adapter.deploymentBlock,
     initialProposalId: validation.initialProposalId,
+    ...(adapter.proposalIdScheme ? { proposalIdScheme: adapter.proposalIdScheme } : {}),
     baselineStatus: "seeding",
     replayMode: "silent",
     baselineTargetBlock: validation.latestFinalizedBlock.number,

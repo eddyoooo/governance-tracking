@@ -68,6 +68,7 @@ function cleanStoredProposal(proposal: StoredProposal): StoredProposal {
 }
 
 function isFirestoreMissingIndexError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
   const maybeError = error as {
     code?: unknown;
     details?: unknown;

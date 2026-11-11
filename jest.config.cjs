@@ -119,6 +119,24 @@ module.exports = {
       functions: 100,
       lines: 100
     },
+    "./src/onchain/aave/aaveOnchain.adapter.ts": {
+      statements: 100,
+      branches: 100,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/aave/aaveOnchain.client.ts": {
+      statements: 100,
+      branches: 93,
+      functions: 100,
+      lines: 100
+    },
+    "./src/onchain/aave/aaveGovernance.model.ts": {
+      statements: 100,
+      branches: 96,
+      functions: 100,
+      lines: 100
+    },
     "./src/onchain/uniswap/uniswapOnchain.client.ts": {
       statements: 98,
       branches: 92,

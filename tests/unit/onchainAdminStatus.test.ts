@@ -94,6 +94,72 @@ function onchainEnv() {
 }
 
 describe("daily admin status with on-chain governance", () => {
+  it("accepts a healthy on-chain-only configuration without requiring forum tracking", async () => {
+    const forum = await createHealthyForumRepositories();
+    const governanceRepository = new MemoryGovernanceRepository();
+    await governanceRepository.initializeSourceState(createGovernanceSourceState());
+    await governanceRepository.upsertScanRun(createGovernanceScanRun());
+    const result = await buildAdminStatusReport({ env: onchainEnv(), ...registries(), ...forum, governanceRepository,
+      protocolRegistry: { list: () => [] } as never });
+    expect(result.healthy).toBe(true);
+    expect(result.problems).toEqual([]);
+  });
+
+  it("does not mix lifecycle failures into the forum failure-detail total", async () => {
+    const forum = await createHealthyForumRepositories();
+    const stored = await forum.proposalRepository.upsert(normalizeLidoForumItem(createRawGovernanceItem()));
+    await forum.proposalRepository.updateNotificationStatus(stored.proposal.id, "failed", "A forum delivery failed");
+    const governanceRepository = new MemoryGovernanceRepository();
+    await governanceRepository.upsertDecision(createGovernanceObservation(), { notificationStatusForNewEvents: "failed" });
+    const result = await buildAdminStatusReport({ env: testEnv(), ...forum,
+      protocolRegistry: registries().protocolRegistry, governanceRepository });
+    expect(result.message).toContain("Failed notifications: 2");
+    expect(result.message).toContain("Failed notification details:");
+    expect(result.message).not.toContain("Failed notification details (showing 1 of 2)");
+  });
+
+  it("flags a partial forum fetch and clears that warning after a fully covered fetch", async () => {
+    const forum = await createHealthyForumRepositories();
+    const latest = (await forum.fetchRunRepository.findAll())[0];
+    await forum.fetchRunRepository.upsert({ ...latest, coverageComplete: false, errors: ["A category feed failed"] });
+    const options = { env: testEnv(), ...forum, protocolRegistry: registries().protocolRegistry };
+    const partial = await buildAdminStatusReport(options);
+    expect(partial.healthy).toBe(false);
+    expect(partial.message).toContain("partial source coverage: A category feed failed");
+    await forum.fetchRunRepository.upsert({ ...latest, coverageComplete: true, errors: [] });
+    await expect(buildAdminStatusReport(options)).resolves.toMatchObject({ healthy: true, problems: [] });
+  });
+  it("keeps unresolved lifecycle failures visible even when all on-chain sources are disabled", async () => {
+    const forum = await createHealthyForumRepositories();
+    const governanceRepository = new MemoryGovernanceRepository();
+    await governanceRepository.upsertDecision(createGovernanceObservation(), { notificationStatusForNewEvents: "failed" });
+    const result = await buildAdminStatusReport({ env: testEnv(), ...forum,
+      protocolRegistry: registries().protocolRegistry, evmGovernanceRegistry: new EvmGovernanceRegistry([]),
+      governanceRepository });
+    expect(result.healthy).toBe(false);
+    expect(result.message).toContain("Failed notifications: 1");
+    expect(result.message).toContain("Failed on-chain lifecycle notifications");
+  });
+
+  it("puts on-chain health before verbose forum details so it survives message truncation", async () => {
+    const forum = await createHealthyForumRepositories();
+    const governanceRepository = new MemoryGovernanceRepository();
+    await governanceRepository.initializeSourceState(createGovernanceSourceState({ healthStatus: "failed",
+      lastError: "RPC unavailable", consecutiveFailures: 1 }));
+    await governanceRepository.upsertScanRun(createGovernanceScanRun({ status: "failed", errors: ["RPC unavailable"] }));
+    for (let index = 0; index < 5; index++) {
+      const stored = await forum.proposalRepository.upsert(normalizeLidoForumItem(createRawGovernanceItem({
+        sourceId: String(index), title: "Long title ".repeat(30)
+      })));
+      await forum.proposalRepository.updateNotificationStatus(stored.proposal.id, "failed", "Failure detail ".repeat(50));
+    }
+    const result = await buildAdminStatusReport({ env: onchainEnv(), ...registries(), ...forum, governanceRepository });
+    expect(result.message.length).toBeLessThanOrEqual(3_900);
+    expect(result.message).toContain("On-chain governance:");
+    expect(result.message.indexOf("On-chain governance:")).toBeLessThan(result.message.indexOf("Latest fetches:"));
+    expect(result.message).toContain("RPC unavailable");
+  });
+
   it("reports a complete, caught-up source as healthy", async () => {
     const forum = await createHealthyForumRepositories();
     const governanceRepository = new MemoryGovernanceRepository();
@@ -240,6 +306,11 @@ describe("daily admin status with on-chain governance", () => {
   });
 
   it.each([
+    [
+      "future successful scan",
+      createGovernanceScanRun({ startedAt: "2026-09-03T00:00:00.000Z", finishedAt: "2026-09-03T00:01:00.000Z" }),
+      "latest on-chain governance scan timestamp is in the future"
+    ],
     [
       "stale successful scan",
       createGovernanceScanRun({

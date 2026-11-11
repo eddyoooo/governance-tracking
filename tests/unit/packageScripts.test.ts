@@ -23,12 +23,18 @@ describe("package scripts", () => {
     expect(packageJson.scripts.test).not.toContain("RUN_TELEGRAM_E2E");
     expect(packageJson.scripts.test).not.toContain("RUN_FORUM_E2E");
     expect(packageJson.scripts.test).not.toContain("RUN_UNISWAP_ONCHAIN_E2E");
+    expect(packageJson.scripts.test).not.toContain("RUN_AAVE_ONCHAIN_E2E");
+    expect(packageJson.scripts.test).not.toContain("RUN_AAVE_ONCHAIN_FULL_E2E");
     expect(packageJson.scripts.test).not.toContain(
       "RUN_UNISWAP_ONCHAIN_FULL_E2E"
     );
     expect(packageJson.scripts["test:e2e:onchain"]).toContain(
       "RUN_UNISWAP_ONCHAIN_E2E=true"
     );
+    expect(packageJson.scripts["test:e2e:aave-onchain"]).toContain("RUN_AAVE_ONCHAIN_E2E=true");
+    expect(packageJson.scripts["test:e2e:aave-onchain"]).toContain("--coverage=false");
+    expect(packageJson.scripts["test:e2e:aave-onchain:full"]).toContain("RUN_AAVE_ONCHAIN_FULL_E2E=true");
+    expect(packageJson.scripts["test:e2e:aave-onchain:full"]).toContain("--coverage=false");
     expect(packageJson.scripts["test:e2e:forums"]).toContain(
       "RUN_FORUM_E2E=true"
     );
@@ -64,7 +70,7 @@ describe("package scripts", () => {
 
   it("retains the patched production Firestore dependency override", () => {
     expect(packageJson.overrides["google-gax"]).toEqual({
-      rimraf: "6.1.3"
+      rimraf: "6.1.4"
     });
   });
 

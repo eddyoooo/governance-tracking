@@ -13,6 +13,38 @@ const config = {
 };
 
 describe("source activity watchdog", () => {
+  it("returns null for an empty source", () => {
+    expect(findNewestRawGovernanceItem([])).toBeNull();
+  });
+
+  it("ignores invalid dates and preserves input order when timestamps tie", () => {
+    const first = createRawGovernanceItem({
+      sourceId: "first",
+      publishedAt: "2026-07-02T00:00:00.000Z"
+    });
+    const sameTime = createRawGovernanceItem({
+      sourceId: "same-time",
+      publishedAt: "2026-07-02T02:00:00.000+02:00"
+    });
+    const invalid = createRawGovernanceItem({ publishedAt: "not-a-date" });
+    const items = [invalid, first, sameTime];
+
+    expect(findNewestRawGovernanceItem(items)).toBe(first);
+    expect(items).toEqual([invalid, first, sameTime]);
+    expect(findNewestRawGovernanceItem([sameTime, first])).toBe(sameTime);
+  });
+
+  it("handles timestamps before the Unix epoch", () => {
+    const newer = createRawGovernanceItem({
+      publishedAt: "1969-12-31T00:00:00.000Z"
+    });
+    const older = createRawGovernanceItem({
+      publishedAt: "1960-01-01T00:00:00.000Z"
+    });
+
+    expect(findNewestRawGovernanceItem([older, newer])).toBe(newer);
+  });
+
   it("finds the newest raw governance item by publishedAt", () => {
     const newest = createRawGovernanceItem({
       sourceId: "newest",

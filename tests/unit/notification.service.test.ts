@@ -16,6 +16,7 @@ import {
 } from "../../src/notifications/index.js";
 import { normalizeLidoForumItem } from "../../src/protocols/lido/lido.normalizer.js";
 import {
+  AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON,
   AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON,
   aaveRoutineCapNotificationPolicy
 } from "../../src/protocols/aave/aaveNotificationPolicy.js";
@@ -96,6 +97,32 @@ class BlockingNotificationService implements NotificationService {
 }
 
 describe("notification services", () => {
+  it.each(["sent", "skipped"] as const)("preserves terminal %s status even when delivery is paused", async (status) => {
+    const repository = new MemoryProposalRepository();
+    const stored = await repository.upsert(normalizeLidoForumItem(createRawGovernanceItem()),
+      { notificationStatusForNew: status });
+    const service = new TargetedNotificationService([{ key: "recipient", maskedId: "***1111" }]);
+    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger(),
+      undefined, undefined, () => false);
+    await expect(dispatcher.notifyNewProposal(stored.proposal)).resolves.toEqual({ status });
+    expect(service.calls).toEqual([]);
+  });
+
+  it("rechecks delivery eligibility under the recovery lock before contacting recipients", async () => {
+    const repository = new MemoryProposalRepository();
+    const stored = await repository.upsert(normalizeLidoForumItem(createRawGovernanceItem()),
+      { notificationStatusForNew: "pending" });
+    const service = new TargetedNotificationService([{ key: "recipient", maskedId: "***1111" }]);
+    const eligibility = jest.fn<() => boolean>().mockReturnValueOnce(true).mockReturnValue(false);
+    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger(),
+      undefined, undefined, eligibility);
+    await expect(dispatcher.recoverOutstanding()).resolves.toMatchObject({
+      candidateCount: 1, attemptedRecipientCount: 0, stillPendingCount: 1
+    });
+    expect(service.calls).toEqual([]);
+    await expect(repository.findById(stored.proposal.id)).resolves.toEqual(stored.proposal);
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
@@ -667,10 +694,9 @@ describe("notification services", () => {
     const proposal = normalizeLidoForumItem(
       createRawGovernanceItem({
         protocol: "aave",
-        sourceId: "25987",
+        sourceId: "26073",
         publisherName: "LlamaRisk",
-        title:
-          "Risk Stewards: Supply and Borrow Cap Changes on Aave V3 / 2026.11.03"
+        title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.06"
       })
     );
     const stored = await repository.upsert(proposal, {
@@ -693,7 +719,8 @@ describe("notification services", () => {
     expect(service.calls).toEqual([]);
     await expect(repository.findById(proposal.id)).resolves.toMatchObject({
       notificationStatus: "skipped",
-      notificationSkipReason: AAVE_ROUTINE_CAP_NOTIFICATION_SKIP_REASON
+      notificationSkipReason:
+        AAVE_ROUTINE_CAP_AND_IRM_NOTIFICATION_SKIP_REASON
     });
   });
 
@@ -996,17 +1023,14 @@ describe("notification services", () => {
     const stored = await repository.upsert(proposal, {
       notificationStatusForNew: "pending"
     });
-    const findById = repository.findById.bind(repository);
-    jest
-      .spyOn(repository, "findById")
-      .mockImplementationOnce(findById)
-      .mockImplementationOnce(findById)
-      .mockImplementationOnce(findById)
-      .mockImplementationOnce(findById)
-      .mockResolvedValueOnce(null);
     const service = new TargetedNotificationService([
       { key: "recipient-1", maskedId: "*****1111" }
     ]);
+    const send = service.send.bind(service);
+    jest.spyOn(service, "send").mockImplementation(async (...args) => {
+      await send(...args);
+      repository.clear();
+    });
     const dispatcher = new ProposalNotificationDispatcher(
       repository,
       service,

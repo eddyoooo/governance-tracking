@@ -8,6 +8,8 @@ import {
   TelegramNotificationService
 } from "../../src/notifications/index.js";
 import { createGovernanceDecisionId } from "../../src/onchain/governanceDecision.js";
+import { ScriptedAaveOnchainDemoAdapter } from "../../src/demoFixtures/scriptedAaveOnchainDemo.adapter.js";
+import { aaveOnchainEventFixtures } from "../../src/demoFixtures/aaveOnchain.fixture.js";
 import { governanceEventMessage } from "../../src/onchain/governanceNotifications.js";
 import type { GovernanceDecisionObservation } from "../../src/onchain/types.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
@@ -36,6 +38,27 @@ const describeTelegramE2E =
   : describe.skip;
 
 describeTelegramE2E("Telegram direct-message E2E", () => {
+  it("delivers the real saved Aave settled-result sample to the admin only", async () => {
+    const env = telegramE2EEnv;
+    expect(env.telegramAdminUserId).toBe("1549323073");
+    const service = new TelegramNotificationService({ botToken: env.telegramBotToken,
+      allowedUserIds: [env.telegramAdminUserId] });
+    expect(service.getRecipients()).toEqual([{ key: createTelegramRecipientKey("1549323073"), maskedId: "******3073" }]);
+    const repository = new MemoryGovernanceRepository();
+    const adapter = new ScriptedAaveOnchainDemoAdapter(env);
+    const events = aaveOnchainEventFixtures;
+    adapter.setPhase("created");
+    const initial = await repository.upsertDecision(await adapter.getDecision("0", events.slice(0, 1), null,
+      events[0].blockNumber), { notificationStatusForNewEvents: "skipped" });
+    adapter.setPhase("executed");
+    const final = await repository.upsertDecision(await adapter.getDecision("0", events, initial.decision,
+      events[3].blockNumber), { notificationStatusForNewEvents: "pending" });
+    const result = final.lifecycleEventsCreated.find((event) => event.transition === "succeeded")!;
+    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger(), governanceEventMessage);
+    await new Promise((resolve) => setTimeout(resolve, env.telegramTestSendDelayMs));
+    await expect(dispatcher.notifyNewProposal(result)).resolves.toEqual({ status: "sent" });
+    await expect(repository.findById(result.id)).resolves.toMatchObject({ notificationStatus: "sent" });
+  }, 60_000);
   it(
     "sends real governance notifications from different publishers to the configured admin only",
     async () => {

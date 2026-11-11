@@ -598,6 +598,34 @@ describe("admin status reports", () => {
     );
   });
 
+  it("accepts Lido's Leader-author policy without a publisher-name allowlist", async () => {
+    const fetchRunRepository = new MemoryFetchRunRepository();
+    const sourceActivityRepository = new MemorySourceActivityRepository();
+
+    await fetchRunRepository.upsert(createRun());
+    await sourceActivityRepository.upsert(createSourceActivity());
+
+    const result = await buildAdminStatusReport({
+      env: testEnv({ ENABLE_SCHEDULER: "true" }),
+      protocolRegistry: {
+        list: () => [
+          createFakeProtocolAdapter({
+            protocol: "lido",
+            publisherAllowlist: [],
+            publisherTrustLevelAllowlist: [4]
+          })
+        ]
+      } as never,
+      fetchRunRepository,
+      proposalRepository: new MemoryProposalRepository(),
+      sourceActivityRepository
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.problems).toEqual([]);
+    expect(result.message).toContain("Status: OK");
+  });
+
   it("does not fail the daily report on missing source-activity records when alerts are disabled", async () => {
     const fetchRunRepository = new MemoryFetchRunRepository();
 

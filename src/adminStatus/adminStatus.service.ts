@@ -250,12 +250,15 @@ export async function buildAdminStatusReport(options: {
     sourceActivityByProtocol.set(record.protocol, record);
   }
 
-  if (enabledProtocols.length === 0) {
+  if (enabledProtocols.length === 0 && enabledOnchainAdapters.length === 0) {
     problems.push("No protocol adapters are enabled.");
   }
 
   for (const adapter of enabledAdapters) {
-    if (adapter.publisherAllowlist.length === 0) {
+    if (
+      adapter.publisherAllowlist.length === 0 &&
+      !adapter.publisherTrustLevelAllowlist?.length
+    ) {
       problems.push(
         `${adapter.protocol} is enabled but its publisher allowlist is empty.`
       );
@@ -279,7 +282,11 @@ export async function buildAdminStatusReport(options: {
               : "."
           }`
         );
-      } else if (
+      }
+      if (latestRun.coverageComplete === false) {
+        problems.push(`${protocol} latest fetch has partial source coverage: ${latestRun.errors.map(errorMessage).join("; ")}`);
+      }
+      if (latestRun.status === "success" &&
         options.env.nodeEnv === "production" &&
         options.env.enableScheduler
       ) {
@@ -380,6 +387,8 @@ export async function buildAdminStatusReport(options: {
         problems.push(
           `${adapter.protocol} latest on-chain governance scan has an invalid timestamp: ${latestScanTimestamp}.`
         );
+      } else if (latestScanAt > checkedAt.getTime()) {
+        problems.push(`${adapter.protocol} latest on-chain governance scan timestamp is in the future (${latestScanTimestamp}).`);
       } else if (checkedAt.getTime() - latestScanAt > ONCHAIN_SCAN_STALE_AFTER_MS) {
         problems.push(
           `${adapter.protocol} latest on-chain governance scan is older than 12 hours (${latestScanTimestamp}).`
@@ -412,22 +421,23 @@ export async function buildAdminStatusReport(options: {
   return {
     healthy,
     problems,
-    message: appendOnchainAdminStatus(
-      formatAdminStatusMessage({
-        env: options.env,
-        enabledProtocols,
-        latestByProtocol,
-        sourceActivityByProtocol,
-        pendingNotificationCount,
-        failedNotificationCount,
-        failedNotifications: failedNotifications ?? null,
-        healthy,
-        problems,
-        checkedAt: checkedAt.toISOString()
-      }),
-      enabledOnchainAdapters.map((adapter) => adapter.sourceKey),
-      onchainReads
-    )
+    message: formatAdminStatusMessage({
+      env: options.env,
+      enabledProtocols,
+      latestByProtocol,
+      sourceActivityByProtocol,
+      pendingNotificationCount,
+      failedNotificationCount,
+      failedForumNotificationCount: failedNotificationCountResult.count,
+      failedNotifications: failedNotifications ?? null,
+      healthy,
+      problems,
+      checkedAt: checkedAt.toISOString(),
+      onchainLines: formatOnchainAdminStatus(
+        enabledOnchainAdapters.map((adapter) => adapter.sourceKey),
+        onchainReads
+      )
+    })
   };
 }
 
@@ -444,7 +454,7 @@ async function readOnchainAdminStatus(
   sourceKeys: string[],
   repository: GovernanceRepository | undefined
 ): Promise<OnchainAdminStatusReads> {
-  if (sourceKeys.length === 0 || !repository) {
+  if (!repository) {
     return {
       sourceStates: [],
       latestScans: new Map(),
@@ -504,13 +514,13 @@ async function readOnchainAdminStatus(
   };
 }
 
-function appendOnchainAdminStatus(
-  message: string,
+function formatOnchainAdminStatus(
   sourceKeys: string[],
   reads: OnchainAdminStatusReads
-): string {
-  if (sourceKeys.length === 0) {
-    return message;
+): string[] {
+  if (sourceKeys.length === 0 && !reads.pendingNotificationCount &&
+      !reads.failedNotificationCount && reads.errors.length === 0) {
+    return [];
   }
 
   const sourceLines = sourceKeys.map((sourceKey) => {
@@ -534,7 +544,8 @@ function appendOnchainAdminStatus(
       `last success ${escapeTelegramHtml(state.lastSuccessfulScanAt ?? "never")}`,
       `consecutive failures ${state.consecutiveFailures}`,
       `latest scan ${escapeTelegramHtml(scan?.status ?? "not recorded")}`,
-      `replay ${escapeTelegramHtml(state.replayMode ?? "none")}`
+      `replay ${escapeTelegramHtml(state.replayMode ?? "none")}`,
+      ...(state.lastError ? [`last error ${escapeTelegramHtml(truncate(errorMessage(state.lastError), 160))}`] : [])
     ].join("; ");
   });
   const failedLines = formatFailedGovernanceNotificationLines(
@@ -542,11 +553,7 @@ function appendOnchainAdminStatus(
     reads.failedNotificationCount
   );
 
-  return enforceTelegramMessageLimit(
-    [message, "", "On-chain governance:", ...sourceLines, ...failedLines].join(
-      "\n"
-    )
-  );
+  return ["", "On-chain governance:", ...sourceLines, ...failedLines];
 }
 
 function describeOnchainBaselineProgress(state: GovernanceSourceState): {
@@ -651,10 +658,12 @@ export function formatAdminStatusMessage(options: {
   sourceActivityByProtocol: Map<string, SourceActivityRecord>;
   pendingNotificationCount: number | null;
   failedNotificationCount: number | null;
+  failedForumNotificationCount?: number | null;
   failedNotifications: StoredProposal[] | null;
   healthy: boolean;
   problems: string[];
   checkedAt: string;
+  onchainLines?: string[];
 }): string {
   const latestFetchLines = options.enabledProtocols.map((protocol) => {
     const run = options.latestByProtocol.get(protocol);
@@ -682,7 +691,9 @@ export function formatAdminStatusMessage(options: {
       : ["- None detected."];
   const failedNotificationLines = formatFailedNotificationLines(
     options.failedNotifications,
-    options.failedNotificationCount,
+    options.failedForumNotificationCount === undefined
+      ? options.failedNotificationCount
+      : options.failedForumNotificationCount,
     options.env
   );
   const sourceActivityLines = options.enabledProtocols.map((protocol) => {
@@ -710,6 +721,7 @@ export function formatAdminStatusMessage(options: {
     `Enabled protocols: ${escapeTelegramHtml(options.enabledProtocols.join(", ") || "none")}`,
     `Pending notifications: ${formatOptionalCount(options.pendingNotificationCount)}`,
     `Failed notifications: ${formatOptionalCount(options.failedNotificationCount)}`,
+    ...(options.onchainLines ?? []),
     "",
     "Latest fetches:",
     ...latestFetchLines,

@@ -31,6 +31,24 @@ export const aaveRecentTopicsFixture = {
     per_page: 30,
     topics: [
       {
+        id: 26073,
+        title: "Risk Stewards: Cap and IRM Changes on Aave V4 / 2026.11.06",
+        slug: "risk-stewards-cap-and-irm-changes-on-aave-v4-2026-11-06",
+        posts_count: 1,
+        reply_count: 0,
+        created_at: "2026-11-06T15:55:38.152Z",
+        last_posted_at: "2026-11-06T15:55:38.152Z",
+        category_id: 7,
+        last_poster_username: "LlamaRisk",
+        posters: [
+          {
+            extras: "latest single",
+            description: "Original Poster, Most Recent Poster",
+            user_id: 10100
+          }
+        ]
+      },
+      {
         id: 25170,
         title: "[ARFC] Deploy Aave V4 on Arc",
         slug: "arfc-deploy-aave-v4-on-arc",

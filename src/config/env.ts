@@ -226,6 +226,8 @@ const rawEnvSchema = z
     ETHEREUM_RPC_URL: optionalUrlFromEnv.default(""),
     UNISWAP_ONCHAIN_ENABLED: booleanFromEnv.default(false),
     UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: booleanFromEnv.default(false),
+    AAVE_ONCHAIN_ENABLED: booleanFromEnv.default(false),
+    AAVE_ONCHAIN_NOTIFICATIONS_ENABLED: booleanFromEnv.default(false),
     ONCHAIN_FETCH_INTERVAL_CRON: z.string().default("0 */6 * * *"),
     UNISWAP_GOVERNOR_ADDRESS: ethereumAddressFromEnv.default(
       "0x408ED6354d4973f66138C91495F2f2FCbd8724C3"
@@ -295,6 +297,8 @@ const rawEnvSchema = z
     cowCategoryFetchMaxPages: value.COW_CATEGORY_FETCH_MAX_PAGES,
     ethereumRpcUrl: value.ETHEREUM_RPC_URL,
     uniswapOnchainEnabled: value.UNISWAP_ONCHAIN_ENABLED,
+    aaveOnchainEnabled: value.AAVE_ONCHAIN_ENABLED,
+    aaveOnchainNotificationsEnabled: value.AAVE_ONCHAIN_NOTIFICATIONS_ENABLED,
     uniswapOnchainNotificationsEnabled:
       value.UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED,
     onchainFetchIntervalCron: value.ONCHAIN_FETCH_INTERVAL_CRON,
@@ -324,6 +328,15 @@ const rawEnvSchema = z
   .refine((value) => !value.apiAuthEnabled || value.apiAuthToken.length > 0, {
     message: "API_AUTH_TOKEN must be set when API_AUTH_ENABLED=true."
   })
+  .refine(
+    (value) => !value.aaveOnchainEnabled || Boolean(value.ethereumRpcUrl),
+    { message: "ETHEREUM_RPC_URL must be set when AAVE_ONCHAIN_ENABLED=true." }
+  )
+  .refine(
+    (value) => !value.aaveOnchainNotificationsEnabled ||
+      (value.aaveOnchainEnabled && value.enableTelegramNotifications),
+    { message: "AAVE_ONCHAIN_ENABLED and ENABLE_TELEGRAM_NOTIFICATIONS must be true when AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=true." }
+  )
   .refine(
     (value) => !value.uniswapOnchainEnabled || Boolean(value.ethereumRpcUrl),
     {

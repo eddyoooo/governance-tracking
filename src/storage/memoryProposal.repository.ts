@@ -23,11 +23,11 @@ export class MemoryProposalRepository implements ProposalRepository {
     proposal: NormalizedGovernanceItem,
     options: UpsertProposalOptions = {}
   ): Promise<UpsertResult> {
-    const existing = await this.findBySourceIdentity(
+    const existing = this.proposals.get(proposalIdFromSourceIdentity(
       proposal.protocol,
       proposal.sourceType,
       proposal.sourceId
-    );
+    ));
 
     if (existing && !hasMeaningfulProposalChange(existing, proposal)) {
       return {
@@ -108,7 +108,7 @@ export class MemoryProposalRepository implements ProposalRepository {
     id: string,
     updater: ProposalNotificationStateUpdater
   ): Promise<StoredProposal | null> {
-    const existing = await this.findById(id);
+    const existing = this.proposals.get(id);
 
     if (!existing) {
       return null;

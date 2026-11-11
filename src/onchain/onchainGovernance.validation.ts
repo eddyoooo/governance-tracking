@@ -105,7 +105,8 @@ export function groupEventsByProposal(
 export function trackedProposalEvents(
   events: GovernanceContractEvent[],
   initialProposalId: string,
-  proposalCount: string
+  proposalCount: string,
+  proposalIdScheme?: "zero-based-count"
 ): GovernanceContractEvent[] {
   const initial = parseProposalCounter(initialProposalId, "initialProposalId");
   const count = parseProposalCounter(proposalCount, "proposalCount");
@@ -116,13 +117,13 @@ export function trackedProposalEvents(
       "event proposalId"
     );
 
-    if (proposalId > count) {
+    if (proposalIdScheme ? proposalId >= count : proposalId > count) {
       throw new Error(
         `Governor emitted proposal id ${proposalId} above finalized proposalCount ${count}.`
       );
     }
 
-    return proposalId > initial;
+    return proposalIdScheme ? proposalId >= initial : proposalId > initial;
   });
 }
 
@@ -137,7 +138,8 @@ export function assertSourceMatchesAdapter(
     state.chainId !== adapter.chainId ||
     state.contractAddress.toLowerCase() !==
       adapter.contractAddress.toLowerCase() ||
-    state.deploymentBlock !== adapter.deploymentBlock
+    state.deploymentBlock !== adapter.deploymentBlock ||
+    state.proposalIdScheme !== adapter.proposalIdScheme
   ) {
     throw new Error(
       `Stored governance source state does not match adapter ${adapter.sourceKey}.`
@@ -149,6 +151,9 @@ export function assertSourceValidation(
   adapter: EvmGovernanceAdapter,
   validation: GovernanceSourceValidation
 ): void {
+  if (validation.proposalIdScheme !== adapter.proposalIdScheme) {
+    throw new Error("On-chain governance proposal numbering does not match its adapter.");
+  }
   if (validation.chainId !== adapter.chainId) {
     throw new Error(
       `On-chain governance validation chain id ${validation.chainId} does not match adapter chain id ${adapter.chainId}.`
@@ -174,10 +179,11 @@ export function assertSourceValidation(
 
   parseProposalCounter(validation.initialProposalId, "initialProposalId");
   parseProposalCounter(validation.proposalCount, "proposalCount");
-  parseProposalCounter(validation.votingDelay, "votingDelay");
-  parseProposalCounter(validation.votingPeriod, "votingPeriod");
-  parseProposalCounter(validation.proposalThreshold, "proposalThreshold");
-  parseProposalCounter(validation.quorumVotes, "quorumVotes");
+  for (const field of ["votingDelay", "votingPeriod", "proposalThreshold", "quorumVotes"] as const) {
+    if (!adapter.proposalIdScheme || validation[field] !== undefined) {
+      parseProposalCounter(validation[field]!, field);
+    }
+  }
 }
 
 export function assertStoredSourceState(
@@ -256,7 +262,8 @@ export function assertStoredSourceState(
 export function validateGovernanceEvents(
   events: GovernanceContractEvent[],
   fromBlock: number,
-  toBlock: number
+  toBlock: number,
+  proposalIdScheme?: "zero-based-count"
 ): GovernanceContractEvent[] {
   if (!Array.isArray(events)) {
     throw new Error(
@@ -265,7 +272,9 @@ export function validateGovernanceEvents(
   }
 
   const unique = new Map<string, GovernanceContractEvent>();
-  const eventTypes = new Set(["created", "canceled", "queued", "executed"]);
+  const eventTypes = new Set(proposalIdScheme
+    ? ["created", "canceled", "queued", "executed", "activated", "defeated"]
+    : ["created", "canceled", "queued", "executed"]);
 
   for (const event of events) {
     if (!event || typeof event !== "object") {
@@ -274,7 +283,7 @@ export function validateGovernanceEvents(
     if (!eventTypes.has(event.type)) {
       throw new Error(`On-chain governance event type is invalid: ${event.type}`);
     }
-    if (!/^[1-9]\d*$/.test(event.proposalId)) {
+    if (!(proposalIdScheme ? /^(?:0|[1-9]\d*)$/ : /^[1-9]\d*$/).test(event.proposalId)) {
       throw new Error(
         `On-chain governance event proposal id is invalid: ${event.proposalId}`
       );
@@ -338,8 +347,6 @@ export function assertDecisionMatchesRequest(
   expectedDecisionId: string,
   observedAtBlock: number
 ): void {
-  assertGovernanceDecisionObservation(observation);
-
   if (
     observation.id !== expectedDecisionId ||
     observation.sourceKey !== adapter.sourceKey ||
@@ -354,6 +361,7 @@ export function assertDecisionMatchesRequest(
       `On-chain governance decision ${proposalId} does not match its requested source identity.`
     );
   }
+  assertGovernanceDecisionObservation(observation);
   if (observation.lastObservedBlockNumber !== observedAtBlock) {
     throw new Error(
       `On-chain governance decision ${proposalId} was observed at block ${observation.lastObservedBlockNumber}, expected ${observedAtBlock}.`

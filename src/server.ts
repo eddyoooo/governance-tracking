@@ -8,6 +8,7 @@ import {
 } from "./adminStatus/adminStatus.service.js";
 import {
   FetchAlreadyRunningError,
+  DisabledProtocolAdapterError,
   FetchProtocolGovernanceJob,
   UnknownProtocolAdapterError
 } from "./jobs/fetchProtocolGovernance.job.js";
@@ -98,7 +99,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
   const protocolRegistry =
     options.protocolRegistry ?? createProtocolRegistry(runtimeEnv, logger);
   const evmGovernanceRegistry =
-    options.evmGovernanceRegistry ?? createEvmGovernanceRegistry(runtimeEnv);
+    options.evmGovernanceRegistry ?? createEvmGovernanceRegistry(runtimeEnv, logger);
   const notificationService =
     options.notificationService ?? createNotificationService(runtimeEnv, logger);
   const protocolStateRepository = repositories.protocolStateRepository;
@@ -117,7 +118,16 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       repositories.governanceRepository,
       notificationService,
       logger,
-      governanceEventMessage
+      governanceEventMessage,
+      undefined,
+      (event) => {
+        const source = typeof event.protocol === "string"
+          ? evmGovernanceRegistry.get(event.protocol)
+          : undefined;
+        return source?.enabled === true &&
+          source.notificationsEnabled &&
+          source.sourceKey === event.sourceKey;
+      }
     );
   const adminStatusReporter =
     options.adminStatusReporter ??
@@ -225,7 +235,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
         return;
       }
 
-      if (error instanceof FetchAlreadyRunningError) {
+      if (error instanceof FetchAlreadyRunningError || error instanceof DisabledProtocolAdapterError) {
         response.status(409).json({ error: message });
         return;
       }

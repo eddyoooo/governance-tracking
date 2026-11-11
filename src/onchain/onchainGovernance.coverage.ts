@@ -12,6 +12,7 @@ interface LifecycleCoverageDecision {
   queuedTransactionHash: string | null;
   executedBlockNumber: number | null;
   executedTransactionHash: string | null;
+  aave?: { queuingTime: number; resultBlockNumber?: number; resultTransactionHash?: string };
 }
 
 export function parseProposalCounter(value: string, label: string): bigint {
@@ -25,7 +26,8 @@ export function parseProposalCounter(value: string, label: string): bigint {
 export function findMissingProposalIds(
   decisions: Array<{ proposalId: string }>,
   initialProposalId: string,
-  proposalCount: string
+  proposalCount: string,
+  proposalIdScheme?: "zero-based-count"
 ): string[] {
   const initial = parseProposalCounter(initialProposalId, "initialProposalId");
   const count = parseProposalCounter(proposalCount, "proposalCount");
@@ -47,7 +49,9 @@ export function findMissingProposalIds(
   const observed = new Set(decisions.map((decision) => decision.proposalId));
   const missing: string[] = [];
 
-  for (let proposalId = initial + 1n; proposalId <= count; proposalId += 1n) {
+  const first = proposalIdScheme ? initial : initial + 1n;
+  const end = proposalIdScheme ? count - 1n : count;
+  for (let proposalId = first; proposalId <= end; proposalId += 1n) {
     if (!observed.has(proposalId.toString())) {
       missing.push(proposalId.toString());
     }
@@ -61,8 +65,12 @@ export function assertProposalSequenceUnchanged(
   validation: {
     initialProposalId: string;
     proposalCount: string;
+    proposalIdScheme?: "zero-based-count";
   }
 ): void {
+  if (state.proposalIdScheme !== validation.proposalIdScheme) {
+    throw new Error("Governor proposal numbering scheme changed; refusing to scan.");
+  }
   const storedInitial = parseProposalCounter(
     state.initialProposalId,
     "stored initialProposalId"
@@ -105,7 +113,8 @@ export function formatMissingProposalIds(proposalIds: string[]): string {
 
 export function assertProposalCountCoversStoredDecisions(
   decisions: Array<{ proposalId: string }>,
-  proposalCount: string
+  proposalCount: string,
+  proposalIdScheme?: "zero-based-count"
 ): void {
   const count = parseProposalCounter(proposalCount, "proposalCount");
   let highestStoredProposalId = 0n;
@@ -120,7 +129,7 @@ export function assertProposalCountCoversStoredDecisions(
     }
   }
 
-  if (highestStoredProposalId > count) {
+  if (decisions.length > 0 && highestStoredProposalId > (proposalIdScheme ? count - 1n : count)) {
     throw new Error(
       `Governor proposalCount regressed below already stored proposal ${highestStoredProposalId}; received ${count}.`
     );
@@ -129,13 +138,16 @@ export function assertProposalCountCoversStoredDecisions(
 
 export function decisionsUpToProposalId<T extends { proposalId: string }>(
   decisions: T[],
-  proposalId: string
+  proposalId: string,
+  proposalIdScheme?: "zero-based-count"
 ): T[] {
   const boundary = parseProposalCounter(proposalId, "proposal boundary");
 
   return decisions.filter(
     (decision) =>
-      parseProposalCounter(decision.proposalId, "stored proposalId") <= boundary
+      (proposalIdScheme
+        ? parseProposalCounter(decision.proposalId, "stored proposalId") < boundary
+        : parseProposalCounter(decision.proposalId, "stored proposalId") <= boundary)
   );
 }
 
@@ -164,9 +176,9 @@ export function findMissingLifecycleReferences(
     }
     if (
       (decision.status === "queued" ||
-        decision.status === "expired" ||
+        (decision.status === "expired" && (!decision.aave || decision.aave.queuingTime > 0)) ||
         decision.status === "executed" ||
-        (decision.status === "canceled" && decision.eta !== null)) &&
+        (decision.status === "canceled" && (decision.eta !== null || (decision.aave?.queuingTime ?? 0) > 0))) &&
       !hasCanonicalLifecycleReference(
         decision.queuedBlockNumber,
         decision.queuedTransactionHash
@@ -182,6 +194,13 @@ export function findMissingLifecycleReferences(
       )
     ) {
       missing.push(`${decision.proposalId}:executed`);
+    }
+    if (decision.aave &&
+        (decision.status === "defeated" || decision.status === "queued" ||
+         decision.status === "executed" || decision.aave.queuingTime > 0) &&
+        !hasCanonicalLifecycleReference(decision.aave.resultBlockNumber ?? null,
+          decision.aave.resultTransactionHash ?? null)) {
+      missing.push(`${decision.proposalId}:settled-result`);
     }
   }
 

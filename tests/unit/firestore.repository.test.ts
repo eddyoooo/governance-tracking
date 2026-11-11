@@ -7,6 +7,7 @@ import {
   type FetchRun
 } from "../../src/storage/fetchRun.repository.js";
 import { FirestoreProposalRepository } from "../../src/storage/firestoreProposal.repository.js";
+import { buildStoredProposal } from "../../src/storage/proposal.repositoryUtils.js";
 import { FirestoreGovernanceRepository } from "../../src/storage/governance.repository.js";
 import { FirestoreProtocolStateRepository } from "../../src/storage/protocolState.repository.js";
 import {
@@ -14,6 +15,9 @@ import {
   type SourceActivityRecord
 } from "../../src/storage/sourceActivity.repository.js";
 import { createRawGovernanceItem } from "../helpers/builders.js";
+import { testEnv } from "../helpers/builders.js";
+import { ScriptedAaveOnchainDemoAdapter } from "../../src/demoFixtures/scriptedAaveOnchainDemo.adapter.js";
+import { aaveOnchainEventFixtures } from "../../src/demoFixtures/aaveOnchain.fixture.js";
 import {
   createGovernanceObservation,
   createGovernanceScanRun,
@@ -39,7 +43,7 @@ class FakeDocumentReference {
 
     return {
       exists: Boolean(data),
-      data: () => data
+      data: () => structuredClone(data)
     };
   }
 
@@ -133,7 +137,7 @@ class FakeQuery {
       (field) => this.filters.some((filter) => filter.field === field)
     );
 
-    if (isSourceIdentityQuery && this.options.sourceIdentityQueryError) {
+    if (isSourceIdentityQuery && "sourceIdentityQueryError" in this.options) {
       throw this.options.sourceIdentityQueryError;
     }
 
@@ -159,9 +163,9 @@ class FakeQuery {
 
         return this.orderDirection === "asc" ? compared : -compared;
       })
-      .slice(0, this.limitCount ?? 100)
+      .slice(0, this.limitCount ?? Number.MAX_SAFE_INTEGER)
       .map((document) => ({
-        data: () => document
+        data: () => structuredClone(document)
       }));
 
     return { docs };
@@ -175,7 +179,10 @@ class FakeCollectionReference extends FakeQuery {
 }
 
 class FakeTransaction {
+  private readonly writes: Array<() => void> = [];
+
   async get(target: { get(): Promise<unknown> }) {
+    if (this.writes.length > 0) throw new Error("Firestore transactions require all reads before writes.");
     return target.get();
   }
 
@@ -184,15 +191,19 @@ class FakeTransaction {
     data: StoredDocument,
     options?: { merge?: boolean }
   ): FakeTransaction {
-    void ref.set(data, options);
+    this.writes.push(() => { void ref.set(structuredClone(data), options); });
 
     return this;
   }
 
   create(ref: FakeDocumentReference, data: StoredDocument): FakeTransaction {
-    ref.create(data);
+    this.writes.push(() => ref.create(structuredClone(data)));
 
     return this;
+  }
+
+  commit() {
+    for (const write of this.writes) write();
   }
 }
 
@@ -215,12 +226,29 @@ function createFakeFirestore(
 
       return new FakeCollectionReference(collections.get(name) ?? new Map(), options);
     },
-    runTransaction: async (updateFunction: (transaction: FakeTransaction) => unknown) =>
-      updateFunction(new FakeTransaction())
+    runTransaction: async (updateFunction: (transaction: FakeTransaction) => unknown) => {
+      const transaction = new FakeTransaction();
+      const result = await updateFunction(transaction);
+      transaction.commit();
+      return result;
+    }
   } as unknown as Firestore;
 }
 
 describe("FirestoreProposalRepository", () => {
+  it("reads an outstanding queue larger than 100 records without a composite index", async () => {
+    const proposals = Object.fromEntries(Array.from({ length: 150 }, (_, index) => {
+      const stored = buildStoredProposal(normalizeLidoForumItem(createRawGovernanceItem({ sourceId: String(index) })),
+        null, { notificationStatusForNew: "pending" });
+      return [stored.id, stored];
+    }));
+    const repository = new FirestoreProposalRepository(createFakeFirestore({ proposals }));
+    await expect(repository.findByNotificationStatus("pending", Number.MAX_SAFE_INTEGER)).resolves.toHaveLength(150);
+  });
+  it.each([null, undefined, "provider failure"])("preserves non-Error lookup failures: %p", async (failure) => {
+    const repository = new FirestoreProposalRepository(createFakeFirestore({}, { sourceIdentityQueryError: failure }));
+    await expect(repository.findBySourceIdentity("lido", "forum", "1001")).rejects.toBe(failure);
+  });
   it("round-trips an explicit notification skip reason", async () => {
     const repository = new FirestoreProposalRepository(createFakeFirestore());
     const proposal = normalizeLidoForumItem(
@@ -951,6 +979,8 @@ describe("FirestoreFetchRunRepository", () => {
     await repository.upsert(olderSuccessful);
     await repository.upsert(successful);
     await repository.upsert(failed);
+    await repository.upsert({ ...successful, id: "partial", coverageComplete: false,
+      startedAt: "2026-06-07T00:00:00.000Z" });
 
     await expect(
       repository.findLatestSuccessfulByProtocol("uniswap")
@@ -1050,6 +1080,39 @@ describe("FirestoreSourceActivityRepository", () => {
 });
 
 describe("FirestoreGovernanceRepository", () => {
+  it("rolls back a staged decision update when existing lifecycle metadata fails validation", async () => {
+    const db = createFakeFirestore();
+    const repository = new FirestoreGovernanceRepository(db);
+    const observation = createGovernanceObservation();
+    const first = await repository.upsertDecision(observation, { notificationStatusForNewEvents: "pending" });
+    const ref = db.collection("governanceEvents").doc(createGovernanceLifecycleEventId(observation.id, "created"));
+    await ref.set({ ...(await ref.get()).data(), transactionHash: `0x${"99".repeat(32)}` });
+    await expect(repository.upsertDecision({ ...observation, title: "Must not be committed" },
+      { notificationStatusForNewEvents: "pending" })).rejects.toThrow("transaction hash cannot change");
+    await expect(repository.findDecisionById(observation.id)).resolves.toEqual(first.decision);
+  });
+  it("persists native Aave zero and atomically releases deferred lifecycle events without resetting deliveries", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const adapter = new ScriptedAaveOnchainDemoAdapter(testEnv());
+    const events = aaveOnchainEventFixtures;
+    adapter.setPhase("created");
+    const initial = await repository.upsertDecision(await adapter.getDecision("0", events.slice(0, 1), null,
+      events[0].blockNumber), { notificationStatusForNewEvents: "pending" });
+    await repository.updateNotificationState(initial.lifecycleEventsCreated[0].id, () => ({ notificationStatus: "sent" }));
+    adapter.setPhase("executed");
+    const partial = await repository.upsertDecision(await adapter.getDecision("0", events.slice(1, 2), initial.decision,
+      events[3].blockNumber), { notificationStatusForNewEvents: "pending" });
+    expect(partial.lifecycleEventsCreated).toHaveLength(3);
+    expect(partial.lifecycleEventsCreated.every((event) => event.notificationReady === false)).toBe(true);
+    const complete = await repository.upsertDecision(await adapter.getDecision("0", events, partial.decision,
+      events[3].blockNumber), { notificationStatusForNewEvents: "pending" });
+    expect(complete.lifecycleEventsCreated).toEqual([]);
+    expect(complete.lifecycleEventsUpdated).toHaveLength(3);
+    expect(complete.lifecycleEventsUpdated?.every((event) => event.notificationReady)).toBe(true);
+    await expect(repository.countByNotificationStatus("sent")).resolves.toBe(1);
+    await expect(repository.countByNotificationStatus("pending")).resolves.toBe(3);
+    await expect(repository.findDecisionsBySource(adapter.sourceKey)).resolves.toMatchObject([{ proposalId: "0" }]);
+  });
   it("transactionally stores decisions and idempotent lifecycle events", async () => {
     const repository = new FirestoreGovernanceRepository(createFakeFirestore());
     const observation = createGovernanceObservation();

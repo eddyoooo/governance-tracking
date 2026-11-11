@@ -58,6 +58,8 @@ describeLive("Uniswap on-chain read-only E2E", () => {
         ENABLE_TELEGRAM_NOTIFICATIONS: "false",
         ENABLE_ADMIN_STATUS_REPORTS: "false",
         UNISWAP_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
+        AAVE_ONCHAIN_ENABLED: "false",
+        AAVE_ONCHAIN_NOTIFICATIONS_ENABLED: "false",
         LOG_LEVEL: "silent"
       });
       if (!env.ethereumRpcUrl) {
@@ -114,6 +116,7 @@ describeLive("Uniswap on-chain read-only E2E", () => {
         "executed"
       ]);
       for (const expected of fixture.events) {
+        expect((await client.getBlock(expected.blockNumber)).hash.toLowerCase()).toBe(expected.blockHash.toLowerCase());
         expect(lifecycleEvents).toContainEqual(
           expect.objectContaining({
             type: expected.type,

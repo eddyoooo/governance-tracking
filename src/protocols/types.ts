@@ -61,6 +61,11 @@ export interface StoredProposal extends NormalizedGovernanceItem {
   updatedAt: string;
 }
 
+export interface GovernanceFetchBatch {
+  items: RawGovernanceItem[];
+  warnings: string[];
+}
+
 export interface ProtocolAdapter {
   protocol: string;
   source: GovernanceSource;
@@ -69,5 +74,6 @@ export interface ProtocolAdapter {
   publisherTrustLevelAllowlist?: readonly number[];
   notificationPolicy?: NotificationPolicy;
   fetchRecent(): Promise<RawGovernanceItem[]>;
+  fetchRecentWithDiagnostics?(): Promise<GovernanceFetchBatch>;
   normalize(item: RawGovernanceItem): NormalizedGovernanceItem;
 }

@@ -20,6 +20,8 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
     "test:e2e:forums": "RUN_FORUM_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/forumSources.e2e.test.ts",
     "test:e2e:onchain": "RUN_UNISWAP_ONCHAIN_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/uniswapOnchain.e2e.test.ts",
+    "test:e2e:aave-onchain": "RUN_AAVE_ONCHAIN_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/aaveOnchain.e2e.test.ts",
+    "test:e2e:aave-onchain:full": "RUN_AAVE_ONCHAIN_FULL_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/aaveOnchainFullReplay.e2e.test.ts",
     "test:e2e:onchain:full": "RUN_UNISWAP_ONCHAIN_FULL_E2E=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/uniswapOnchainFullReplay.e2e.test.ts",
     "test:e2e:telegram": "RUN_TELEGRAM_E2E=true TELEGRAM_E2E_ENABLED=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage=false tests/e2e/telegram.e2e.test.ts",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch --coverage=false"
@@ -37,7 +39,7 @@
   },
   "overrides": {
     "google-gax": {
-      "rimraf": "6.1.3"
+      "rimraf": "6.1.4"
     },
     "qs": "6.16.1"
   },

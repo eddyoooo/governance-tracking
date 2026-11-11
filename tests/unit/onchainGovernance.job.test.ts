@@ -80,6 +80,58 @@ function createJob(options: {
 }
 
 describe("OnchainGovernanceScanJob", () => {
+  it("rejects a finalized range endpoint that disagrees with the validated head before writes or alerts", async () => {
+    const { job, repository, control, notificationService } = createJob();
+    await job.run("uniswap");
+    const before = await repository.findSourceState(TEST_SOURCE_KEY);
+    control.validation.latestFinalizedBlock = {
+      number: 115, hash: testBlockHash(115), timestamp: "2026-09-01T00:00:00.000Z"
+    };
+    control.validation.proposalCount = "2";
+    control.events.push(createGovernanceContractEvent({ proposalId: "2", blockNumber: 111 }));
+    const original = control.getBlock.getMockImplementation()!;
+    control.getBlock.mockImplementation(async (number: number) => number === 115
+      ? { number, hash: testBlockHash(999), timestamp: "2026-09-01T00:00:00.000Z" }
+      : original(number));
+    await expect(job.run("uniswap")).rejects.toThrow("finalized head hash");
+    expect(notificationService.messages).toEqual([]);
+    await expect(repository.findDecisionsBySource(TEST_SOURCE_KEY)).resolves.toHaveLength(1);
+    await expect(repository.findSourceState(TEST_SOURCE_KEY)).resolves.toMatchObject({
+      healthStatus: "failed", cursorBlockNumber: before!.cursorBlockNumber
+    });
+  });
+  it.each([false, true])("rejects a non-canonical log before storing or notifying (established=%s)", async (established) => {
+    const { job, repository, control, notificationService } = createJob();
+    if (established) {
+      await job.run("uniswap");
+      control.validation.latestFinalizedBlock = {
+        number: 120, hash: testBlockHash(120), timestamp: "2026-09-01T00:00:00.000Z"
+      };
+      control.validation.proposalCount = "2";
+      control.events.push(createGovernanceContractEvent({
+        proposalId: "2", blockNumber: 111, blockHash: testBlockHash(999)
+      }));
+    } else {
+      control.events[0].blockHash = testBlockHash(999);
+    }
+
+    await expect(job.run("uniswap")).rejects.toThrow("does not match its canonical block hash");
+    expect(notificationService.messages).toEqual([]);
+    const state = await repository.findSourceState(TEST_SOURCE_KEY);
+    expect(state).toMatchObject({ healthStatus: "failed", cursorBlockNumber: established ? 110 : 99 });
+    await expect(repository.findDecisionsBySource(TEST_SOURCE_KEY)).resolves.toHaveLength(established ? 1 : 0);
+  });
+
+  it("loads one canonical header per event block even when several proposals share it", async () => {
+    const control = createFakeEvmGovernanceAdapter({
+      proposalCount: "2",
+      events: [createGovernanceContractEvent(), createGovernanceContractEvent({ proposalId: "2" })]
+    });
+    const { job } = createJob({ adapterControl: control });
+    await job.run("uniswap");
+    expect(control.getBlock.mock.calls.filter(([number]) => number === 101)).toHaveLength(1);
+  });
+
   it("silently seeds all historical decisions and persists a resumable source cursor", async () => {
     const { job, repository, notificationService, control } = createJob();
 
@@ -1283,7 +1335,9 @@ describe("OnchainGovernanceScanJob", () => {
     ]
   ] as const)("rejects adapter cursor block with %s", async (_name, block, message) => {
     const control = createFakeEvmGovernanceAdapter();
-    control.getBlock.mockResolvedValueOnce(block);
+    control.getBlock.mockImplementation(async (number: number) => number === 109 ? block : {
+      number, hash: testBlockHash(number), timestamp: "2026-09-01T00:00:00.000Z"
+    });
     const setup = createJob({ adapterControl: control });
 
     await expect(setup.job.run("uniswap")).rejects.toThrow(message);
