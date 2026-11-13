@@ -11,6 +11,7 @@ import type { AaveGovernanceData, GovernanceContractEvent, GovernanceDecisionObs
   GovernanceSourceValidation, StoredGovernanceDecision } from "../types.js";
 import { AAVE_GOVERNANCE_ABI, AAVE_GOVERNANCE_EVENTS } from "./aaveGovernance.abi.js";
 import { aaveMetadataCid, aaveStatus, assertAaveObservation } from "./aaveGovernance.model.js";
+import { aaveProposalUrl } from "./aaveProposalUrl.js";
 
 export const AAVE_GOVERNANCE_ADDRESS = "0x9AEE0B04504CeF83A65AC3f0e838D0593BCb2BC7";
 export const AAVE_GOVERNANCE_DEPLOYMENT_BLOCK = 18_119_225;
@@ -193,7 +194,7 @@ export class AaveOnchainClient {
       id: createGovernanceDecisionId({ protocol: "aave", chainId: 1, governorAddress: this.governorAddress, proposalId: id }),
       sourceKey: this.sourceKey, protocol: "aave", sourceType: "onchain", chainId: 1,
       governorAddress: this.governorAddress, proposalId: id, proposer: getAddress(p.creator),
-      ...metadata, sourceUrl: `https://vote.onaave.com/proposal/?proposalId=${id}`,
+      ...metadata, sourceUrl: aaveProposalUrl(id),
       status, ...outcomes, aave, eta: null,
       forVotes: p.forVotes.toString(), againstVotes: p.againstVotes.toString(), abstainVotes: "0", actions: [],
       ...(created ? { createdBlockNumber: created.blockNumber, createdTransactionHash: created.transactionHash } : {}),

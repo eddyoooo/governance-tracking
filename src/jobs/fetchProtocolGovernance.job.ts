@@ -172,11 +172,6 @@ export class FetchProtocolGovernanceJob {
         ? await adapter.fetchRecentWithDiagnostics()
         : { items: await adapter.fetchRecent(), warnings: [] };
       const rawItems = batch.items;
-      const coverageComplete = batch.warnings.length === 0;
-      if (!coverageComplete) {
-        run.coverageComplete = false;
-        errors.push(...batch.warnings);
-      }
       fetchedCount = rawItems.length;
       const sourceActivityConfig =
         this.sourceActivityConfig ??
@@ -185,6 +180,12 @@ export class FetchProtocolGovernanceJob {
           criticalDays: 30,
           minFetchedCount: 1
         };
+      const meetsSourceMinimum = fetchedCount >= sourceActivityConfig.minFetchedCount;
+      errors.push(...batch.warnings);
+      if (!meetsSourceMinimum) {
+        errors.push(`Fetched ${fetchedCount} raw item(s), below minimum ${sourceActivityConfig.minFetchedCount}.`);
+      }
+      if (errors.length > 0) run.coverageComplete = false;
       const sourceActivity = await updateSourceActivity({
         repository: this.sourceActivityRepository,
         source: adapter.source,
@@ -271,11 +272,7 @@ export class FetchProtocolGovernanceJob {
         }
       }
 
-      if (
-        baselineSeeding &&
-        coverageComplete &&
-        fetchedCount >= sourceActivityConfig.minFetchedCount
-      ) {
+      if (baselineSeeding && run.coverageComplete !== false) {
         await this.protocolStateRepository.markBaselineComplete(
           protocol,
           new Date().toISOString()
@@ -287,9 +284,9 @@ export class FetchProtocolGovernanceJob {
             fetchedCount,
             minFetchedCount: sourceActivityConfig.minFetchedCount
           },
-          coverageComplete
-            ? "Protocol baseline remains in seeding mode because the fetch returned too few items"
-            : "Protocol baseline remains in seeding mode because source coverage was partial"
+          meetsSourceMinimum
+            ? "Protocol baseline remains in seeding mode because source coverage was partial"
+            : "Protocol baseline remains in seeding mode because the fetch returned too few items"
         );
       }
 

@@ -24,13 +24,19 @@ class RecordingService implements NotificationService {
   async send(message: NotificationMessage) { this.messages.push(message); }
 }
 
-function runtime(protocol: string) {
+function runtime(protocol: string, minFetchedCount = 1) {
   let phase = 0;
   const item = (sourceId: string, publishedAt: string) => createRawGovernanceItem({ protocol, sourceId, publishedAt });
   const original = item("101", "2026-11-09T00:00:00.000Z");
+  const prior = item("100", "2026-11-08T00:00:00.000Z");
   const visible = item("102", "2026-11-10T08:30:00.000Z");
   const delayed = item("103", "2026-11-10T08:40:00.000Z");
-  const items = () => phase === 0 ? [original] : phase === 1 ? [original, visible] : [original, visible, delayed];
+  const items = () => phase === 0 ? [original]
+    : phase === 1 ? [original, visible]
+    : phase === 3 ? []
+    : phase === 4 ? [visible]
+    : phase === 5 ? [prior, original]
+    : [original, visible, delayed];
   const baseUrl = "https://forum.example";
   const fetchImpl = jest.fn<typeof fetch>(async (url) => {
     const parsed = new URL(String(url));
@@ -56,7 +62,8 @@ function runtime(protocol: string) {
   const states = new MemoryProtocolStateRepository();
   const notifications = new RecordingService();
   const job = new FetchProtocolGovernanceJob(registry, proposals, runs, new MemorySourceActivityRepository(),
-    createSilentLogger(), { notificationService: notifications, protocolStateRepository: states });
+    createSilentLogger(), { notificationService: notifications, protocolStateRepository: states,
+      sourceActivityConfig: { minFetchedCount, warningDays: 14, criticalDays: 30 } });
   return { job, proposals, runs, states, notifications, setPhase: (next: number) => { phase = next; } };
 }
 
@@ -92,5 +99,38 @@ describe("forum partial-coverage recovery", () => {
     await expect(instance.states.findByProtocol("aave")).resolves.toMatchObject({ baselineStatus: "complete" });
     expect(instance.notifications.messages).toEqual([]);
     await expect(instance.proposals.countByNotificationStatus("skipped")).resolves.toBe(3);
+  });
+
+  it.each(["lido", "aave", "uniswap", "cow"])("does not advance %s's alert cutoff on an unexpectedly empty fetch", async (protocol) => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-11-10T08:00:00.000Z"));
+    const instance = runtime(protocol);
+    const baseline = await instance.job.run(protocol);
+    instance.setPhase(3);
+    jest.setSystemTime(new Date("2026-11-10T09:00:00.000Z"));
+    await expect(instance.job.run(protocol)).resolves.toMatchObject({
+      fetchedCount: 0, run: { status: "success", coverageComplete: false },
+      errors: ["Fetched 0 raw item(s), below minimum 1."]
+    });
+    await expect(instance.runs.findLatestSuccessfulByProtocol(protocol)).resolves.toEqual(baseline.run);
+    instance.setPhase(2);
+    jest.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    await expect(instance.job.run(protocol)).resolves.toMatchObject({
+      notificationSentCount: 2, storedNewCount: 2, baselineSeededCount: 0
+    });
+  });
+
+  it("still stores visible items below a nonzero configured minimum without trusting the fetch as a cutoff", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-11-10T08:00:00.000Z"));
+    const instance = runtime("aave", 2);
+    instance.setPhase(5);
+    const baseline = await instance.job.run("aave");
+    instance.setPhase(4);
+    jest.setSystemTime(new Date("2026-11-10T09:00:00.000Z"));
+    await expect(instance.job.run("aave")).resolves.toMatchObject({
+      fetchedCount: 1, storedNewCount: 1, notificationSentCount: 1, run: { coverageComplete: false },
+      errors: ["Fetched 1 raw item(s), below minimum 2."]
+    });
+    await expect(instance.runs.findLatestSuccessfulByProtocol("aave")).resolves.toEqual(baseline.run);
+    await expect(instance.proposals.findAll()).resolves.toHaveLength(3);
   });
 });

@@ -167,7 +167,7 @@ Important result fields:
 - `notificationFailedCount`: newly discovered proposals with at least one initial recipient failure.
 - `notificationSuppressedCount`: newly stored eligible proposals intentionally silenced by a protocol notification policy.
 - `errors`: partial-feed warnings, notification errors, or a failed run's reason.
-- `run.coverageComplete=false`: a feed/page failed; usable topics were retained, but the initial baseline and historical cutoff do not advance. The next fully covered run clears the admin warning.
+- `run.coverageComplete=false`: a feed/page failed or the raw topic count was below `SOURCE_ACTIVITY_MIN_FETCHED_COUNT`. Usable topics are retained, but the baseline and historical cutoff do not advance. The next fully covered run clears this admin warning.
 
 For Aave, `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true` stores but does not notify narrowly recognized dated LlamaRisk `Risk Stewards` cap-only or cap-plus-IRM changes (`IRM` or the observed `USDT IRM` variant). Expect `notificationStatus=skipped`, a cap-specific `notificationSkipReason`, and an incremented `notificationSuppressedCount`. `skippedCount` is different: it counts non-eligible publishers that were not stored. IRM-only, PT parameter, Slope2, oracle, incident, assessment, unfamiliar-title, and non-LlamaRisk posts remain alertable. Set the flag to `false` to restore notifications for future newly discovered matching posts; already skipped records are not replayed.
 
@@ -280,7 +280,7 @@ Retry delays are:
 
 Only failed or pending recipients are retried. A recipient already marked `sent` never receives that proposal again. A failed proposal clears automatically after all remaining recipients succeed. If an unresolved Aave proposal now matches the routine-cap policy, recovery closes its unsent recipients as skipped without contacting Telegram. Removing an unresolved recipient from `TELEGRAM_ALLOWED_USER_IDS` also marks that delivery skipped and allows the aggregate status to clear. Ambiguous failures created by an older release without verifiable recipient identity are closed as `skipped` without resending.
 
-For Uniswap or Aave on-chain alerts, either `*_ONCHAIN_ENABLED=false` or `*_ONCHAIN_NOTIFICATIONS_ENABLED=false` pauses queued deliveries too. Re-enable both flags to resume due unresolved recipients; successful recipients are preserved. Paused pending/failed records remain in admin counts. Events whose source identity is no longer registered stay paused for operator review.
+For Uniswap or Aave on-chain alerts, either `*_ONCHAIN_ENABLED=false` or `*_ONCHAIN_NOTIFICATIONS_ENABLED=false` pauses queued deliveries too. Re-enable both flags to resume eligible unresolved deliveries; successful recipients are preserved. Recovery closes any remaining old Aave non-result alerts as skipped instead of sending them. Paused pending/failed records remain in admin counts. Events whose source identity is no longer registered stay paused for operator review.
 
 The monitor accepts delivery only after Telegram returns valid JSON with `ok: true`. A misleading HTTP `2xx` proxy page, malformed response, empty response, or Telegram `ok: false` response stays unresolved and is retried automatically.
 
@@ -385,9 +385,11 @@ curl -s "$API/api/admin/governance-votes?protocol=aave&limit=100"
 
 Use the authentication header shown above when API auth is enabled. Keep Aave alerts off during this initial deployment. The POST writes the silent baseline, including proposal `0`, with resumable checkpoints. Wait for `baselineStatus=complete` and `healthStatus=healthy`. The GETs only read stored data.
 
-Then set `AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=true` (and `ENABLE_TELEGRAM_NOTIFICATIONS=true`) and recreate the container to alert on new events. With runtime `-e` deployment, pass both Aave flags explicitly. Aave uses the existing six-hour on-chain schedule and appears in the same daily admin status report.
+Then set `AAVE_ONCHAIN_NOTIFICATIONS_ENABLED=true` (and `ENABLE_TELEGRAM_NOTIFICATIONS=true`) and recreate the container to alert on new vote results. With runtime `-e` deployment, pass both Aave flags explicitly. Aave uses the existing six-hour on-chain schedule and appears in the same daily admin status report.
 
-Aave result notifications report settled For/Against totals and percentages in AAVE voting power, plus the Ethereum **Result settled** date. Remote live voting totals and exact remote voting-end dates are not collected. **GOVERNANCE PROPOSAL FORWARDED** means the Ethereum core dispatched payloads, not that all destination-chain actions executed. The database retains payload identities and native timestamps. IPFS metadata failure falls back to the proposal ID/link rather than blocking monitoring.
+Expect one **ON-CHAIN GOVERNANCE VOTE RESULT** for a **Succeeded** or **Defeated** proposal, with settled For/Against totals, percentages, and the Ethereum **Result settled** date. Creation, queueing, forwarding, cancellation, and expiry are tracked without separate Telegram alerts. The database retains payload identities and native timestamps; Ethereum forwarding is not proof of destination-chain execution. IPFS metadata failure falls back to the proposal ID/link rather than blocking monitoring.
+
+New and retried alerts, and the `governance-votes` endpoint, link to the current [Aave governance app (example: #542)](https://app.aave.com/governance/v3/proposal/?proposalId=542). Redeploy the updated image with the same environment and database. Previously delivered Telegram messages keep their old links.
 
 Read-only verification with the configured Ethereum RPC:
 
@@ -398,7 +400,7 @@ npm run test:e2e:aave-onchain:full  # Full baseline and repeat scan, many RPC re
 
 Both tests use no Firestore writes or Telegram sends. The full replay uses memory storage, checks every native ID and settled result at a fixed finalized head, and may take several minutes.
 
-The credential-free preflight demo command above includes the real saved Aave lifecycle and verifies silent seeding, discovery, settled results, forwarding, and duplicate suppression. It exits unsuccessfully if an on-chain scan fails. Enabling Telegram in the demo restricts all messages to the configured admin, never teammate IDs.
+The credential-free preflight demo command above includes the real saved Aave lifecycle and verifies silent seeding, discovery, settled results, forwarding, and duplicate suppression. It exits unsuccessfully if an on-chain scan fails. With Telegram enabled, the demo sends only the Aave result for this lifecycle, and all demo messages go to the configured admin, never teammate IDs.
 
 ## Scheduled Production Flow
 
@@ -488,7 +490,7 @@ Current Aave routine-cap notification policy:
 
 Binding to `127.0.0.1:3001` keeps the API local to the droplet while scheduled polling and outbound Telegram notifications continue normally. Set `API=http://127.0.0.1:3001` on the Docker host for the operator commands above.
 
-Use the RPC and source flags from the README for Uniswap or Aave on-chain tracking. For each enabled source, run its first scan and wait for `/api/admin/onchain-source-status` to report `baselineStatus: "complete"` and `healthStatus: "healthy"`. Aave's first-deployment example leaves its lifecycle alerts off until that check passes.
+Use the RPC and source flags from the README for Uniswap or Aave on-chain tracking. For each enabled source, run its first scan and wait for `/api/admin/onchain-source-status` to report `baselineStatus: "complete"` and `healthStatus: "healthy"`. Aave's first-deployment example leaves its result alerts off until that check passes.
 
 Do not use the local pretty multi-line `.env` directly with `--env-file`; Docker requires every value, including JSON publisher arrays, on one physical line.
 

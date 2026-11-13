@@ -166,11 +166,30 @@ describe("Aave Governance V3 RPC client", () => {
     const { client, block } = aaveRpcFixture();
     const decision = await client.getDecision("0", [], null, block);
     expect(decision).toMatchObject({ protocol: "aave", proposalId: "0", status: "pending", abstainVotes: "0",
-      title: "Aave governance proposal #0", aave: { executionScope: "governance-core", creationTime: 1704488567 } });
+      title: "Aave governance proposal #0", aave: { executionScope: "governance-core", creationTime: 1704488567 },
+      sourceUrl: "https://app.aave.com/governance/v3/proposal/?proposalId=0" });
     expect(decision.startBlock).toBeUndefined();
     expect(decision.endBlock).toBeUndefined();
     expect(decision.votingEndedAt).toBeUndefined();
     expect(decision.aave?.metadataCid).toBe(aaveMetadataCid(AAVE_IPFS_HASH));
+  });
+  it("links proposal 542 to its detail page in the current Aave app", async () => {
+    const { client, block } = aaveRpcFixture();
+    await expect(client.getDecision("542", [], null, block)).resolves.toMatchObject({
+      sourceUrl: "https://app.aave.com/governance/v3/proposal/?proposalId=542"
+    });
+  });
+  it.each([
+    ["https://vote.onaave.com/proposal/?proposalId=1", "https://app.aave.com/governance/v3/proposal/?proposalId=0"],
+    ["https://vote.onaave.com/proposal/?proposalId=0", "https://app.aave.com/governance/v3/proposal/?proposalId=1"],
+    ["https://app.aave.com/governance/v3/proposal/?proposalId=0", "https://vote.onaave.com/proposal/?proposalId=0"]
+  ])("rejects unrelated or reverse URL changes (%s -> %s)", async (before, after) => {
+    const { client, block } = aaveRpcFixture();
+    const observation = await client.getDecision("0", [], null, block);
+    const now = "2026-11-13T09:00:00.000Z";
+    const existing = mergeGovernanceDecision(null, { ...observation, sourceUrl: before }, now).decision;
+    expect(() => mergeGovernanceDecision(existing, { ...observation, sourceUrl: after }, now))
+      .toThrow("Governance proposal source URL cannot change.");
   });
   it.each([
     [2, "active"], [3, "queued"], [4, "executed"], [5, "defeated"], [6, "canceled"], [7, "expired"]

@@ -1,5 +1,6 @@
 import { hashObject, sha256 } from "../utils/hash.js";
 import { assertAaveObservation } from "./aave/aaveGovernance.model.js";
+import { migrateAaveProposalUrl } from "./aave/aaveProposalUrl.js";
 import type {
   GovernanceAction,
   GovernanceDecisionObservation,
@@ -516,7 +517,10 @@ function assertImmutableProposalData(
   if (hashObject(existing.actions) !== hashObject(observation.actions)) {
     throw new Error("Governance proposal actions cannot change.");
   }
-  if (existing.sourceUrl !== observation.sourceUrl) {
+  const previousSourceUrl = existing.aave
+    ? migrateAaveProposalUrl(existing.sourceUrl, existing.proposalId)
+    : existing.sourceUrl;
+  if (existing.sourceUrl !== observation.sourceUrl && previousSourceUrl !== observation.sourceUrl) {
     throw new Error("Governance proposal source URL cannot change.");
   }
   if (

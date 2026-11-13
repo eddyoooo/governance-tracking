@@ -106,4 +106,22 @@ describe("notification recovery fairness and failure isolation", () => {
     await expect(originalRead(second.proposal.id)).resolves.toMatchObject({ notificationStatus: "sent" });
     await expect(originalRead(first.proposal.id)).resolves.toMatchObject({ notificationStatus: "pending" });
   });
+
+  it.each(["sent", "skipped"] as const)("does not reopen a stale recovery candidate now marked %s", async (notificationStatus) => {
+    const repository = new MemoryProposalRepository();
+    const service = new RecordingService();
+    const { proposal } = await repository.upsert(normalizeLidoForumItem(createRawGovernanceItem()),
+      { notificationStatusForNew: "pending" });
+    const original = repository.findByNotificationStatus.bind(repository);
+    const terminal = await repository.updateNotificationState(proposal.id, () => ({ notificationStatus }));
+    jest.spyOn(repository, "findByNotificationStatus").mockImplementation((status, limit) =>
+      status === "pending" ? Promise.resolve([proposal]) : original(status, limit));
+    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger());
+
+    await expect(dispatcher.recoverOutstanding()).resolves.toMatchObject({
+      candidateCount: 1, attemptedRecipientCount: 0, recoveredCount: 0, errors: []
+    });
+    expect(service.messages).toEqual([]);
+    await expect(repository.findById(proposal.id)).resolves.toEqual(terminal);
+  });
 });

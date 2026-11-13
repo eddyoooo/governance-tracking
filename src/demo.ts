@@ -573,7 +573,7 @@ async function main(): Promise<void> {
   const aaveOnchainCreation = await runStep("Aave on-chain discovery: track real native proposal #0", async () =>
     summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
   aaveOnchainAdapter.setPhase("executed");
-  const aaveOnchainExecution = await runStep("Aave on-chain result: accepted votes and forwarding to payload controllers", async () =>
+  const aaveOnchainExecution = await runStep("Aave on-chain result: notify the settled vote only; record queue and forwarding", async () =>
     summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
   const aaveDuplicate = await runStep("Aave on-chain repeated scan: no duplicate records or alerts", async () =>
     summarizeOnchainScan(await context.onchainGovernanceJob.run("aave")), stepDelayMs);
@@ -590,7 +590,11 @@ async function main(): Promise<void> {
     aaveOnchainBaseline.notificationSentCount !== 0 ||
     aaveOnchainCreation.decisionsCreated !== 1 ||
     aaveOnchainCreation.lifecycleEventsCreated !== 1 ||
+    aaveOnchainCreation.notificationSentCount !== 0 ||
+    aaveOnchainCreation.notificationFailedCount !== 0 ||
     aaveOnchainExecution.lifecycleEventsCreated !== 3 ||
+    aaveOnchainExecution.notificationSentCount !== (env.aaveOnchainNotificationsEnabled ? 1 : 0) ||
+    aaveOnchainExecution.notificationFailedCount !== 0 ||
     aaveGovernanceDecisions.length !== 1 ||
     aaveDecision.proposalId !== "0" ||
     aaveDecision.status !== "executed" ||
@@ -791,6 +795,7 @@ async function main(): Promise<void> {
       execution: aaveOnchainExecution,
       duplicate: aaveDuplicate,
       storedDecisionCount: aaveGovernanceDecisions.length,
+      sourceUrl: aaveDecision.sourceUrl,
       integrityChecks: "passed"
     },
     telegram:

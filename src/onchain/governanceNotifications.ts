@@ -1,4 +1,5 @@
 import type { LifecycleNotificationMessage } from "../notifications/notification.service.js";
+import { migrateAaveProposalUrl } from "./aave/aaveProposalUrl.js";
 import type {
   GovernanceLifecycleEvent,
   GovernanceTransitionType,
@@ -88,6 +89,11 @@ export function governanceEventMessage(
 ): LifecycleNotificationMessage {
   if (event.message.kind !== "lifecycle") {
     throw new Error(`Governance event ${event.id} has an invalid message kind.`);
+  }
+
+  if (event.protocol === "aave" && event.message.protocol === "aave" &&
+      event.message.sourceType === "onchain") {
+    return { ...event.message, sourceUrl: migrateAaveProposalUrl(event.message.sourceUrl) };
   }
 
   return event.message;

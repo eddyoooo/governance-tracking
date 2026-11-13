@@ -41,6 +41,7 @@ import {
   type EvmGovernanceRegistry
 } from "./onchain/registry.js";
 import { governanceEventMessage } from "./onchain/governanceNotifications.js";
+import { evaluateGovernanceNotificationPolicy } from "./onchain/governanceNotificationPolicy.js";
 import type { GovernanceLifecycleEvent } from "./onchain/types.js";
 import type { GovernanceRepository } from "./storage/governance.repository.js";
 import { errorMessage, safeErrorDetails } from "./utils/errors.js";
@@ -119,7 +120,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
       notificationService,
       logger,
       governanceEventMessage,
-      undefined,
+      evaluateGovernanceNotificationPolicy,
       (event) => {
         const source = typeof event.protocol === "string"
           ? evmGovernanceRegistry.get(event.protocol)

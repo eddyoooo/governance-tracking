@@ -179,6 +179,7 @@ describe("on-chain governance notifications", () => {
     expect(lifecycleText).not.toContain("Proposal:");
     expect(lifecycleText).not.toContain("Proposer:");
     expect(lifecycleText).toContain("Title: Fee activation &lt;phase 2&gt;");
+    expect(lifecycleText.split("\n").at(-1)).toBe("Link: https://vote.uniswapfoundation.org/proposals/1");
     expect(lifecycleText).not.toContain("Publisher:");
   });
 

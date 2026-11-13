@@ -1080,6 +1080,33 @@ describe("FirestoreSourceActivityRepository", () => {
 });
 
 describe("FirestoreGovernanceRepository", () => {
+  it("migrates a stored Aave proposal and lifecycle link without changing delivery state or event identity", async () => {
+    const repository = new FirestoreGovernanceRepository(createFakeFirestore());
+    const adapter = new ScriptedAaveOnchainDemoAdapter(testEnv());
+    adapter.setPhase("created");
+    const created = aaveOnchainEventFixtures[0];
+    const observation = await adapter.getDecision("0", [created], null, created.blockNumber);
+    const options = { notificationStatusForNewEvents: "pending" } as const;
+    const initial = await repository.upsertDecision({
+      ...observation, sourceUrl: "https://vote.onaave.com/proposal/?proposalId=0"
+    }, options);
+    const originalEvent = initial.lifecycleEventsCreated[0];
+    await repository.updateNotificationState(originalEvent.id, () => ({ notificationStatus: "sent" }));
+
+    const migrated = await repository.upsertDecision(observation, options);
+    expect(migrated).toMatchObject({ created: false, updated: true, lifecycleEventsCreated: [] });
+    await expect(repository.findDecisionById(initial.decision.id)).resolves.toMatchObject({
+      sourceUrl: "https://app.aave.com/governance/v3/proposal/?proposalId=0",
+      firstSeenAt: initial.decision.firstSeenAt
+    });
+    await expect(repository.findById(originalEvent.id)).resolves.toMatchObject({
+      id: originalEvent.id, notificationStatus: "sent", transactionHash: originalEvent.transactionHash,
+      message: { sourceUrl: "https://app.aave.com/governance/v3/proposal/?proposalId=0" }
+    });
+    await expect(repository.upsertDecision(observation, options)).resolves.toMatchObject({
+      updated: false, lifecycleEventsCreated: [], lifecycleEventsUpdated: []
+    });
+  });
   it("rolls back a staged decision update when existing lifecycle metadata fails validation", async () => {
     const db = createFakeFirestore();
     const repository = new FirestoreGovernanceRepository(db);
@@ -1091,14 +1118,15 @@ describe("FirestoreGovernanceRepository", () => {
       { notificationStatusForNewEvents: "pending" })).rejects.toThrow("transaction hash cannot change");
     await expect(repository.findDecisionById(observation.id)).resolves.toEqual(first.decision);
   });
-  it("persists native Aave zero and atomically releases deferred lifecycle events without resetting deliveries", async () => {
+  it("persists Aave lifecycle evidence and atomically releases only the deferred vote result", async () => {
     const repository = new FirestoreGovernanceRepository(createFakeFirestore());
     const adapter = new ScriptedAaveOnchainDemoAdapter(testEnv());
     const events = aaveOnchainEventFixtures;
     adapter.setPhase("created");
     const initial = await repository.upsertDecision(await adapter.getDecision("0", events.slice(0, 1), null,
       events[0].blockNumber), { notificationStatusForNewEvents: "pending" });
-    await repository.updateNotificationState(initial.lifecycleEventsCreated[0].id, () => ({ notificationStatus: "sent" }));
+    expect(initial.lifecycleEventsCreated).toMatchObject([{ transition: "created", notificationStatus: "skipped",
+      notificationSkipReason: "aave_onchain_result_only" }]);
     adapter.setPhase("executed");
     const partial = await repository.upsertDecision(await adapter.getDecision("0", events.slice(1, 2), initial.decision,
       events[3].blockNumber), { notificationStatusForNewEvents: "pending" });
@@ -1109,8 +1137,10 @@ describe("FirestoreGovernanceRepository", () => {
     expect(complete.lifecycleEventsCreated).toEqual([]);
     expect(complete.lifecycleEventsUpdated).toHaveLength(3);
     expect(complete.lifecycleEventsUpdated?.every((event) => event.notificationReady)).toBe(true);
-    await expect(repository.countByNotificationStatus("sent")).resolves.toBe(1);
-    await expect(repository.countByNotificationStatus("pending")).resolves.toBe(3);
+    await expect(repository.findByNotificationStatus("pending")).resolves.toMatchObject([{
+      transition: "succeeded", notificationReady: true, transactionHash: events[2].transactionHash
+    }]);
+    await expect(repository.countByNotificationStatus("skipped")).resolves.toBe(3);
     await expect(repository.findDecisionsBySource(adapter.sourceKey)).resolves.toMatchObject([{ proposalId: "0" }]);
   });
   it("transactionally stores decisions and idempotent lifecycle events", async () => {

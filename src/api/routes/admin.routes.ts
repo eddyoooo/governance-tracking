@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { migrateAaveProposalUrl } from "../../onchain/aave/aaveProposalUrl.js";
 import type { AppContext } from "../../server.js";
 
 export function createAdminRouter(context: AppContext): Router {
@@ -84,7 +85,10 @@ export function createAdminRouter(context: AppContext): Router {
       )
         .flat()
         .sort((left, right) => -left.updatedAt.localeCompare(right.updatedAt))
-        .slice(0, limit);
+        .slice(0, limit)
+        .map((vote) => vote.protocol === "aave"
+          ? { ...vote, sourceUrl: migrateAaveProposalUrl(vote.sourceUrl, vote.proposalId) }
+          : vote);
 
       response.json({ governanceVotes: votes });
     } catch (error) {

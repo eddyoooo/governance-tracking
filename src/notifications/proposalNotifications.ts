@@ -144,7 +144,7 @@ export class ProposalNotificationDispatcher<
         return { status: current.notificationStatus };
       }
 
-      if (!this.canDeliver(current)) return { status: current.notificationStatus };
+      if (!this.isDeliveryEnabled(current)) return { status: current.notificationStatus };
 
       const notificationPolicy = this.evaluateNotificationPolicy(current);
 
@@ -156,6 +156,8 @@ export class ProposalNotificationDispatcher<
         );
         return { status: "skipped" };
       }
+
+      if (current.notificationReady === false) return { status: current.notificationStatus };
 
       if (current.notificationStatus === "failed") {
         return {
@@ -216,9 +218,9 @@ export class ProposalNotificationDispatcher<
       // not visibility: paused or backed-off records must not starve due alerts.
       const eligible = deduplicateProposals([...pending, ...failed])
         .filter((proposal) =>
-          this.canDeliver(proposal) &&
+          this.isDeliveryEnabled(proposal) &&
           (this.evaluateNotificationPolicy(proposal).action === "suppress" ||
-            needsRecoveryNow(proposal, activeRecipientKeys, now))
+            (proposal.notificationReady !== false && needsRecoveryNow(proposal, activeRecipientKeys, now)))
         );
       const previousIndex = eligible.findIndex(
         (record) => record.id === this.lastRecoveryCandidateId
@@ -296,7 +298,11 @@ export class ProposalNotificationDispatcher<
       };
     }
 
-    if (!this.canDeliver(current)) {
+    if (
+      current.notificationStatus === "sent" ||
+      current.notificationStatus === "skipped" ||
+      !this.isDeliveryEnabled(current)
+    ) {
       return {
         attempted: false,
         attemptedRecipientCount: 0,
@@ -321,7 +327,7 @@ export class ProposalNotificationDispatcher<
       };
     }
 
-    if (!this.notificationService.enabled) {
+    if (current.notificationReady === false || !this.notificationService.enabled) {
       return {
         attempted: false,
         attemptedRecipientCount: 0,
@@ -638,8 +644,8 @@ export class ProposalNotificationDispatcher<
     }
   }
 
-  private canDeliver(record: T): boolean {
-    return record.notificationReady !== false && (this.deliveryEnabled?.(record) ?? true);
+  private isDeliveryEnabled(record: T): boolean {
+    return this.deliveryEnabled?.(record) ?? true;
   }
 
   private evaluateNotificationPolicy(record: T): NotificationPolicyDecision {

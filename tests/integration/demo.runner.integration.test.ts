@@ -43,6 +43,8 @@ describe("complete credential-free demo", () => {
 
     expect(stderr).toBe("");
     expect(stdout).toContain("Telegram is disabled");
+    expect(stdout).toContain("https://vote.uniswapfoundation.org/proposals/100");
+    expect(stdout).not.toContain("vote.onaave.com");
     const marker = "\nSummary\n";
     expect(stdout).toContain(marker);
     const summary = JSON.parse(stdout.slice(stdout.lastIndexOf(marker) + marker.length));
@@ -61,10 +63,11 @@ describe("complete credential-free demo", () => {
       },
       aaveOnchain: {
         baseline: { status: "success", baselineSeeding: true, notificationSentCount: 0 },
-        creation: { decisionsCreated: 1, lifecycleEventsCreated: 1 },
-        execution: { lifecycleEventsCreated: 3, notificationFailedCount: 0 },
+        creation: { decisionsCreated: 1, lifecycleEventsCreated: 1, notificationSentCount: 0 },
+        execution: { lifecycleEventsCreated: 3, notificationSentCount: 0, notificationFailedCount: 0 },
         duplicate: { lifecycleEventsCreated: 0, notificationSentCount: 0 },
         storedDecisionCount: 1,
+        sourceUrl: "https://app.aave.com/governance/v3/proposal/?proposalId=0",
         integrityChecks: "passed"
       }
     });

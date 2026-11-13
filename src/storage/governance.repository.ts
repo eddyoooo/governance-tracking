@@ -12,6 +12,7 @@ import {
   mergeGovernanceDecision
 } from "../onchain/governanceDecision.js";
 import { buildGovernanceLifecycleMessage } from "../onchain/governanceNotifications.js";
+import { evaluateGovernanceNotificationPolicy } from "../onchain/governanceNotificationPolicy.js";
 import type {
   GovernanceDecisionObservation,
   GovernanceLifecycleEvent,
@@ -488,6 +489,7 @@ function buildLifecycleEvent(
   notificationStatus: NotificationStatus,
   now: string
 ): GovernanceLifecycleEvent {
+  const policy = evaluateGovernanceNotificationPolicy({ protocol: decision.protocol, transition });
   return {
     id: createGovernanceLifecycleEventId(decision.id, transition),
     decisionId: decision.id,
@@ -498,7 +500,9 @@ function buildLifecycleEvent(
     blockNumber: blockNumberForTransition(decision, transition),
     transactionHash: transactionHashForTransition(decision, transition),
     message: buildGovernanceLifecycleMessage(decision, transition),
-    notificationStatus,
+    ...(policy.action === "suppress"
+      ? { notificationStatus: "skipped", notificationSkipReason: policy.reason }
+      : { notificationStatus }),
     ...(decision.aave ? { notificationReady: aaveLifecycleReady(decision, transition) } : {}),
     firstSeenAt: now,
     createdAt: now,
@@ -649,6 +653,12 @@ function applyNotificationState(
     updated.notificationError = state.notificationError;
   } else {
     delete updated.notificationError;
+  }
+
+  if (state.notificationSkipReason) {
+    updated.notificationSkipReason = state.notificationSkipReason;
+  } else {
+    delete updated.notificationSkipReason;
   }
 
   if (state.notificationDeliveries) {

@@ -171,6 +171,7 @@ export interface GovernanceLifecycleEvent {
   notificationStatus: NotificationStatus;
   notificationReady?: boolean;
   notificationError?: string;
+  notificationSkipReason?: string;
   notificationDeliveries?: Record<string, NotificationDelivery>;
   firstSeenAt: string;
   createdAt: string;

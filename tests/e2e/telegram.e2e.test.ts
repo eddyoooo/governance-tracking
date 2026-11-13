@@ -11,6 +11,7 @@ import { createGovernanceDecisionId } from "../../src/onchain/governanceDecision
 import { ScriptedAaveOnchainDemoAdapter } from "../../src/demoFixtures/scriptedAaveOnchainDemo.adapter.js";
 import { aaveOnchainEventFixtures } from "../../src/demoFixtures/aaveOnchain.fixture.js";
 import { governanceEventMessage } from "../../src/onchain/governanceNotifications.js";
+import { evaluateGovernanceNotificationPolicy } from "../../src/onchain/governanceNotificationPolicy.js";
 import type { GovernanceDecisionObservation } from "../../src/onchain/types.js";
 import { normalizeAaveForumItem } from "../../src/protocols/aave/aave.normalizer.js";
 import { normalizeCowForumItem } from "../../src/protocols/cow/cow.normalizer.js";
@@ -53,8 +54,11 @@ describeTelegramE2E("Telegram direct-message E2E", () => {
     adapter.setPhase("executed");
     const final = await repository.upsertDecision(await adapter.getDecision("0", events, initial.decision,
       events[3].blockNumber), { notificationStatusForNewEvents: "pending" });
+    expect(final.lifecycleEventsCreated.filter((event) => event.notificationStatus === "pending")
+      .map((event) => event.transition)).toEqual(["succeeded"]);
     const result = final.lifecycleEventsCreated.find((event) => event.transition === "succeeded")!;
-    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger(), governanceEventMessage);
+    const dispatcher = new ProposalNotificationDispatcher(repository, service, createSilentLogger(),
+      governanceEventMessage, evaluateGovernanceNotificationPolicy);
     await new Promise((resolve) => setTimeout(resolve, env.telegramTestSendDelayMs));
     await expect(dispatcher.notifyNewProposal(result)).resolves.toEqual({ status: "sent" });
     await expect(repository.findById(result.id)).resolves.toMatchObject({ notificationStatus: "sent" });
