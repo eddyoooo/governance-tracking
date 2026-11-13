@@ -167,7 +167,7 @@ Important result fields:
 - `notificationFailedCount`: newly discovered proposals with at least one initial recipient failure.
 - `notificationSuppressedCount`: newly stored eligible proposals intentionally silenced by a protocol notification policy.
 - `errors`: partial-feed warnings, notification errors, or a failed run's reason.
-- `run.coverageComplete=false`: a feed/page failed or the raw topic count was below `SOURCE_ACTIVITY_MIN_FETCHED_COUNT`. Usable topics are retained, but the baseline and historical cutoff do not advance. The next fully covered run clears this admin warning.
+- `run.coverageComplete=false`: a feed/page failed, an empty page advertised more topics, or the raw topic count was below `SOURCE_ACTIVITY_MIN_FETCHED_COUNT`. Usable topics are retained, but the baseline and historical cutoff do not advance. The next fully covered run clears this admin warning.
 
 For Aave, `AAVE_SUPPRESS_ROUTINE_CAP_NOTIFICATIONS=true` stores but does not notify narrowly recognized dated LlamaRisk `Risk Stewards` cap-only or cap-plus-IRM changes (`IRM` or the observed `USDT IRM` variant). Expect `notificationStatus=skipped`, a cap-specific `notificationSkipReason`, and an incremented `notificationSuppressedCount`. `skippedCount` is different: it counts non-eligible publishers that were not stored. IRM-only, PT parameter, Slope2, oracle, incident, assessment, unfamiliar-title, and non-LlamaRisk posts remain alertable. Set the flag to `false` to restore notifications for future newly discovered matching posts; already skipped records are not replayed.
 

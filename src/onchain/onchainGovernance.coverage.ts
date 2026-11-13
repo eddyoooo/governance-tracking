@@ -3,6 +3,7 @@ import type { GovernanceSourceState } from "./types.js";
 interface LifecycleCoverageDecision {
   proposalId: string;
   status: string;
+  lastObservedBlockNumber: number;
   eta: string | null;
   createdBlockNumber: number | null;
   createdTransactionHash: string | null;
@@ -152,7 +153,8 @@ export function decisionsUpToProposalId<T extends { proposalId: string }>(
 }
 
 export function findMissingLifecycleReferences(
-  decisions: LifecycleCoverageDecision[]
+  decisions: LifecycleCoverageDecision[],
+  baselineBlock?: number
 ): string[] {
   const missing: string[] = [];
 
@@ -164,6 +166,11 @@ export function findMissingLifecycleReferences(
       )
     ) {
       missing.push(`${decision.proposalId}:created`);
+    }
+    // A legacy record may reflect later events. The live check still requires
+    // their references after the post-baseline range has been scanned.
+    if (baselineBlock !== undefined && decision.lastObservedBlockNumber > baselineBlock) {
+      continue;
     }
     if (
       decision.status === "canceled" &&

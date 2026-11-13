@@ -70,8 +70,11 @@ export async function collectDiscourseTopicPages(
       }
     }
 
-    if (pageItems.length === 0 || !topicPage.hasMore) {
+    if (!topicPage.hasMore) {
       return [];
+    }
+    if (pageItems.length === 0) {
+      return [`${options.protocol} page ${page} was empty despite advertising more topics.`];
     }
   }
 

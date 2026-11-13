@@ -100,6 +100,22 @@ describe("OnchainGovernanceScanJob", () => {
       healthStatus: "failed", cursorBlockNumber: before!.cursorBlockNumber
     });
   });
+
+  it("does not replay a legacy baseline decision observed above the validated finalized head", async () => {
+    const { job, repository, control, notificationService } = createJob();
+    await repository.initializeSourceState(createGovernanceSourceState({
+      baselineStatus: "seeding", replayMode: "silent", cursorBlockNumber: 99, cursorBlockHash: null
+    }));
+    await repository.upsertDecision(createGovernanceObservation({ lastObservedBlockNumber: 120 }),
+      { notificationStatusForNewEvents: "skipped" });
+
+    await expect(job.run("uniswap")).rejects.toThrow("observation block 120 is ahead of finalized block 110");
+    expect(control.getDecision).not.toHaveBeenCalled();
+    expect(notificationService.messages).toEqual([]);
+    await expect(repository.findSourceState(TEST_SOURCE_KEY)).resolves.toMatchObject({
+      cursorBlockNumber: 99, healthStatus: "failed"
+    });
+  });
   it.each([false, true])("rejects a non-canonical log before storing or notifying (established=%s)", async (established) => {
     const { job, repository, control, notificationService } = createJob();
     if (established) {
@@ -761,12 +777,13 @@ describe("OnchainGovernanceScanJob", () => {
       notificationSentCount: 1
     });
     expect(control.getEvents).toHaveBeenCalledWith(121, 130);
-    expect(control.getDecision).toHaveBeenLastCalledWith(
+    expect(control.getDecision).toHaveBeenCalledWith(
       "2",
       expect.any(Array),
       null,
       130
     );
+    expect(control.getDecision).toHaveBeenLastCalledWith("1", [], expect.any(Object), 130);
     expect(setup.notificationService.messages).toEqual([
       expect.objectContaining({
         heading: "NEW GOVERNANCE VOTE TRACKED",
@@ -814,6 +831,28 @@ describe("OnchainGovernanceScanJob", () => {
       consecutiveFailures: 1
     });
     expect(setup.notificationService.messages).toEqual([]);
+  });
+
+  it("alerts on a result without a new log when a resumed baseline catches up", async () => {
+    const control = createFakeEvmGovernanceAdapter({ finalizedBlock: 110 });
+    const { job, repository, notificationService } = createJob({ adapterControl: control });
+    control.getEvents.mockResolvedValueOnce([control.events[0]]).mockRejectedValueOnce(new Error("interrupted"));
+    await expect(job.run("uniswap")).rejects.toThrow("interrupted");
+
+    control.validation.latestFinalizedBlock.number = 120;
+    control.validation.latestFinalizedBlock.hash = testBlockHash(120);
+    const getDecision = control.getDecision.getMockImplementation()!;
+    control.getDecision.mockImplementation((id, events, existing, block) => {
+      control.statuses.set(id, block <= 110 ? "pending" : "succeeded");
+      return getDecision(id, events, existing, block);
+    });
+
+    await expect(job.run("uniswap")).resolves.toMatchObject({ baselineSeeding: true, cursorAfter: 120,
+      lifecycleEventsCreated: 1, notificationSentCount: 1 });
+    expect(control.getDecision.mock.calls.map((call) => call[3])).toEqual([110, 110, 120]);
+    expect(notificationService.messages).toMatchObject([{ heading: "ON-CHAIN GOVERNANCE VOTE RESULT" }]);
+    await expect(repository.findSourceState(TEST_SOURCE_KEY)).resolves.toMatchObject({ baselineStatus: "complete" });
+    await expect(job.run("uniswap")).resolves.toMatchObject({ lifecycleEventsCreated: 0, notificationSentCount: 0 });
   });
 
   it("detects incomplete log results and prepares a silent full replay", async () => {

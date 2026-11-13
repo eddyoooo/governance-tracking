@@ -39,6 +39,52 @@ function runtime() {
 }
 
 describe("Aave on-chain live-scan recovery with the production RPC client", () => {
+  it.each([false, true])("separates historical and live settlement on resume (legacy advanced record: %s)", async (legacy) => {
+    const env = aaveEnv();
+    const { rpc, client, block, setProposal } = aaveRpcFixture();
+    const adapter = new AaveOnchainGovernanceAdapter(env, client);
+    const service = new RecordingService();
+    const { context } = createApp({ env, notificationService: service,
+      evmGovernanceRegistry: new EvmGovernanceRegistry([adapter]) });
+    const created = aaveLog();
+    const resultBlock = block + 10;
+    const head = block + 20;
+    const queued = aaveLog("ProposalQueued", { blockNumber: BigInt(resultBlock),
+      blockHash: testBlockHash(resultBlock), transactionHash: testBlockHash(16) });
+    rpc.getLogs.mockRejectedValueOnce(new Error("interrupted before reading baseline logs"));
+    await expect(context.onchainGovernanceJob.run("aave")).rejects.toThrow("interrupted");
+
+    const settled = aaveRawProposal({ state: 3, votingActivationTime: 1704575039,
+      votingDuration: 259200, queuingTime: 1704836471 });
+    setProposal(settled);
+    if (legacy) {
+      rpc.getLogs.mockResolvedValueOnce([created]);
+      const [creation] = await client.getEvents(block - 100, block);
+      const observation = await client.getDecision("0", [creation], null, head, { historical: true });
+      await context.governanceRepository.upsertDecision(observation, { notificationStatusForNewEvents: "skipped" });
+    }
+    rpc.getBlock.mockImplementation(async ({ blockNumber }) => {
+      const number = blockNumber ?? BigInt(head);
+      return { number, hash: testBlockHash(Number(number)), timestamp: 1704836471n };
+    });
+    const readContract = rpc.readContract.getMockImplementation()!;
+    rpc.readContract.mockImplementation((input: { functionName: string; blockNumber?: bigint }) =>
+      input.functionName === "getProposal" && input.blockNumber === BigInt(block)
+        ? Promise.resolve(aaveRawProposal()) : readContract(input));
+    rpc.getLogs.mockImplementation(async ({ fromBlock, toBlock }) =>
+      [created, queued].filter((log) => log.blockNumber >= fromBlock && log.blockNumber <= toBlock));
+
+    await expect(context.onchainGovernanceJob.run("aave")).resolves.toMatchObject({
+      status: "success", baselineSeeding: true, cursorAfter: head, notificationSentCount: legacy ? 0 : 1
+    });
+    await expect(context.governanceRepository.findDecisionsBySource(adapter.sourceKey)).resolves.toMatchObject([{
+      status: "queued", lastObservedBlockNumber: head, queuedBlockNumber: resultBlock,
+      aave: { resultBlockNumber: resultBlock }
+    }]);
+    expect(service.messages).toHaveLength(legacy ? 0 : 1);
+    await expect(context.onchainGovernanceJob.run("aave")).resolves.toMatchObject({ lifecycleEventsCreated: 0, notificationSentCount: 0 });
+  });
+
   it("preserves the checkpoint when settlement evidence changes mid-scan and alerts only after repair", async () => {
     const env = aaveEnv();
     const { rpc, client, block, setProposal } = aaveRpcFixture();

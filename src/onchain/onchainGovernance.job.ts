@@ -156,6 +156,11 @@ export class OnchainGovernanceScanJob {
         run.baselineSeeding = baselineSeeding;
         const observationBlock = validation.latestFinalizedBlock.number;
 
+        const ahead = knownDecisions.find((decision) => decision.lastObservedBlockNumber > observationBlock);
+        if (ahead) {
+          throw new Error(`Stored governance proposal ${ahead.proposalId} observation block ${ahead.lastObservedBlockNumber} is ahead of finalized block ${observationBlock}.`);
+        }
+
         sourceState = baselineSeeding
           ? await this.completeHistoricalBaseline(
               adapter,
@@ -267,13 +272,14 @@ export class OnchainGovernanceScanJob {
     observationBlock: number,
     run: GovernanceScanRun
   ): Promise<GovernanceSourceState> {
+    const baselineBlock = sourceState.baselineTargetBlock;
     const historicalProposalIds = new Set<string>();
     sourceState = await this.scanBlockRanges(
       adapter,
       sourceState,
       sourceState.cursorBlockNumber + 1,
-      sourceState.baselineTargetBlock,
-      observationBlock,
+      baselineBlock,
+      baselineBlock,
       true,
       validation,
       run,
@@ -282,7 +288,7 @@ export class OnchainGovernanceScanJob {
     await this.refreshActiveDecisions(
       adapter,
       historicalProposalIds,
-      observationBlock,
+      baselineBlock,
       true,
       run
     );
@@ -308,7 +314,8 @@ export class OnchainGovernanceScanJob {
     }
 
     const historicalLifecycleGaps = findMissingLifecycleReferences(
-      baselineDecisions
+      decisionsUpToProposalId(baselineDecisions, sourceState.baselineProposalCount, adapter.proposalIdScheme),
+      baselineBlock
     );
     if (historicalLifecycleGaps.length > 0) {
       await this.resetForSilentLifecycleReplay(
@@ -351,6 +358,9 @@ export class OnchainGovernanceScanJob {
       run,
       catchUpProposalIds
     );
+    if (observationBlock > baselineBlock) {
+      await this.refreshActiveDecisions(adapter, catchUpProposalIds, observationBlock, false, run);
+    }
 
     await this.assertLiveCoverage(adapter, sourceState, validation);
 
@@ -590,6 +600,9 @@ export class OnchainGovernanceScanJob {
       if (processedProposalIds.has(decision.proposalId)) {
         continue;
       }
+      if (suppressNotifications && decision.lastObservedBlockNumber > observationBlock) {
+        continue;
+      }
 
       await this.synchronizeDecision(
         adapter,
@@ -653,11 +666,16 @@ export class OnchainGovernanceScanJob {
   ): Promise<void> {
     const decisionId = decisionIdFromEventsOrSource(adapter, proposalId);
     const existing = await this.repository.findDecisionById(decisionId);
+    // Older versions could already have persisted a post-baseline observation.
+    // Replay its historical logs without rolling that decision back.
+    const decisionBlock = suppressNotifications && existing
+      ? Math.max(observedAtBlock, existing.lastObservedBlockNumber)
+      : observedAtBlock;
     const observation = await adapter.getDecision(
       proposalId,
       events,
       existing,
-      observedAtBlock,
+      decisionBlock,
       ...(adapter.proposalIdScheme ? [{ historical: suppressNotifications }] as const : [] as const)
     );
     assertDecisionMatchesRequest(
@@ -665,7 +683,7 @@ export class OnchainGovernanceScanJob {
       adapter,
       proposalId,
       decisionId,
-      observedAtBlock
+      decisionBlock
     );
     const notificationsEnabled =
       !suppressNotifications &&
@@ -686,6 +704,8 @@ export class OnchainGovernanceScanJob {
     }
 
     run.lifecycleEventsCreated += result.lifecycleEventsCreated.length;
+
+    if (!notificationsEnabled) return;
 
     for (const lifecycleEvent of [
       ...result.lifecycleEventsCreated,

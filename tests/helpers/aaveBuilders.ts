@@ -35,7 +35,7 @@ export function aaveRpcFixture() {
       if (input.functionName === "getProposalsCount") return 1n;
       return proposal;
     }),
-    getLogs: jest.fn(async (): Promise<unknown[]> => [])
+    getLogs: jest.fn(async (_input: { fromBlock: bigint; toBlock: bigint }): Promise<unknown[]> => [])
   };
   const client = new AaveOnchainClient({ publicClient: rpc as unknown as PublicClient, metadataEnabled: false });
   return { rpc, client, block, setProposal: (next: ReturnType<typeof aaveRawProposal>) => { proposal = next; } };

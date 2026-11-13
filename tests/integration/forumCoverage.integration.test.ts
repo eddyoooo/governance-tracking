@@ -32,7 +32,7 @@ function runtime(protocol: string, minFetchedCount = 1) {
   const visible = item("102", "2026-11-10T08:30:00.000Z");
   const delayed = item("103", "2026-11-10T08:40:00.000Z");
   const items = () => phase === 0 ? [original]
-    : phase === 1 ? [original, visible]
+    : phase === 1 || phase === 6 ? [original, visible]
     : phase === 3 ? []
     : phase === 4 ? [visible]
     : phase === 5 ? [prior, original]
@@ -41,12 +41,16 @@ function runtime(protocol: string, minFetchedCount = 1) {
   const fetchImpl = jest.fn<typeof fetch>(async (url) => {
     const parsed = new URL(String(url));
     if (parsed.pathname === "/site.json") return Response.json({ categories: [] });
-    if (parsed.searchParams.get("page") === "1") return new Response("Unavailable", { status: 400 });
+    if (parsed.searchParams.get("page") === "1") {
+      return phase === 6
+        ? Response.json({ topic_list: { topics: [], more_topics_url: "/latest.json?page=2" } })
+        : new Response("Unavailable", { status: 400 });
+    }
     return Response.json({ users: [{ id: 1, username: "allowed", name: "Allowed Publisher" }],
       topic_list: { topics: items().map((topic) => ({ id: Number(topic.sourceId), title: topic.title,
         slug: `proposal-${topic.sourceId}`, created_at: topic.publishedAt,
         posters: [{ user_id: 1, description: "Original Poster" }] })),
-      more_topics_url: phase === 1 ? "/latest.json?page=1" : null } });
+      more_topics_url: phase === 1 || phase === 6 ? "/latest.json?page=1" : null } });
   });
   const clientOptions = { baseUrl, apiBaseUrl: baseUrl, fetchImpl };
   const adapterOptions = { enabled: true, forumBaseUrl: baseUrl, forumApiBaseUrl: baseUrl,
@@ -99,6 +103,22 @@ describe("forum partial-coverage recovery", () => {
     await expect(instance.states.findByProtocol("aave")).resolves.toMatchObject({ baselineStatus: "complete" });
     expect(instance.notifications.messages).toEqual([]);
     await expect(instance.proposals.countByNotificationStatus("skipped")).resolves.toBe(3);
+  });
+
+  it("does not trust an empty intermediate page that advertises another page", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-11-10T08:00:00.000Z"));
+    const instance = runtime("aave");
+    const baseline = await instance.job.run("aave");
+    instance.setPhase(6);
+    jest.setSystemTime(new Date("2026-11-10T09:00:00.000Z"));
+    await expect(instance.job.run("aave")).resolves.toMatchObject({
+      run: { coverageComplete: false }, notificationSentCount: 1,
+      errors: ["aave page 1 was empty despite advertising more topics."]
+    });
+    await expect(instance.runs.findLatestSuccessfulByProtocol("aave")).resolves.toEqual(baseline.run);
+    instance.setPhase(2);
+    jest.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    await expect(instance.job.run("aave")).resolves.toMatchObject({ notificationSentCount: 1 });
   });
 
   it.each(["lido", "aave", "uniswap", "cow"])("does not advance %s's alert cutoff on an unexpectedly empty fetch", async (protocol) => {
